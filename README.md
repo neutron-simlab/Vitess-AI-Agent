@@ -61,7 +61,7 @@ pip install .
 >  **⚠️ Work in Progress** 
 
 ## 📂 Project Structure
-
+```
 vitess-ai-agent/
 ├── src/
 │   └── vitess_ai/
@@ -91,9 +91,11 @@ vitess-ai-agent/
 ├── pyproject.toml
 ├── README.md
 ├── uv.lock
-
+├── LICENSE
+```
 
 ## 🤝 Contributing
 Contributions are welcome! Please open an issue to discuss ideas, report bugs, or suggest improvements.
 
 ## License
+The code is licensed under the [MIT license](./LICENSE). Copyright © 2025.
