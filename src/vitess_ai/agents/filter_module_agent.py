@@ -7,7 +7,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AI
 from langchain_openai import ChatOpenAI
 from langchain.tools import BaseTool
 from langgraph.graph import StateGraph, END, START, MessagesState
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.memory import MemorySaver
 from vitess_ai.schema.filter_module import InitialResponse, FillingStage, FilterBlock
