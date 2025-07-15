@@ -234,19 +234,10 @@ class FilterBlock(BaseModel):
     """
     filters: List[FilterParameterSet]
 
-
-class InitialResponse(BaseModel):
+class InitialResponseFilter(BaseModel): 
     """
     This is the default response model for each module at the initialization of the filter module.
     Always use this tool to structure your response to the user.
     """
-    response: Literal['Custom', 'Default', 'Not Known']
-
-class FillingStage(BaseModel):
-    """
-    This is the model to store the information about the parameters filling process, either it is processing or complete.
-    Always use this tool to structure your response to the user.
-    """
-    stage: Literal["processing", "complete"]
-
-
+    response: Annotated[Literal['Default', 'Custom', 'Not Known'], 
+                        Field(description="Initial filter module response type")]

@@ -1,6 +1,6 @@
 from vitess_ai.schema.filter_module import FilterBlock, FillingStage
 
-# filter_block_schema = FilterBlock.model_json_schema()
+filter_block_schema = FilterBlock.model_json_schema()
 filling_stage_schema = FillingStage.model_json_schema()
 
 INIT_AGENT_INIT_PROMPT = """

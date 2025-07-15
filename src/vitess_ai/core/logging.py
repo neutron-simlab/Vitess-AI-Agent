@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 from loguru import logger
 from vitess_ai.core.config import settings
 

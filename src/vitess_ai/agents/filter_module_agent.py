@@ -29,6 +29,7 @@ class FilterAgent:
         """Initialize the LangGraph agent"""
 
         self.llm = ChatOpenAI(model=model_name, temperature=0)
+        self.name = "Filter Agent"
         
         # Get MCP validation tools
         if tools:
@@ -86,7 +87,7 @@ class FilterAgent:
         messages = [self.init_prompt, self.welcome_prompt, HumanMessage(user_init_message)]
         
         # Use structured output to classify user intent
-        structured_llm = self.llm.with_structured_output(InitialResponse)
+        structured_llm = self.llm.with_structured_output(InitialResponse) # type: ignore
         response = structured_llm.invoke(messages)
         
         # Store the user's choice
@@ -115,7 +116,7 @@ class FilterAgent:
         """
         Guide user through parameter configuration with tool support
         """
-        print(f"\n=== ENTERING _parameters_filling ===")
+        print("\n=== ENTERING _parameters_filling ===")
         print(f"Current state messages count: {len(state['messages'])}")
         
         # Use LLM with tools for enhanced functionality
@@ -131,11 +132,11 @@ class FilterAgent:
         print(f"DEBUG: Updated messages count after adding response: {len(updated_messages)}")
         
         print(f"\nAssistant:\n{response.content}") 
-        if hasattr(response, 'tool_calls') and response.tool_calls:
+        if hasattr(response, 'tool_calls') and response.tool_calls: # type: ignore
             print("DEBUG: Tool calls detected, routing to tools")
             print(f"DEBUG: Returning state with {len(updated_messages)} messages")
             return {
-                'messages': updated_messages,
+                'messages': updated_messages, # type: ignore
                 'stage': FillingStage(stage='processing')
             }
         else:
@@ -144,7 +145,7 @@ class FilterAgent:
             final_messages = updated_messages + [HumanMessage(content=user_input)]
             print(f"DEBUG: Final messages count after user input: {len(final_messages)}")
             return {
-                'messages': final_messages,
+                'messages': final_messages, # type: ignore
                 'stage': FillingStage(stage='processing')
             }
     
@@ -242,9 +243,9 @@ class FilterAgent:
         state = self.app.get_state(config)  #type:ignore
         return state.values.get("messages", []) if state.values else []
     
-    def reset_conversation(self, thread_id: str = "default") -> None:
-        """Reset conversation for a thread"""
-        config = {"configurable": {"thread_id": thread_id}}
+    # def reset_conversation(self, thread_id: str = "default") -> None:
+    #     """Reset conversation for a thread"""
+    #     config = {"configurable": {"thread_id": thread_id}}
         # Clear the checkpointer state for this thread
         # Note: This depends on your MemorySaver implementation
         pass
@@ -267,7 +268,7 @@ async def main():
 
     # Start conversation
     print("🤖 Starting conversation...")
-    response1 = await agent.run("", thread_id)
+    await agent.run("", thread_id)
 
 # Example usage
 if __name__ == "__main__":
