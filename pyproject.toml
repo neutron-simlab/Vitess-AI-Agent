@@ -27,6 +27,7 @@ dependencies = [
     "loguru>=0.7.3",
     "fastmcp>=2.9.2",
     "ipykernel>=6.29.5",
+    "pyqt6>=6.9.1",
 ]
 
 [build-system]
