@@ -125,15 +125,6 @@ class ReadInAgent:
         if hasattr(response, 'tool_calls') and response.tool_calls: # type: ignore
             print("DEBUG: Tool calls detected, routing to tools")
             print(f"DEBUG: Returning state with {len(updated_messages)} messages")
-            # try: 
-            #     last_message = json.loads(last_message)
-            #     print(last_message['valid'] )
-            #     if last_message['valid']: 
-            #         END
-            #     else: 
-            #         'params_config'
-            # except Exception as e:
-            #     print(str(e))
             return {
                 'messages': updated_messages, # type: ignore
                 'stage': FillingStage(stage='processing'),
@@ -185,7 +176,7 @@ class ReadInAgent:
         last_message = json.loads(last_message)
         return {
             "readin_params": last_message['validated_params'], 
-            "validation_status": last_message['valid']
+            "validation_status": last_message['validation_status']
         }
     
     
@@ -196,7 +187,7 @@ class ReadInAgent:
         print(f"\n the last message from tools calling is:\n {last_message}\n")
         try: 
             last_message = json.loads(last_message) # type: ignore
-            if last_message['valid']: 
+            if last_message['validation_status']: 
                 return 'finalize'
             else: 
                 return 'params_config'
@@ -220,7 +211,7 @@ class ReadInAgent:
         else:
             return 'params_config'
     
-    async def run(self, user_input: str, thread_id: str = "default") -> str:
+    async def run(self, user_input: str, thread_id: str = "default") -> str | dict:
         """Run the agent with user input"""
         # Configuration for the run
         config = {"configurable": {"thread_id": thread_id}}
@@ -255,12 +246,12 @@ class ReadInAgent:
         result = await self.app.ainvoke(input_state, config)  #type:ignore
         
         # Extract the final response
-        final_messages = result["messages"]
-        if final_messages:
+        
+        if result['validation_status']:
             # Return the last AI message
-            for msg in reversed(final_messages):
-                if isinstance(msg, AIMessage):
-                    return msg.content  #type:ignore
+            return {
+                "readin_params": result["readin_params"]
+            }
         
         return "No response generated"
     
@@ -318,7 +309,10 @@ async def main():
 
     # Start conversation
     print("🤖 Starting conversation...")
-    await agent.run("", thread_id)
+    result = await agent.run("", thread_id)
+
+    print("FINAL READ-IN PARAMS:\n")
+    print(result)
 
 # Example usage
 if __name__ == "__main__":

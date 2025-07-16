@@ -564,13 +564,13 @@ async def validate_readin_module(parameters: str) -> dict:
         params = json.loads(parameters)
         validated = ReadInParameters(**params)
         return {
-            "valid": True,
+            "validation_status": True,
             "validated_params": validated,
             "message": "Read-in module parameters are valid!"
         }
     except Exception as e:
         return {
-            "valid": False,
+            "validation_status": False,
             "errors": str(e),
             "message": f"Read-in validation failed: {e}"
         }

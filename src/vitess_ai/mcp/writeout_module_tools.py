@@ -338,13 +338,13 @@ async def validate_writeout_module(parameters: str) -> dict:
         params = json.loads(parameters)
         validated = WriteoutParameters(**params)
         return {
-            "valid": True,
+            "validation_status": True,
             "validated_params": validated,
             "message": "Writeout module parameters are valid!"
         }
     except Exception as e:
         return {
-            "valid": False,
+            "validation_status": False,
             "errors": str(e),
             "message": f"Writeout validation failed: {e}"
         }
