@@ -1,29 +1,9 @@
 from pydantic import BaseModel, Field
 from typing import Annotated, Literal
-from enum import IntEnum
+from vitess_ai.schema.base import VtPrgFormat, VtDataFormat, VtTrace
 
 # Constants for array size
 NF_MAX = 3  # Assumed based on usage pattern
-
-# Enums from defines.h
-class VtPrgFormat(IntEnum):
-    VT_VITESS_FMT = 1
-    VT_MCSTAS_FMT = 2
-    VT_MCPL_FMT = 3
-    VT_MCNPX_FMT = 4
-    VT_MCNP6_FMT = 5
-    VT_SSW_FMT = 6
-    VT_KDS_FMT = 7
-
-class VtDataFormat(IntEnum):
-    VT_EXPONENTIAL = 0
-    VT_FLOAT = 1
-    VT_BINARY = 2
-
-class VtTrace(IntEnum):
-    NO_TRACING = 0
-    WRITE_TRC_FILES = 1
-    ONLY_TRC_TRAJ = 2
 
 # Constants
 MISSING = -1
