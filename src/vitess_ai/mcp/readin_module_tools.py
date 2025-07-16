@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 readin_module_tools.py
 Main MCP server consisting of tools for Read-in module agent.

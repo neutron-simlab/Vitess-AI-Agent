@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Simple Instrument File Manager for Simple File List Manager for Vitess Read-In module
 """

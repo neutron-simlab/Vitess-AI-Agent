@@ -1,6 +1,6 @@
 """
-ReadInAgent - LangGraph Agent for Neutron Simulation Parameters Configuration
-Based on the FilterAgent template, adapted for ReadInParameters
+WriteoutAgent - LangGraph Agent for Neutron Simulation Writeout Parameters Configuration
+Based on the ReadInAgent template, adapted for WriteoutParameters
 """
 import json
 from typing import List, Optional
@@ -12,34 +12,34 @@ from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.memory import MemorySaver
 from vitess_ai.schema.base import FillingStage
-from vitess_ai.schema.readin_module import ReadInParameters, InitialResponseReadIn
-from vitess_ai.prompts.readin_module import READIN_AGENT_PROMPT, READIN_AGENT_WELCOME
+from vitess_ai.schema.writeout_module import WriteoutParameters, InitialResponseWriteout
+from vitess_ai.prompts.writeout_module import WRITEOUT_AGENT_PROMPT, WRITEOUT_AGENT_WELCOME
 
 
 # Define the agent state
-class ReadInAgentState(MessagesState):
+class WriteoutAgentState(MessagesState):
     stage: FillingStage
     config_mode: str  # Track configuration mode (default_setup/customize)
-    readin_params: Optional[ReadInParameters] = None # type: ignore
+    writeout_params: Optional[WriteoutParameters] = None # type: ignore
     validation_status: Optional[bool] = None # type: ignore
 
-class ReadInAgent:
+class WriteoutAgent:
     def __init__(self, model_name: str, tools: List[BaseTool]=[]):
-        """Initialize the ReadInAgent"""
+        """Initialize the WriteoutAgent"""
 
         self.llm = ChatOpenAI(model=model_name, temperature=0)
-        self.name = "Read-in Agent"
+        self.name = "Writeout Agent"
         
         # Get MCP validation tools
         if tools:
-            self.welcome_prompt = AIMessage(content=READIN_AGENT_WELCOME)
+            self.welcome_prompt = AIMessage(content=WRITEOUT_AGENT_WELCOME)
             self.mcp_tools = tools
             self.llm = self.llm.bind_tools(self.mcp_tools, parallel_tool_calls=False)
-            self.sys_prompt = SystemMessage(content=READIN_AGENT_PROMPT)
+            self.sys_prompt = SystemMessage(content=WRITEOUT_AGENT_PROMPT)
         else: 
             # System prompts
-            self.welcome_prompt = SystemMessage(content=READIN_AGENT_WELCOME)
-            self.sys_prompt = SystemMessage(content=READIN_AGENT_PROMPT)
+            self.welcome_prompt = SystemMessage(content=WRITEOUT_AGENT_WELCOME)
+            self.sys_prompt = SystemMessage(content=WRITEOUT_AGENT_PROMPT)
         
         # Create the graph
         self.graph = self._create_graph()
@@ -50,7 +50,7 @@ class ReadInAgent:
 
     def _create_graph(self) -> StateGraph:
         """Create the agent graph"""
-        workflow = StateGraph(ReadInAgentState)
+        workflow = StateGraph(WriteoutAgentState)
         
         # Define nodes
         workflow.add_node("welcome", self._welcome_node)
@@ -60,25 +60,24 @@ class ReadInAgent:
         workflow.add_node("tools", ToolNode(self.mcp_tools))
         workflow.add_node("finalize", self._finalize_node)
        
-        
         # Define edges 
         workflow.add_edge(START, 'welcome')
         workflow.add_conditional_edges('welcome', self._route_after_init)
         workflow.add_edge('default_setup', 'params_config')
         workflow.add_edge('fully_customize', 'params_config')
+        workflow.add_edge('finalize', END)
         workflow.add_conditional_edges('params_config', self._condition_parameters_config)
         workflow.add_conditional_edges('tools', self._route_after_tools)
 
-        
         return workflow
     
-    def _welcome_node(self, state: ReadInAgentState) -> ReadInAgentState:
+    def _welcome_node(self, state: WriteoutAgentState) -> WriteoutAgentState:
         """Send welcome message to user"""  
         print(f"{self.welcome_prompt.content}")
         user_init_message = input("\nUser:\n").strip()
-        sys_welcome_message = SystemMessage(content="❌ **Not Known**: When the user's input does not clearly indicate a choice between Default or Customize (e.g., unrelated topics like hobbies, opinions, or ambiguous language)")
+        sys_welcome_message = SystemMessage(content="ps. ❌ **Not Known**: When the user's input does not clearly indicate a choice between default Setup or Customize (e.g., unrelated topics like hobbies, opinions, or ambiguous language)")
         messages = [self.welcome_prompt, sys_welcome_message, HumanMessage(user_init_message)]
-        structured_llm = self.llm.with_structured_output(InitialResponseReadIn) # type: ignore
+        structured_llm = self.llm.with_structured_output(InitialResponseWriteout) # type: ignore
         response = structured_llm.invoke(messages)
         # Store the user's choice
         config_mode = response.response #type:ignore
@@ -89,19 +88,19 @@ class ReadInAgent:
             'config_mode': config_mode
         } # type: ignore
     
-    def _route_after_init(self, state: ReadInAgentState) -> str:
+    def _route_after_init(self, state: WriteoutAgentState) -> str:
         """Route based on user's initial choice"""
         config_mode = state.get('config_mode', '')
         
-        if config_mode == 'Custom':
-            return 'fully_customize'
+        if config_mode == 'Customize':
+            return 'customize'
         elif config_mode == 'Default Setup':
             return 'default_setup'
         else:
-            print("We don't know what you are going after.\n We will end the conversation.")
+            print("We don't understand your choice.\nWe will end the conversation.")
             return END
     
-    def _parameters_configuration(self, state: ReadInAgentState) -> ReadInAgentState | str :
+    def _parameters_configuration(self, state: WriteoutAgentState) -> WriteoutAgentState | str :
         """
         Guide user through parameter configuration with tool support
         """
@@ -125,15 +124,6 @@ class ReadInAgent:
         if hasattr(response, 'tool_calls') and response.tool_calls: # type: ignore
             print("DEBUG: Tool calls detected, routing to tools")
             print(f"DEBUG: Returning state with {len(updated_messages)} messages")
-            # try: 
-            #     last_message = json.loads(last_message)
-            #     print(last_message['valid'] )
-            #     if last_message['valid']: 
-            #         END
-            #     else: 
-            #         'params_config'
-            # except Exception as e:
-            #     print(str(e))
             return {
                 'messages': updated_messages, # type: ignore
                 'stage': FillingStage(stage='processing'),
@@ -149,73 +139,69 @@ class ReadInAgent:
                 'stage': FillingStage(stage='processing'),
                 'config_mode': state.get('config_mode', ''),
             }
-    # the workflow still need to be defined
-    def _default_setup_node(self, state: ReadInAgentState) -> ReadInAgentState | str | None:
+
+    def _default_setup_node(self, state: WriteoutAgentState) -> WriteoutAgentState | str | None:
         """Handle the case where user wants the default setup. """
-        print("\n=== HANDLING DEFAULT SETUP PARAMS CONFIGURATION ===")
+        print("\n=== HANDLING default SETUP CONFIGURATION ===")
         
         sys_default_setup_prompt = SystemMessage(content="""
-        You have chosen the default setup configuration, we will handle all the setup apart from several parameters that need to fill manually.
-                                               """)
+        You have chosen the default setup configuration. We will use optimal default values for all parameters.
+        You only need to specify the output directory where the neutron data will be written.
+        All other parameters will be set to recommended values that work well for most neutron simulations.
+        """)
         
         return {
             'messages': [*state['messages'], sys_default_setup_prompt]
         } # type: ignore
 
+    def _fully_customize_node(self, state: WriteoutAgentState) -> WriteoutAgentState | str | None:
+        """Handle the case where user wants to customize parameters"""
+        print("\n=== HANDLING CUSTOMIZED CONFIGURATION ===")
         
-    # the workflow still need to be defined
-    def _fully_customize_node(self, state: ReadInAgentState) -> ReadInAgentState | str | None:
-        """Handle the case where user wants all default values"""
-        print("\n=== HANDLING FULLY CUSTOMIZED CONFIGURATION ===")
-        
-        sys_fully_customize_prompt = SystemMessage(content="""
-        You have choosen the fully customize cofiguration, let me guide you to fill all parameters.
+        sys_customize_prompt = SystemMessage(content="""
+        You have chosen the customize configuration. I'll help you configure the writeout parameters step by step.
+        We'll start with the output directory, then you can choose which specific parameters to modify from the defaults.
         """)
 
         return {
-            'messages': [*state['messages'], sys_fully_customize_prompt]
+            'messages': [*state['messages'], sys_customize_prompt]
         } # type: ignore
 
-        
-    def _finalize_node(self, state: ReadInAgentState) -> ReadInAgentState:
+    def _finalize_node(self, state: WriteoutAgentState) -> WriteoutAgentState:
         """Handle the final step after tool calling on JSON validation"""
         print("\n=== HANDLING FINAL STEP ===")
         print("\nConfiguration completed successfully!")
         last_message = state['messages'][-1].content
         last_message = json.loads(last_message)
         return {
-            "readin_params": last_message['validated_params'], 
+            "writeout_params": last_message['validated_params'], 
             "validation_status": last_message['valid']
         }
     
-    
-    def _route_after_tools(self, state: ReadInAgentState) -> str:
+    def _route_after_tools(self, state: WriteoutAgentState) -> str:
         """Route after tool execution"""
         # Continue with parameter configuration after tool use
         last_message = state['messages'][-1].content
-        print(f"\n the last message from tools calling is:\n {last_message}\n")
+        print(f"\nThe last message from tools calling is:\n{last_message}\n")
         try: 
             last_message = json.loads(last_message) # type: ignore
             if last_message['valid']: 
-                return 'finalize'
+                return "finalize"
             else: 
                 return 'params_config'
         except Exception as e:
             print(str(e))
             return 'params_config'
-        # return 'params_config'
-        
 
-    def _condition_parameters_config(self, state: ReadInAgentState) -> str:
+    def _condition_parameters_config(self, state: WriteoutAgentState) -> str:
         """
         Determine if parameter configuration is complete or if tools should be called
         """
         last_message = state['messages'][-1]
-
-        print(f"\n the last message from params_config is:\n {last_message}\n")
+        print(f"\nThe last message from params_config is:\n{last_message}\n")
         
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:  #type:ignore
-            print('\n we have a tools call.\n')
+            print('\nWe have a tools call.\n')
             return 'tools'
         else:
             return 'params_config'
@@ -237,18 +223,18 @@ class ReadInAgent:
             input_state = {
                 "messages": current_messages + [user_message],
                 "stage": current_state.values.get("stage", FillingStage(stage='processing')),
-                "user_choice": current_state.values.get("user_choice", ""),
                 "config_mode": current_state.values.get("config_mode", ""),
-                "selected_params": current_state.values.get("selected_params", None)
+                "writeout_params": current_state.values.get("writeout_params", None),
+                "validation_status": current_state.values.get("validation_status", None),
             }
         else:
             # Start new conversation
             input_state = {
                 "messages": [user_message],
                 "stage": FillingStage(stage='processing'),
-                "user_choice": "",
                 "config_mode": "",
-                "selected_params": None
+                "writeout_params": None,
+                "validation_status": None
             }
         
         # Run the graph
@@ -277,17 +263,15 @@ class ReadInAgent:
             input_state = {
                 "messages": current_messages + [user_message],
                 "stage": current_state.values.get("stage", FillingStage(stage='processing')),
-                "user_choice": current_state.values.get("user_choice", ""),
                 "config_mode": current_state.values.get("config_mode", ""),
-                "selected_params": current_state.values.get("selected_params", None)
+                "writeout_params": current_state.values.get("writeout_params", None),
             }
         else:
             input_state = {
                 "messages": [user_message],
                 "stage": FillingStage(stage='processing'),
-                "user_choice": "",
                 "config_mode": "",
-                "selected_params": None
+                "writeout_params": None
             }
         
         # Stream the execution
@@ -305,16 +289,16 @@ async def main():
     client = MultiServerMCPClient({
         "validation": {
             "command": "python",
-            "args": ["/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/readin_module_tools.py"],
+            "args": ["/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/writeout_module_tools.py"],
             "transport": "stdio"
         }
     })  # type: ignore
     tools = await client.get_tools()
-    agent = ReadInAgent(model_name='gpt-4o-mini-2024-07-18', tools=tools)
+    agent = WriteoutAgent(model_name='gpt-4o-mini-2024-07-18', tools=tools)
 
     # Example conversation flow with validation
-    thread_id = "200"
-    print("=== Neutron Simulation Parameters Configuration Demo ===\n")
+    thread_id = "300"
+    print("=== Neutron Simulation Writeout Parameters Configuration Demo ===\n")
 
     # Start conversation
     print("🤖 Starting conversation...")
