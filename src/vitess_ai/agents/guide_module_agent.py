@@ -285,7 +285,6 @@ class GuideAgent:
         state = self.app.get_state(config)  #type:ignore
         return state.values.get("messages", []) if state.values else []
 
-
 async def main(): 
     client = MultiServerMCPClient({
         "validation": {
