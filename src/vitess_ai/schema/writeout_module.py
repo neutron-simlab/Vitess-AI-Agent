@@ -1,6 +1,6 @@
 from typing import Annotated, Optional, Literal
 from pydantic import BaseModel, Field
-from vitess_ai.schema.base import VtDataFormat, VtPrgFormat, VtSeparator, VtTrace
+from vitess_ai.schema.base import VtDataFormat, VtPrgFormat, VtSeparator
 
 
 class VtOutputFlags(BaseModel):
