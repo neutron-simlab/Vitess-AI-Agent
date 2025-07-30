@@ -232,15 +232,13 @@ Respond with only one word: START, HELP, or UNCLEAR
             thread_id = state.get('current_agent_thread', 'readin_default')
             result = await self.readin_agent.run("", thread_id)
             
-            if isinstance(result, dict) and 'readin_params' in result:
-                print("✅ ReadIn parameters configured successfully!")
-                print(f"Parameters: {result['readin_params']}")
-                
+            if isinstance(result, dict):
+               
                 return {
                     'messages': state['messages'],
                     'current_stage': SimulationStage.GUIDE,
                     'current_agent_thread': f"guide_{hash(str(result))}",
-                    'readin_params': result['readin_params'],
+                    'readin_params': result,
                     'readin_completed': True,
                     'guide_completed': state.get('guide_completed', False),
                     'writeout_completed': state.get('writeout_completed', False),
@@ -271,16 +269,14 @@ Respond with only one word: START, HELP, or UNCLEAR
             thread_id = state.get('current_agent_thread', 'guide_default')
             result = await self.guide_agent.run("", thread_id)
             
-            if isinstance(result, dict) and 'guide_params' in result:
-                print("✅ Guide parameters configured successfully!")
-                print(f"Parameters: {result['guide_params']}")
+            if isinstance(result, dict):
                 
                 return {
                     'messages': state['messages'],
                     'current_stage': SimulationStage.WRITEOUT,
                     'current_agent_thread': f"writeout_{hash(str(result))}",
                     'readin_params': state.get('readin_params'),
-                    'guide_params': result['guide_params'],
+                    'guide_params': result,
                     'readin_completed': state.get('readin_completed', False),
                     'guide_completed': True,
                     'writeout_completed': state.get('writeout_completed', False),
@@ -311,16 +307,14 @@ Respond with only one word: START, HELP, or UNCLEAR
             thread_id = state.get('current_agent_thread', 'writeout_default')
             result = await self.writeout_agent.run("", thread_id)
             
-            if isinstance(result, dict) and 'writeout_params' in result:
-                print("✅ Writeout parameters configured successfully!")
-                print(f"Parameters: {result['writeout_params']}")
+            if isinstance(result, dict):
                 
                 return {
                     'messages': state['messages'],
                     'current_stage': SimulationStage.COMPLETED,
                     'readin_params': state.get('readin_params'),
                     'guide_params': state.get('guide_params'),
-                    'writeout_params': result['writeout_params'],
+                    'writeout_params': result,
                     'readin_completed': state.get('readin_completed', False),
                     'guide_completed': state.get('guide_completed', False),
                     'writeout_completed': True,
