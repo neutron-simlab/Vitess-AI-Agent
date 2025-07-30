@@ -4,7 +4,9 @@ Provides common functionality and enforces consistent interface across all modul
 """
 import json
 import logging
-from typing import List, Optional, Dict, Any, Type, TypeVar, Generic
+from typing import List, Optional, Any, Type, TypeVar, Generic, Dict
+from enum import Enum
+from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
 from langchain_openai import ChatOpenAI
@@ -16,7 +18,6 @@ from vitess_ai.schema.base import FillingStage
 
 # Type variables for generic parameter types
 R = TypeVar('R')  # For initial response types
-
 
 class BaseModuleState(MessagesState):
     """Base state class that all module agents should use"""
@@ -65,7 +66,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.memory = MemorySaver()
         self.app = self.graph.compile(checkpointer=self.memory)
         
-        self.logger.info(f"{self.name} initialization complete")
+        self.logger.info(f"{self.name} initialization completed")
     
     def _setup_logging(self):
         """Setup logging for the module agent"""
@@ -393,7 +394,7 @@ class BaseModuleAgent(ABC, Generic[R]):
             validation_status = parsed_result.get('validation_status', True)
             
             result_dict = {
-                'stage': FillingStage(stage='complete'),
+                'stage': FillingStage(stage='completed'),
                 'config_mode': state.get('config_mode', ''),
                 'validation_status': validation_status,
                 'error_message': None,
@@ -599,3 +600,71 @@ def set_all_agents_log_level(level: str):
         count += 1
     
     print(f"✅ Updated log level to {level.upper()} for {count} agent loggers")
+
+
+class ModuleStatus(str, Enum):
+    """Status of individual modules"""
+    COMPLETED = "completed"
+   
+class ModuleResult(BaseModel):
+    """Result from a completed module"""
+    module_name: str
+    status: ModuleStatus
+    parameters: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    execution_time: Optional[float] = None
+    thread_id: Optional[str] = None
+
+class ModuleMetadata(BaseModel):
+    """Definition of a registerable module"""
+    name: str = Field(..., description="Module name (e.g., 'readin')")
+    display_name: str = Field(..., description="Human-readable name (e.g., 'Read-in Parameters')")
+    description: str = Field(..., description="Module description")
+    agent_class: Type[BaseModuleAgent] = Field(..., description="Agent class for this module")
+    optional: bool = Field(default=False, description="Whether module can be skipped")
+    config_path: Optional[str] = Field(None, description="Path to MCP tools configuration")
+    order: int = Field(default=100, description="Execution order (1, 2, 3, etc.)")
+    
+    class Config:
+        arbitrary_types_allowed = True
+
+
+# =================
+# MODULE BUILDER - Creates module definitions
+# =================
+
+class ModuleBuilder:
+    """Simple helper to create module definitions"""
+    
+    @staticmethod
+    def create(
+        name: str,
+        display_name: str, 
+        description: str,
+        agent_class: Type[BaseModuleAgent],
+        config_path: str = None,
+        optional: bool = False,
+        order: int = 100
+    ) -> ModuleMetadata:
+        """
+        Create a module definition - that's it!
+        
+        Args:
+            name: Short name like "readin", "guide"
+            display_name: Pretty name like "Read-in Parameters"  
+            description: What this module does
+            agent_class: Your agent class (inherits BaseModuleAgent)
+            config_path: Path to MCP tools (optional)
+            optional: Can user skip this? (default False)
+            order: Execution order - 1, 2, 3, etc. (default 100)
+        """
+        return ModuleMetadata(
+            name=name,
+            display_name=display_name,
+            description=description,
+            agent_class=agent_class,
+            config_path=config_path,
+            optional=optional,
+            order=order
+        )
+

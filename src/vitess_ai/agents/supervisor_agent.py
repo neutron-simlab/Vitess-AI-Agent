@@ -1,185 +1,391 @@
 """
-Unified SupervisorAgent - Single class that handles everything
-Orchestrates ReadInAgent, GuideAgent, and WriteoutAgent in sequence
+supervisor_agent.py - Combined Builder and Supervisor Agent
+Everything you need for the scalable supervisor system in one file
 """
+import logging
 import json
-from typing import Optional, Dict, Any
-from enum import Enum
+from typing import Dict, List, Any, Optional, Callable, Type
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph, END, START, MessagesState
-from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.graph import StateGraph, MessagesState, END, START
 from langgraph.checkpoint.memory import MemorySaver
-from vitess_ai.schema.readin_module import ReadInParameters
-from vitess_ai.schema.guide_module import GuideParameters
-from vitess_ai.schema.writeout_module import WriteoutParameters
+from pydantic import Field
 
-# Import your existing agents (adjust paths as needed)
-from vitess_ai.agents.readin_module_agent import ReadInAgent
-from vitess_ai.agents.guide_module_agent import GuideAgent
-from vitess_ai.agents.writeout_module_agent import WriteoutAgent
+from vitess_ai.schema.supervisor_modules import (
+    SupervisorConfig, SupervisorStage, 
+      SupervisorStatus, ConfigurationExport
+)
+from vitess_ai.core.registry import ModuleRegistry
 
+from vitess_ai.agents.base_module_agent import (
+    BaseModuleAgent, ModuleBuilder, 
+    ModuleStatus, ModuleMetadata, 
+    ModuleResult
+)
 
-class SimulationStage(Enum):
-    """Enumeration of simulation configuration stages"""
-    WELCOME = "welcome"
-    READIN = "readin"
-    GUIDE = "guide"
-    WRITEOUT = "writeout"
-    COMPLETED = "completed"
-    ERROR = "error"
+# =================
+# CONFIG BUILDER - Creates supervisor configurations
+# =================
 
+class SupervisorConfigBuilder:
+    """Simple helper to create supervisor configurations"""
+    
+    @staticmethod
+    def create(
+        model_name: str = 'gpt-4o-mini-2024-07-18',
+        welcome_message: str = None
+    ) -> SupervisorConfig:
+        """
+        Create a supervisor config - simple!
+        
+        Args:
+            model_name: LLM model to use
+            max_retries: How many times to retry failed modules
+            allow_skipping: Can users skip optional modules?
+            welcome_message: Custom welcome text (uses default if None)
+        """
+        config = SupervisorConfig(
+            model_name=model_name
+        )
+        
+        if welcome_message:
+            config.welcome_message = welcome_message
+            
+        return config
+
+# =================
+# SUPERVISOR STATE
+# =================
 
 class SupervisorState(MessagesState):
-    """State for the supervisor agent"""
-    current_stage: SimulationStage
-    readin_params: Optional[ReadInParameters] = None
-    guide_params: Optional[GuideParameters] = None
-    writeout_params: Optional[WriteoutParameters] = None
-    readin_completed: bool = False
-    guide_completed: bool = False
-    writeout_completed: bool = False
+    """Enhanced state for the supervisor"""
+    current_stage: SupervisorStage = SupervisorStage.WELCOME
+    module_results: Dict[str, ModuleResult] = Field(default={})
+    current_module: Optional[str] = None
+    execution_order: List[str] = Field(default=[])
+    pending_modules: List[str] = Field(default=[])
     current_agent_thread: str = ""
     error_message: Optional[str] = None
+    user_preferences: Dict[str, Any] = Field(default={})
+    session_metadata: Dict[str, Any] = Field(default={})
 
+
+# =================
+# MAIN SUPERVISOR AGENT
+# =================
 
 class SupervisorAgent:
-    def __init__(self, model_name: str = 'gpt-4o-mini-2024-07-18'):
-        """Initialize the SupervisorAgent"""
-        self.llm = ChatOpenAI(model=model_name, temperature=0)
-        self.name = "Neutron Simulation Supervisor"
-        self.model_name = model_name
+    """Supervisor agent with module registration system and built-in builders"""
+    
+    def __init__(self, config: SupervisorConfig = None):
+        """Initialize the supervisor agent"""
+        self.config = SupervisorConfigBuilder.create()
+        self.llm = ChatOpenAI(model=self.config.model_name, temperature=0)
+        self.registry = ModuleRegistry()
         
-        # Sub-agents
-        self.readin_agent: Optional[ReadInAgent] = None
-        self.guide_agent: Optional[GuideAgent] = None
-        self.writeout_agent: Optional[WriteoutAgent] = None
-        
-        # Agent configuration paths 
-        self.agent_configs = {
-            "readin": "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/readin_module_tools.py",
-            "guide": "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/guide_module_tools.py", 
-            "writeout": "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/writeout_module_tools.py"
-        }
-        
-        # Welcome message
-        self.welcome_message = """
-🤖 **Neutron Simulation Configuration System**
-
-Welcome! I'm your Simulation Supervisor. I'll guide you through configuring 
-your neutron simulation in three sequential stages:
-
-1️⃣ **Read-in Parameters**: Configure input parameters and initial conditions
-2️⃣ **Guide Parameters**: Set up neutron guide specifications  
-3️⃣ **Writeout Parameters**: Configure output settings and data formats
-
-Each stage must be completed before proceeding to the next. I'll coordinate 
-with specialized agents for each module and ensure all parameters are properly validated.
-
-Ready to begin? Type 'start' to begin the configuration process.
-        """
-        
-        # Create the graph and app (will be set after setup)
-        self.graph = None
-        self.app = None
+        # Runtime components
+        self._agent_instances: Dict[str, BaseModuleAgent] = {}
+        self._graph: Optional[StateGraph] = None
+        self._app = None
         self.memory = MemorySaver()
         self._initialized = False
-
-    async def setup_agents(self):
-        """Setup all sub-agents with their respective MCP tools"""
-        print("🔧 Setting up sub-agents...")
         
+        # Setup logging
+        self._logger = logging.getLogger(__name__)
+    
+    # =================
+    # MODULE REGISTRATION API
+    # =================
+    
+    def register_module(self, module_metadata: ModuleMetadata) -> None:
+        """Register a new module with the supervisor"""
+        self.registry.register_module(module_metadata)
+        
+        # Invalidate graph if already built
+        if self._initialized:
+            self._logger.info("New module registered, graph will be rebuilt on next run")
+            self._initialized = False
+    
+    def unregister_module(self, module_name: str) -> bool:
+        """Unregister a module"""
+        result = self.registry.unregister_module(module_name)
+        
+        # Clean up agent instance
+        if module_name in self._agent_instances:
+            del self._agent_instances[module_name]
+        
+        # Invalidate graph
+        if self._initialized:
+            self._initialized = False
+            
+        return result
+    
+    def list_modules(self) -> List[Dict[str, Any]]:
+        """List all registered modules with their info"""
+        return self.registry.get_modules_info()
+    
+    def get_execution_plan(self, requested_modules: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Get the execution plan for modules"""
+        plan = self.registry.get_execution_plan(requested_modules)
+        return plan.model_dump()
+    
+    # =================
+    # BUILT-IN MODULE BUILDERS - Convenience methods
+    # =================
+    
+    def add_readin_module(self, config_path: str = None) -> None:
+        """Add the standard readin module"""
+        from vitess_ai.agents.readin_module_agent import ReadInAgent
+        
+        module = ModuleBuilder.create(
+            name="readin",
+            display_name="Read-in Parameters",
+            description="Configure neutron input parameters and initial conditions",
+            agent_class=ReadInAgent,
+            config_path=config_path or "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/readin_module_tools.py",
+            order=1
+        )
+        self.register_module(module)
+    
+    def add_guide_module(self, config_path: str = None) -> None:
+        """Add the standard guide module"""  
+        from vitess_ai.agents.guide_module_agent import GuideAgent
+        
+        module = ModuleBuilder.create(
+            name="guide",
+            display_name="Guide Parameters", 
+            description="Configure neutron guide specifications and geometry",
+            agent_class=GuideAgent,
+            config_path=config_path or "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/guide_module_tools.py",
+            order=2
+        )
+        self.register_module(module)
+    
+    def add_writeout_module(self, config_path: str = None) -> None:
+        """Add the standard writeout module"""
+        from vitess_ai.agents.writeout_module_agent import WriteoutAgent
+        
+        module = ModuleBuilder.create(
+            name="writeout",
+            display_name="Writeout Parameters",
+            description="Configure output settings and data formats", 
+            agent_class=WriteoutAgent,
+            config_path=config_path or "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/writeout_module_tools.py",
+            order=3
+        )
+        self.register_module(module)
+    
+    def add_custom_module(
+        self,
+        name: str,
+        display_name: str,
+        description: str,
+        agent_class: Type[BaseModuleAgent],
+        order: int,
+        config_path: str = None,
+        optional: bool = False
+    ) -> None:
+        """Add a custom module using the built-in builder"""
+        module = ModuleBuilder.create(
+            name=name,
+            display_name=display_name,
+            description=description,
+            agent_class=agent_class,
+            config_path=config_path,
+            optional=optional,
+            order=order
+        )
+        self.register_module(module)
+    
+    def add_default_modules(self) -> None:
+        """Add all default modules (readin, guide, writeout)"""
+        self.add_readin_module()
+        self.add_guide_module()
+        self.add_writeout_module()
+    
+    # =================
+    # AGENT INITIALIZATION
+    # =================
+    
+    async def _setup_agent_instance(self, module_name: str) -> BaseModuleAgent:
+        """Setup an agent instance for a module"""
+        if module_name in self._agent_instances:
+            return self._agent_instances[module_name]
+        
+        module_metadata = self.registry.get_module(module_name)
+        if not module_metadata:
+            raise ValueError(f"Module '{module_name}' not registered")
+        
+        # Setup MCP tools if config path provided
+        tools = []
+        if module_metadata.config_path:
+            try:
+                from langchain_mcp_adapters.client import MultiServerMCPClient
+                client = MultiServerMCPClient({
+                    "validation": {
+                        "command": "python",
+                        "args": [module_metadata.config_path],
+                        "transport": "stdio"
+                    }
+                })
+                tools = await client.get_tools()
+                self._logger.info(f"Loaded {len(tools)} MCP tools for {module_name}")
+            except Exception as e:
+                self._logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
+        
+        # Create agent instance
+        agent = module_metadata.agent_class(model_name=self.config.model_name, tools=tools)
+        self._agent_instances[module_name] = agent
+        
+        self._logger.info(f"Initialized agent for module: {module_name}")
+        return agent
+    
+    async def initialize(self, requested_modules: Optional[List[str]] = None):
+        """Initialize the supervisor with the requested modules"""
+        if self._initialized:
+            self._logger.info("Supervisor already initialized")
+            return
+        
+        self._logger.info("Initializing Supervisor...")
+        
+        # Basic validation 
+        issues = self.registry.validate_modules()
+        if issues:
+            self._logger.warning(f"Module validation issues: {issues}")
+        
+        # Get execution order
         try:
-            # Setup ReadIn Agent
-            readin_client = MultiServerMCPClient({
-                "validation": {
-                    "command": "python",
-                    "args": [self.agent_configs["readin"]],
-                    "transport": "stdio"
-                }
-            })
-            readin_tools = await readin_client.get_tools()
-            self.readin_agent = ReadInAgent(model_name=self.model_name, tools=readin_tools)
-            print("✅ ReadIn Agent initialized")
-            
-            # Setup Guide Agent
-            guide_client = MultiServerMCPClient({
-                "validation": {
-                    "command": "python",
-                    "args": [self.agent_configs["guide"]],
-                    "transport": "stdio"
-                }
-            })
-            guide_tools = await guide_client.get_tools()
-            self.guide_agent = GuideAgent(model_name=self.model_name, tools=guide_tools)
-            print("✅ Guide Agent initialized")
-            
-            # Setup Writeout Agent
-            writeout_client = MultiServerMCPClient({
-                "validation": {
-                    "command": "python",
-                    "args": [self.agent_configs["writeout"]],
-                    "transport": "stdio"
-                }
-            })
-            writeout_tools = await writeout_client.get_tools()
-            self.writeout_agent = WriteoutAgent(model_name=self.model_name, tools=writeout_tools)
-            print("✅ Writeout Agent initialized")
-            
-            print("🎉 All agents ready!")
-            
+            execution_order = self.registry.get_execution_order(requested_modules)
+            self._logger.info(f"Execution order: {execution_order}")
         except Exception as e:
-            print(f"❌ Agent setup failed: {str(e)}")
-            raise
-
-    def _create_graph(self) -> StateGraph:
-        """Create the supervisor workflow graph"""
+            raise ValueError(f"Failed to get execution order: {e}")
+        
+        # Setup agent instances for all modules in execution order
+        for module_name in execution_order:
+            await self._setup_agent_instance(module_name)
+        
+        # Create and compile graph
+        self._graph = self._create_dynamic_graph(execution_order)
+        self._app = self._graph.compile(checkpointer=self.memory)
+        
+        self._initialized = True
+        self._logger.info(f"Supervisor initialized with {len(execution_order)} modules")
+    
+    # =================
+    # DYNAMIC GRAPH CREATION
+    # =================
+    
+    def _create_dynamic_graph(self, execution_order: List[str]) -> StateGraph:
+        """Create a dynamic graph based on registered modules"""
         workflow = StateGraph(SupervisorState)
         
-        # Add nodes
+        # Add standard nodes
         workflow.add_node("welcome", self._welcome_node)
-        workflow.add_node("readin_stage", self._readin_stage_node)
-        workflow.add_node("guide_stage", self._guide_stage_node)
-        workflow.add_node("writeout_stage", self._writeout_stage_node)
         workflow.add_node("completion", self._completion_node)
         workflow.add_node("error_handler", self._error_handler_node)
+        
+        # Add module nodes dynamically
+        for module_name in execution_order:
+            node_name = f"module_{module_name}"
+            workflow.add_node(node_name, self._create_module_node(module_name))
         
         # Add edges
         workflow.add_edge(START, "welcome")
         workflow.add_conditional_edges("welcome", self._route_from_welcome)
-        workflow.add_conditional_edges("readin_stage", self._route_from_readin)
-        workflow.add_conditional_edges("guide_stage", self._route_from_guide)
-        workflow.add_conditional_edges("writeout_stage", self._route_from_writeout)
+        
+        # Chain module nodes based on execution order
+        for i, module_name in enumerate(execution_order):
+            current_node = f"module_{module_name}"
+            
+            if i == len(execution_order) - 1:
+                # Last module - routes to completion
+                workflow.add_conditional_edges(current_node, 
+                    lambda state, mn=module_name: self._route_from_module(state, mn, is_last=True))
+            else:
+                # Intermediate module - routes to next module
+                next_module = execution_order[i + 1]
+                workflow.add_conditional_edges(current_node,
+                    lambda state, mn=module_name, nm=next_module: self._route_from_module(state, mn, next_module=nm))
+        
         workflow.add_edge("completion", END)
         workflow.add_edge("error_handler", END)
         
         return workflow
-
-    async def initialize(self):
-        """Initialize the supervisor - must be called before use"""
-        if self._initialized:
-            print("🔄 Supervisor already initialized")
-            return
+    
+    def _create_module_node(self, module_name: str) -> Callable:
+        """Create a node function for a specific module"""
+        
+        async def module_node(state: SupervisorState) -> SupervisorState:
+            """Dynamic module node implementation"""
+            module_metadata = self.registry.get_module(module_name)
+            if not module_metadata:
+                return self._create_error_state(state, f"Module '{module_name}' not found")
             
-        print("🚀 Initializing Neutron Simulation Supervisor...")
+            self._logger.info(f"Executing module: {module_name}")
+            print(f"\n{'='*60}")
+            print(f"📋 MODULE: {module_metadata.display_name.upper()}")
+            print(f"{'='*60}")
+            print(f"Description: {module_metadata.description}")
+            
+            try:
+                # Get agent instance
+                if module_name not in self._agent_instances:
+                    await self._setup_agent_instance(module_name)
+                
+                agent = self._agent_instances[module_name]
+                
+                # Execute the module
+                thread_id = f"{module_name}_{hash(str(state.get('session_metadata', {})))}"
+                result = await agent.run("", thread_id)
+                
+                # Create module result
+                if isinstance(result, dict):
+                    module_result = ModuleResult(
+                        module_name=module_name,
+                        status=ModuleStatus.COMPLETED,
+                        parameters=result,
+                        thread_id=thread_id
+                    )
+                    
+                    # Update state
+                    updated_results = state.get('module_results', {}).copy()
+                    updated_results[module_name] = module_result
+                    
+                    return {
+                        **state,
+                        'current_stage': SupervisorStage.MODULE_EXECUTION,
+                        'current_module': module_name,
+                        'module_results': updated_results,
+                        'error_message': None
+                    }
+                else:
+                    return self._create_error_state(state, f"Module '{module_name}' returned invalid result")
+                    
+            except Exception as e:
+                self._logger.error(f"Module {module_name} failed: {e}")
+                return self._create_error_state(state, f"Module '{module_name}' failed: {str(e)}")
         
-        # Setup agents
-        await self.setup_agents()
-        
-        # Create graph
-        self.graph = self._create_graph()
-        self.app = self.graph.compile(checkpointer=self.memory)
-        
-        self._initialized = True
-        print("✅ Supervisor initialization complete!")
-
+        return module_node
+    
     # =================
-    # NODE HANDLERS
+    # NODE IMPLEMENTATIONS
     # =================
-
+    
     def _welcome_node(self, state: SupervisorState) -> SupervisorState:
-        """Welcome node - introduce the system and get user ready"""
-        print(self.welcome_message)
+        """Welcome node with dynamic module information"""
+        
+        # Show available modules
+        modules_info = []
+        execution_order = self.registry.get_execution_order()
+        
+        for module_name in execution_order:
+            module_metadata = self.registry.get_module(module_name)
+            if module_metadata:
+                optional_text = " (optional)" if module_metadata.optional else ""
+                modules_info.append(f"{module_metadata.order}. **{module_metadata.display_name}**{optional_text}: {module_metadata.description}")
+        
+        welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info)
+        print(welcome_text)
         
         user_input = input("\nSupervisor: ").strip()
         
@@ -201,13 +407,16 @@ Respond with only one word: START, HELP, or UNCLEAR
         
         if intent == "START":
             print("🚀 Starting simulation configuration process...")
+            execution_order = self.registry.get_execution_order()
+            
             return {
                 'messages': [HumanMessage(content=user_input)],
-                'current_stage': SimulationStage.READIN,
-                'current_agent_thread': f"readin_{hash(user_input)}",
-                'readin_completed': False,
-                'guide_completed': False,
-                'writeout_completed': False,
+                'current_stage': SupervisorStage.MODULE_EXECUTION,
+                'execution_order': execution_order,
+                'pending_modules': execution_order.copy(),
+                'current_module': execution_order[0] if execution_order else None,
+                'module_results': {},
+                'session_metadata': {'start_intent': user_input},
                 'error_message': None
             }
         elif intent == "HELP":
@@ -216,364 +425,293 @@ Respond with only one word: START, HELP, or UNCLEAR
         else:
             print("I'm not sure what you mean. Please type something like 'start' to begin or 'help' for more information.")
             return state  # Stay in welcome for retry
-
-    async def _readin_stage_node(self, state: SupervisorState) -> SupervisorState:
-        """ReadIn stage node - handle read-in parameters configuration"""
-        print("\n" + "="*60)
-        print("📥 STAGE 1: READ-IN PARAMETERS CONFIGURATION")
-        print("="*60)
-        print("Now configuring input parameters with the ReadIn Module Agent...")
-        
-        try:
-            if not self.readin_agent:
-                raise Exception("ReadIn agent not initialized")
-            
-            # Run the ReadIn agent
-            thread_id = state.get('current_agent_thread', 'readin_default')
-            result = await self.readin_agent.run("", thread_id)
-            
-            if isinstance(result, dict):
-               
-                return {
-                    'messages': state['messages'],
-                    'current_stage': SimulationStage.GUIDE,
-                    'current_agent_thread': f"guide_{hash(str(result))}",
-                    'readin_params': result,
-                    'readin_completed': True,
-                    'guide_completed': state.get('guide_completed', False),
-                    'writeout_completed': state.get('writeout_completed', False),
-                    'error_message': None
-                }
-            else:
-                raise Exception("ReadIn agent did not return valid parameters")
-                
-        except Exception as e:
-            return {
-                'messages': state['messages'],
-                'current_stage': SimulationStage.ERROR,
-                'error_message': f"ReadIn stage failed: {str(e)}"
-            }
-
-    async def _guide_stage_node(self, state: SupervisorState) -> SupervisorState:
-        """Guide stage node - handle guide parameters configuration"""
-        print("\n" + "="*60)
-        print("🔀 STAGE 2: GUIDE PARAMETERS CONFIGURATION")
-        print("="*60)
-        print("Now configuring neutron guide specifications...")
-        
-        try:
-            if not self.guide_agent:
-                raise Exception("Guide agent not initialized")
-            
-            # Run the Guide agent
-            thread_id = state.get('current_agent_thread', 'guide_default')
-            result = await self.guide_agent.run("", thread_id)
-            
-            if isinstance(result, dict):
-                
-                return {
-                    'messages': state['messages'],
-                    'current_stage': SimulationStage.WRITEOUT,
-                    'current_agent_thread': f"writeout_{hash(str(result))}",
-                    'readin_params': state.get('readin_params'),
-                    'guide_params': result,
-                    'readin_completed': state.get('readin_completed', False),
-                    'guide_completed': True,
-                    'writeout_completed': state.get('writeout_completed', False),
-                    'error_message': None
-                }
-            else:
-                raise Exception("Guide agent did not return valid parameters")
-                
-        except Exception as e:
-            return {
-                'messages': state['messages'],
-                'current_stage': SimulationStage.ERROR,
-                'error_message': f"Guide stage failed: {str(e)}"
-            }
-
-    async def _writeout_stage_node(self, state: SupervisorState) -> SupervisorState:
-        """Writeout stage node - handle writeout parameters configuration"""
-        print("\n" + "="*60)
-        print("📤 STAGE 3: WRITEOUT PARAMETERS CONFIGURATION")
-        print("="*60)
-        print("Now configuring output settings and data formats...")
-        
-        try:
-            if not self.writeout_agent:
-                raise Exception("Writeout agent not initialized")
-            
-            # Run the Writeout agent
-            thread_id = state.get('current_agent_thread', 'writeout_default')
-            result = await self.writeout_agent.run("", thread_id)
-            
-            if isinstance(result, dict):
-                
-                return {
-                    'messages': state['messages'],
-                    'current_stage': SimulationStage.COMPLETED,
-                    'readin_params': state.get('readin_params'),
-                    'guide_params': state.get('guide_params'),
-                    'writeout_params': result,
-                    'readin_completed': state.get('readin_completed', False),
-                    'guide_completed': state.get('guide_completed', False),
-                    'writeout_completed': True,
-                    'error_message': None
-                }
-            else:
-                raise Exception("Writeout agent did not return valid parameters")
-                
-        except Exception as e:
-            return {
-                'messages': state['messages'],
-                'current_stage': SimulationStage.ERROR,
-                'error_message': f"Writeout stage failed: {str(e)}"
-            }
-
+    
     def _completion_node(self, state: SupervisorState) -> SupervisorState:
-        """Completion node - handle successful completion of all stages"""
-        print("\n" + "="*60)
+        """Completion node with dynamic results"""
+        print(f"\n{'='*60}")
         print("🎉 SIMULATION CONFIGURATION COMPLETED!")
-        print("="*60)
+        print(f"{'='*60}")
         
-        # Generate final configuration summary
-        summary = {
-            "simulation_config": {
-                "readin_parameters": state.get('readin_params'),
-                "guide_parameters": state.get('guide_params'),
-                "writeout_parameters": state.get('writeout_params')
-            },
-            "status": "completed",
-            "all_stages_completed": True
-        }
+        # Generate summary
+        module_results = state.get('module_results', {})
+        completed_modules = [name for name, result in module_results.items() 
+                           if result.status == ModuleStatus.COMPLETED]
         
-        print("\n📋 **FINAL CONFIGURATION SUMMARY:**")
-        print(json.dumps(summary, indent=2))
+        print(f"\n📋 **CONFIGURATION SUMMARY:**")
+        print(f"✅ Completed modules: {len(completed_modules)}")
+        
+        for module_name in completed_modules:
+            module_metadata = self.registry.get_module(module_name)
+            if module_metadata:
+                print(f"   {module_metadata.order}. {module_metadata.display_name}")
+        
+        print(f"\n📄 Configuration ready for export")
         
         return {
-            'messages': state['messages'],
-            'current_stage': SimulationStage.COMPLETED,
-            'readin_params': state.get('readin_params'),
-            'guide_params': state.get('guide_params'),
-            'writeout_params': state.get('writeout_params'),
-            'readin_completed': True,
-            'guide_completed': True,
-            'writeout_completed': True,
+            **state,
+            'current_stage': SupervisorStage.COMPLETION,
             'error_message': None
         }
-
+    
     def _error_handler_node(self, state: SupervisorState) -> SupervisorState:
-        """Error handler node - handle errors and provide recovery options"""
+        """Error handler node"""
         error_msg = state.get('error_message', 'Unknown error occurred')
-        current_stage = state.get('current_stage', SimulationStage.ERROR)
+        current_module = state.get('current_module', 'unknown')
         
-        print(f"\n❌ **ERROR in {current_stage.value.upper()} stage**")
+        print(f"\n❌ **ERROR in {current_module.upper()} module**")
         print(f"Error: {error_msg}")
-        print("Please restart the configuration process.")
+        print("Configuration process terminated.")
         
         return {
-            'messages': state['messages'],
-            'current_stage': SimulationStage.ERROR,
-            'error_message': error_msg
+            **state,
+            'current_stage': SupervisorStage.ERROR
         }
-
+    
     # =================
     # ROUTING FUNCTIONS
     # =================
-
+    
     def _route_from_welcome(self, state: SupervisorState) -> str:
-        """Route from welcome based on user input"""
-        if state['current_stage'] == SimulationStage.READIN:
-            return "readin_stage"
-        elif state['current_stage'] == SimulationStage.ERROR:
+        """Route from welcome to first module or error"""
+        if state.get('current_stage') == SupervisorStage.MODULE_EXECUTION:
+            execution_order = state.get('execution_order', [])
+            if execution_order:
+                first_module = execution_order[0]
+                return f"module_{first_module}"
+        
+        if state.get('current_stage') == SupervisorStage.ERROR:
             return "error_handler"
-        else:
-            return "welcome"  # Stay in welcome
-
-    def _route_from_readin(self, state: SupervisorState) -> str:
-        """Route from readin stage"""
-        if state['current_stage'] == SimulationStage.GUIDE:
-            return "guide_stage"
-        else:
-            return "error_handler"
-
-    def _route_from_guide(self, state: SupervisorState) -> str:
-        """Route from guide stage"""
-        if state['current_stage'] == SimulationStage.WRITEOUT:
-            return "writeout_stage"
-        else:
-            return "error_handler"
-
-    def _route_from_writeout(self, state: SupervisorState) -> str:
-        """Route from writeout stage"""
-        if state['current_stage'] == SimulationStage.COMPLETED:
-            return "completion"
-        else:
-            return "error_handler"
-
+        
+        return "welcome"  # Stay in welcome
+    
+    def _route_from_module(self, state: SupervisorState, module_name: str, 
+                          next_module: str = None, is_last: bool = False) -> str:
+        """Route from a module to next module, completion, or error"""
+        
+        module_results = state.get('module_results', {})
+        current_result = module_results.get(module_name)
+        
+        # Check if module completed successfully
+        if current_result and current_result.status == ModuleStatus.COMPLETED:
+            if is_last:
+                return "completion"
+            elif next_module:
+                return f"module_{next_module}"
+        
+        # Module failed
+        return "error_handler"
+    
     # =================
     # HELPER METHODS
     # =================
-
+    
+    def _create_error_state(self, state: SupervisorState, error_message: str) -> SupervisorState:
+        """Create an error state"""
+        return {
+            **state,
+            'current_stage': SupervisorStage.ERROR,
+            'error_message': error_message
+        }
+    
     def _show_help(self):
         """Show help information"""
-        help_text = """
-📖 **HELP - Simulation Configuration Process**
+        execution_order = self.registry.get_execution_order()
+        
+        help_text = f"""
+📖 **HELP - Independent Module Configuration**
 
-This system will guide you through 3 stages:
-1. **ReadIn**: Configure neutron input parameters (beam settings, initial conditions)
-2. **Guide**: Set up neutron guide geometry (dimensions, reflectivity)  
-3. **Writeout**: Configure output format and data collection settings
+This system will guide you through {len(execution_order)} independent modules:
+"""
+        
+        for module_name in execution_order:
+            module_metadata = self.registry.get_module(module_name)
+            if module_metadata:
+                optional_text = " (optional)" if module_metadata.optional else " (required)"
+                help_text += f"\n{module_metadata.order}. **{module_metadata.display_name}**{optional_text}\n   {module_metadata.description}"
+        
+        help_text += """
 
-Each stage has a specialized AI agent that will:
+Each module is independent and has a specialized AI agent that will:
 - Ask you questions about your simulation needs
-- Provide default recommendations
+- Provide default recommendations  
 - Validate your parameter choices
 - Generate the final configuration
 
+Modules run in order, but each one is self-contained.
 Type 'start' when you're ready to begin!
         """
         print(help_text)
-
+    
     # =================
     # PUBLIC API
     # =================
-
-    async def run(self, thread_id: str = "supervisor_default") -> Dict[str, Any]:
+    
+    async def run(self, thread_id: str = "supervisor_default", 
+                  requested_modules: Optional[List[str]] = None) -> Dict[str, Any]:
         """Run the complete simulation configuration process"""
+        
+        # Initialize if needed
         if not self._initialized:
-            await self.initialize()
+            await self.initialize(requested_modules)
         
-        print("🎯 Starting complete simulation configuration...")
+        self._logger.info(f"Starting configuration process with thread_id: {thread_id}")
         
-        # Configuration for the run
         config = {"configurable": {"thread_id": thread_id}}
         
-        # Initialize state
         input_state = {
             "messages": [],
-            "current_stage": SimulationStage.WELCOME,
-            "readin_completed": False,
-            "guide_completed": False,
-            "writeout_completed": False,
+            "current_stage": SupervisorStage.WELCOME,
+            "module_results": {},
+            "current_module": None,
+            "execution_order": [],
+            "pending_modules": [],
             "current_agent_thread": "",
-            "readin_params": None,
-            "guide_params": None,
-            "writeout_params": None,
-            "error_message": None
+            "error_message": None,
+            "user_preferences": {},
+            "session_metadata": {"thread_id": thread_id}
         }
         
         try:
-            # Run the complete workflow
-            result = await self.app.ainvoke(input_state, config)
+            result = await self._app.ainvoke(input_state, config)
             
-            # Return final configuration
-            if result['current_stage'] == SimulationStage.COMPLETED:
+            if result['current_stage'] == SupervisorStage.COMPLETION:
+                # Extract successful results
+                successful_results = {
+                    name: result_obj.parameters 
+                    for name, result_obj in result.get('module_results', {}).items()
+                    if result_obj.status == ModuleStatus.COMPLETED
+                }
+                
                 return {
                     "status": "success",
-                    "simulation_config": {
-                        "readin_parameters": result.get('readin_params'),
-                        "guide_parameters": result.get('guide_params'),
-                        "writeout_parameters": result.get('writeout_params')
-                    }
+                    "simulation_config": successful_results,
+                    "completed_modules": list(successful_results.keys()),
+                    "execution_order": result.get('execution_order', [])
                 }
             else:
                 return {
                     "status": "error",
                     "error_message": result.get('error_message', 'Configuration incomplete'),
-                    "current_stage": result['current_stage'].value
+                    "current_stage": result['current_stage'],
+                    "completed_modules": [
+                        name for name, res in result.get('module_results', {}).items()
+                        if res.status == ModuleStatus.COMPLETED
+                    ]
                 }
                 
         except Exception as e:
+            self._logger.error(f"Configuration failed: {e}")
             return {
-                "status": "error",
+                "status": "error", 
                 "error_message": f"Configuration process failed: {str(e)}",
                 "current_stage": "unknown"
             }
-
-    def get_status(self, thread_id: str = "supervisor_default") -> Dict[str, Any]:
+    
+    def get_status(self, thread_id: str = "supervisor_default") -> SupervisorStatus:
         """Get current configuration status"""
         if not self._initialized:
-            return {"status": "not_initialized"}
+            return SupervisorStatus(
+                status="not_initialized",
+                current_stage="none",
+                available_modules=self.list_modules()
+            )
         
         config = {"configurable": {"thread_id": thread_id}}
-        state = self.app.get_state(config)
+        state = self._app.get_state(config)
         
         if not state.values:
-            return {
-                "status": "not_started",
-                "current_stage": "none",
-                "progress": "0/3"
-            }
+            return SupervisorStatus(
+                status="not_started",
+                current_stage="none",
+                available_modules=self.list_modules()
+            )
         
-        # Calculate progress
-        completed_stages = []
-        if state.values.get('readin_completed'):
-            completed_stages.append("readin")
-        if state.values.get('guide_completed'):
-            completed_stages.append("guide")
-        if state.values.get('writeout_completed'):
-            completed_stages.append("writeout")
+        module_results = state.values.get('module_results', {})
+        completed = [name for name, res in module_results.items() if res.status == ModuleStatus.COMPLETED]
+        total_modules = len(state.values.get('execution_order', []))
         
-        return {
-            "status": "in_progress" if len(completed_stages) < 3 else "completed",
-            "current_stage": state.values.get('current_stage', SimulationStage.WELCOME).value,
-            "progress": f"{len(completed_stages)}/3",
-            "completed_stages": completed_stages,
-            "error_message": state.values.get('error_message')
-        }
-
-    def export_config(self, thread_id: str = "supervisor_default") -> str:
-        """Export the final configuration as JSON"""
+        return SupervisorStatus(
+            status="completed" if len(completed) == total_modules else "in_progress",
+            current_stage=state.values.get('current_stage', SupervisorStage.WELCOME),
+            current_module=state.values.get('current_module'),
+            completed_modules=completed,
+            execution_order=state.values.get('execution_order', []),
+            error_message=state.values.get('error_message')
+        )
+    
+    def export_config(self, thread_id: str = "supervisor_default") -> ConfigurationExport:
+        """Export final configuration"""
         status = self.get_status(thread_id)
         
-        if status["status"] != "completed":
-            raise ValueError(f"Configuration not complete. Current status: {status['status']}")
+        if status.status != "completed":
+            raise ValueError(f"Configuration not complete. Status: {status.status}")
         
         config = {"configurable": {"thread_id": thread_id}}
-        state = self.app.get_state(config)
+        state = self._app.get_state(config)
         
-        configuration = {
-            "simulation_configuration": {
-                "readin_parameters": state.values.get('readin_params'),
-                "guide_parameters": state.values.get('guide_params'),
-                "writeout_parameters": state.values.get('writeout_params')
+        module_results = state.values.get('module_results', {})
+        
+        return ConfigurationExport(
+            simulation_configuration={
+                f"{name}_parameters": result.parameters
+                for name, result in module_results.items()
+                if result.status == ModuleStatus.COMPLETED
             },
-            "metadata": {
+            metadata={
                 "thread_id": thread_id,
-                "supervisor_version": "1.0.0",
-                "export_timestamp": "2025-01-01T00:00:00Z"
+                "supervisor_version": "2.0.0",
+                "execution_order": state.values.get('execution_order', []),
+                "completed_modules": status.completed_modules,
+                "total_modules": len(state.values.get('execution_order', [])),
+                "session_info": state.values.get('session_metadata', {})
             }
-        }
-        
-        return json.dumps(configuration, indent=2)
+        )
 
 
 # =================
-# USAGE EXAMPLE
+# CONVENIENCE FACTORY FUNCTIONS
 # =================
+
+async def create_default_supervisor(model_name: str = 'gpt-4o-mini-2024-07-18') -> SupervisorAgent:
+    """Create supervisor with default modules (readin, guide, writeout)"""
+    config = SupervisorConfigBuilder.create(model_name=model_name)
+    supervisor = SupervisorAgent(config)
+    supervisor.add_default_modules()
+    await supervisor.initialize()
+    return supervisor
+
+
+# =================
+# USAGE EXAMPLES
+# =================
+
+def show_execution_order(supervisor: SupervisorAgent):
+    """Show what order modules will execute in"""
+    modules = supervisor.list_modules()
+    sorted_modules = sorted(modules, key=lambda m: m['order'])
+    
+    print("📋 Execution Order:")
+    for module in sorted_modules:
+        optional_text = " (optional)" if module['optional'] else ""
+        print(f"   {module['order']}. {module['display_name']}{optional_text}")
+
 
 async def main():
-    """Example usage of the SupervisorAgent"""
-    print("🚀 Initializing Neutron Simulation Supervisor...")
+    """Example: Different ways to use the combined supervisor"""
     
-    # Create supervisor
-    supervisor = SupervisorAgent()
+    print("🚀 Initializing Neutron Simulation Supervisor..."
+    print("=" * 50)
     
-    # Run the complete configuration process
+    # Example 1: Default supervisor
+    print("\n1️⃣ Default supervisor (readin → guide → writeout):")
+    supervisor = await create_default_supervisor()
+    show_execution_order(supervisor)
+
     result = await supervisor.run("simulation_001")
-    
     print("\n" + "="*60)
     print("🏁 FINAL RESULT:")
     print("="*60)
     print(json.dumps(result, indent=2))
-    
-    # Export configuration if successful
-    if result["status"] == "success":
-        config_json = supervisor.export_config("simulation_001")
-        print("\n📄 Exported Configuration:")
-        print(config_json)
-
 
 if __name__ == "__main__":
     import asyncio
