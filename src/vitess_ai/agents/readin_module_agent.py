@@ -8,6 +8,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from vitess_ai.schema.readin_module import InitialResponseReadIn
 from vitess_ai.prompts.readin_module import READIN_AGENT_PROMPT, READIN_AGENT_WELCOME
 from vitess_ai.agents.base_module_agent import BaseModuleAgent
+from vitess_ai.core.config import global_config
 
 
 class ReadInAgent(BaseModuleAgent[InitialResponseReadIn]):
@@ -21,9 +22,9 @@ class ReadInAgent(BaseModuleAgent[InitialResponseReadIn]):
     - Simulation initialization settings
     """
     
-    def __init__(self, model_name: str, tools: List[BaseTool] = []):
+    def __init__(self, provider:str, model: str, tools: List[BaseTool] = []):
         """Initialize the ReadIn Agent with base functionality"""
-        super().__init__(model_name, tools)
+        super().__init__(provider, model, tools)
     
     # =================
     # REQUIRED ABSTRACT METHODS
@@ -107,9 +108,10 @@ class ReadInAgent(BaseModuleAgent[InitialResponseReadIn]):
 # =================
 
 async def create_readin_agent(
-    model_name: str = 'gpt-4o-mini-2024-07-18',
-    mcp_tool_path: str = "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/readin_module_tools.py"
-) -> ReadInAgent:
+    provider: str = global_config.DEFAULT_PROVIDER,
+    model: str = global_config.DEFAULT_MODEL,
+    mcp_tool_path: str = global_config.READIN_MCP_PATH
+    ) -> ReadInAgent:
     """Factory function to create a ReadIn agent with MCP tools"""
     
     client = MultiServerMCPClient({
@@ -121,7 +123,7 @@ async def create_readin_agent(
     })
     
     tools = await client.get_tools()
-    return ReadInAgent(model_name=model_name, tools=tools)
+    return ReadInAgent(provider=provider, model=model, tools=tools)
 
 
 # =================

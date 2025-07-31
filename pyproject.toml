@@ -24,7 +24,6 @@ dependencies = [
     "gradio (>=5.25.2,<6.0.0)",
     "cocoindex (>=0.1.36,<0.2.0)",
     "langchain-mcp-adapters>=0.1.7",
-    "loguru>=0.7.3",
     "fastmcp>=2.9.2",
     "ipykernel>=6.29.5",
     "pyqt6>=6.9.1",
