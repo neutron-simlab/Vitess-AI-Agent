@@ -239,5 +239,5 @@ class InitialResponseFilter(BaseModel):
     This is the default response model for each module at the initialization of the filter module.
     Always use this tool to structure your response to the user.
     """
-    response: Annotated[Literal['Default', 'Custom', 'Not Known'], 
+    response: Annotated[Literal['Default Setup', 'Customize', 'Not Known'], 
                         Field(description="Initial filter module response type")]

@@ -54,6 +54,7 @@ class Config:
     READIN_MCP_PATH = os.getenv("READIN_MCP_PATH")
     GUIDE_MCP_PATH = os.getenv("GUIDE_MCP_PATH") 
     WRITEOUT_MCP_PATH = os.getenv("WRITEOUT_MCP_PATH")
+    FILTER_MCP_PATH = os.getenv("FILTER_MCP_PATH")
     
     
     # =============================================================================
