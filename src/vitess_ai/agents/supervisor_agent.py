@@ -150,6 +150,20 @@ class SupervisorAgent:
             order=1
         )
         self.register_module(module)
+
+    def add_filter_module(self, config_path: str = None) -> None:
+        """Add the standard guide module"""  
+        from vitess_ai.agents.filter_module_agent import FilterAgent
+        
+        module = ModuleBuilder.create(
+            name="filter",
+            display_name="Filter Parameters", 
+            description="Configure filter on simulation input",
+            agent_class=FilterAgent,
+            config_path=global_config.FILTER_MCP_PATH,
+            order=2
+        )
+        self.register_module(module)
     
     def add_guide_module(self, config_path: str = None) -> None:
         """Add the standard guide module"""  
@@ -161,7 +175,7 @@ class SupervisorAgent:
             description="Configure neutron guide specifications and geometry",
             agent_class=GuideAgent,
             config_path=global_config.GUIDE_MCP_PATH,
-            order=2
+            order=3
         )
         self.register_module(module)
     
@@ -175,7 +189,7 @@ class SupervisorAgent:
             description="Configure output settings and data formats", 
             agent_class=WriteoutAgent,
             config_path=global_config.WRITEOUT_MCP_PATH,
-            order=3
+            order=4
         )
         self.register_module(module)
     
@@ -204,8 +218,10 @@ class SupervisorAgent:
     def add_default_modules(self) -> None:
         """Add all default modules (readin, guide, writeout)"""
         self.add_readin_module()
+        self.add_filter_module()
         self.add_guide_module()
         self.add_writeout_module()
+        
     
     # =================
     # AGENT INITIALIZATION

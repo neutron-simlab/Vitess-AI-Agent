@@ -1,277 +1,180 @@
 """
-Improved LangGraph Agent Template for Neutron Filter Configuration
-Fixed issues with state management, I/O handling, and workflow logic
+FilterAgent - Migrated to use BaseModuleAgent
+LangGraph Agent for Neutron Filter Configuration
 """
-from typing import List, Optional
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
-from langchain_openai import ChatOpenAI
+from typing import List
 from langchain.tools import BaseTool
-from langgraph.graph import StateGraph, END, START, MessagesState
-from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.checkpoint.memory import MemorySaver
-from vitess_ai.schema.filter_module import InitialResponse, FillingStage, FilterBlock
+from vitess_ai.schema.filter_module import InitialResponseFilter
 from vitess_ai.prompts.filter_module import (
-    INIT_AGENT_INIT_PROMPT, 
     FILTER_AGENT_PROMPT, 
     FILTER_AGENT_WELCOME,
 )
+from vitess_ai.agents.base_module_agent import BaseModuleAgent
+from vitess_ai.core.config import global_config
 
-# Define the agent state
-class FilterAgentState(MessagesState):
-    stage: FillingStage
-    user_choice: str  # Track user's initial choice (Custom/Default/Not Known)
-    filter_params: Optional[FilterBlock] = None # type: ignore
-    validation_status: Optional[bool] = None # type: ignore
 
-class FilterAgent:
-    def __init__(self, model_name: str, tools: List[BaseTool]=[]):
-        """Initialize the LangGraph agent"""
-
-        self.llm = ChatOpenAI(model=model_name, temperature=0)
-        self.name = "Filter Agent"
-        
-        # Get MCP validation tools
-        if tools:
-            self.init_prompt = SystemMessage(content=INIT_AGENT_INIT_PROMPT)
-            self.welcome_prompt = SystemMessage(content=FILTER_AGENT_WELCOME)
-            self.mcp_tools = tools
-            self.llm = self.llm.bind_tools(self.mcp_tools, parallel_tool_calls=False)
-            self.sys_prompt = SystemMessage(content=FILTER_AGENT_PROMPT)
-        else: 
-            # System prompts
-            self.init_prompt = SystemMessage(content=INIT_AGENT_INIT_PROMPT)
-            self.welcome_prompt = SystemMessage(content=FILTER_AGENT_WELCOME)
-            self.sys_prompt = SystemMessage(content=FILTER_AGENT_PROMPT)
-        
-        # Create the graph
-        self.graph = self._create_graph()
-        
-        # Add memory for conversation persistence
-        self.memory = MemorySaver()
-        self.app = self.graph.compile(checkpointer=self.memory)
-
-    def _create_graph(self) -> StateGraph:
-        """Create the agent graph"""
-        workflow = StateGraph(FilterAgentState)
-        
-        # Define nodes
-        workflow.add_node("initialize", self._initialize_node)
-        workflow.add_node("params_filling", self._parameters_filling)
-        workflow.add_node("welcome", self._welcome_node)
-        workflow.add_node("tools", ToolNode(self.mcp_tools))
-        
-        # Define edges 
-        workflow.add_edge(START, 'welcome')
-        workflow.add_edge('welcome', 'initialize')
-        workflow.add_conditional_edges('initialize', self._route_after_init)
-        workflow.add_conditional_edges('params_filling', self._condition_parameters_filling)
-        workflow.add_conditional_edges('tools', self._route_after_tools)
-        
-        return workflow
+class FilterAgent(BaseModuleAgent[InitialResponseFilter]):
+    """
+    Filter Agent for configuring neutron filter parameters.
     
-    def _welcome_node(self, state: FilterAgentState) -> FilterAgentState:
-        """Send welcome message to user"""
-        print(f"{self.welcome_prompt.content}")
-        
-        return {
-            'messages': [],
-            'stage': FillingStage(stage='processing')
-        } #type:ignore
+    """
     
-    def _initialize_node(self, state: FilterAgentState) -> FilterAgentState:
+    def __init__(self, provider: str, model: str, tools: List[BaseTool] = []):
+        """Initialize the Filter Agent with base functionality"""
+        super().__init__(provider, model, tools)
+    
+    # =================
+    # REQUIRED ABSTRACT METHODS
+    # =================
+    
+    @property
+    def name(self) -> str:
+        return "Filter Agent"
+    
+    @property
+    def module_name(self) -> str:
+        return "filter"
+    
+    @property
+    def welcome_message(self) -> str:
+        return FILTER_AGENT_WELCOME
+    
+    @property
+    def system_prompt(self) -> str:
+        return FILTER_AGENT_PROMPT
+    
+    def get_initial_response_schema(self):
+        return InitialResponseFilter
+    
+    def get_result_key(self) -> str:
+        return "filter_params"
+    
+    # =================
+    # CUSTOMIZATIONS FOR FILTER MODULE
+    # =================
+    
+    def get_default_setup_message(self) -> str:
+        """Custom message for Filter default setup"""
+        return """
+        You have chosen the default setup configuration.
+        Unfortunatel, the filter module agent can only work with the custom configuration.
+        Let me guide you through configuring all filter parameters.
         """
-        Node to initialize the conversation and determine user's preference
-        """
-        user_init_message = input("\nUser:\n").strip()
-        messages = [self.init_prompt, self.welcome_prompt, HumanMessage(user_init_message)]
-        
-        # Use structured output to classify user intent
-        structured_llm = self.llm.with_structured_output(InitialResponse) # type: ignore
-        response = structured_llm.invoke(messages)
-        
-        # Store the user's choice
-        user_choice = response.response #type:ignore
-        
-        return {
-            'messages': [*messages, self.sys_prompt],
-            'stage': FillingStage(stage='processing'),
-            'user_choice': user_choice
-        } # type: ignore
     
-    def _route_after_init(self, state: FilterAgentState) -> str:
-        """Route based on user's initial choice"""
-        user_choice = state.get('user_choice', '')
+    def get_customize_setup_message(self) -> str:
+        """Custom message for Filter customization"""
+        return """
+        You have chosen the custom configuration. Let me guide you through 
+        configuring all filter parameters.
+        """
+    
+    def parse_config_mode(self, response: InitialResponseFilter) -> str:
+        """Parse config mode from Filter response"""
+        return response.response
+    
+    def get_valid_config_modes(self) -> List[str]:
+        """Filter uses 'Custom' and 'Default' modes"""
+        return ['Default Setup', 'Customize']
+    
+    def validate_config_mode(self, config_mode: str) -> bool:
+        """Validate Filter configuration mode"""
+        return config_mode in ['Default Setup', 'Customize']
+    
+    def get_completion_message(self) -> str:
+        """Custom completion message for Filter"""
+        return """
+        ✅ Filter parameters configuration completed successfully!
         
-        if user_choice == 'Custom':
-            return 'params_filling'
-        elif user_choice == 'Default':
-            # Handle default parameters (could add a default_params node)
-            return END
+        Your neutron filter specifications have been validated and are ready.
+        The configuration includes all necessary filter materials, dimensions,
+        positioning, and transmission properties for the simulation.
+        """
+    
+    # =================
+    # FILTER-SPECIFIC CUSTOMIZATIONS
+    # =================
+    
+    def _route_after_init(self, state) -> str:
+        """Custom routing for Filter module"""
+        config_mode = state.get('config_mode', '')
+        self.logger.info(f"Routing after init with config_mode: {config_mode}")
+        
+        if not self.validate_config_mode(config_mode):
+            self.logger.warning(f"Invalid config mode '{config_mode}', ending conversation")
+            print("We don't understand your choice.\nWe will end the conversation.")
+            return "END"  # Use string instead of END constant
+        
+        # Filter-specific routing logic
+        if config_mode == 'Customize':
+            self.logger.info("Routing to customize setup for custom filter configuration")
+            return 'customize_setup'  # Route custom to customize_setup
+        elif config_mode == 'Default Setup':
+            self.logger.info("Routing to default setup for standard filter configuration")
+            return 'default_setup'
         else:
-            # Not Known - ask for clarification or end
-            return END
-    
-    def _parameters_filling(self, state: FilterAgentState) -> FilterAgentState:
-        """
-        Guide user through parameter configuration with tool support
-        """
-        print("\n=== ENTERING _parameters_filling ===")
-        print(f"Current state messages count: {len(state['messages'])}")
-        
-        # Use LLM with tools for enhanced functionality
-        response = self.llm.invoke(state['messages'])
-        print(f"\nRAW RESPONSE:\n{response}")
-        
-        # Debug: Print what we're checking
-        print(f"DEBUG: hasattr(response, 'tool_calls'): {hasattr(response, 'tool_calls')}")
-        print(f"DEBUG: response.tool_calls: {getattr(response, 'tool_calls', None)}")
-        
-        # Always add the AI response to messages first
-        updated_messages = state['messages'] + [response]
-        print(f"DEBUG: Updated messages count after adding response: {len(updated_messages)}")
-        
-        print(f"\nAssistant:\n{response.content}") 
-        if hasattr(response, 'tool_calls') and response.tool_calls: # type: ignore
-            print("DEBUG: Tool calls detected, routing to tools")
-            print(f"DEBUG: Returning state with {len(updated_messages)} messages")
-            return {
-                'messages': updated_messages, # type: ignore
-                'stage': FillingStage(stage='processing')
-            }
-        else:
-            print("DEBUG: No tool calls, getting user input")
-            user_input = input("\nUser:\n").strip()
-            final_messages = updated_messages + [HumanMessage(content=user_input)]
-            print(f"DEBUG: Final messages count after user input: {len(final_messages)}")
-            return {
-                'messages': final_messages, # type: ignore
-                'stage': FillingStage(stage='processing')
-            }
-    
-    def _route_after_tools(self, state: FilterAgentState) -> str:
-        """Route after tool execution"""
-        # Continue with parameter filling after tool use
-        last_message = state['messages'][-1]
-        print(f"\n the last message from tools calling is:\n {last_message}\n")
-        return END
-    
-    def _condition_parameters_filling(self, state: FilterAgentState) -> str:
-        """
-        Determine if parameter filling is complete or if tools should be called
-        """
-        last_message = state['messages'][-1]
-
-        print(f"\n the last message from params_filling is:\n {last_message}\n")
-        
-        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:  #type:ignore
-            print('\n we have a tools call.\n')
-            return 'tools'
-        else:
-            return 'params_filling'
-    
-    async def run(self, user_input: str, thread_id: str = "default") -> str:
-        """Run the agent with user input"""
-        # Configuration for the run
-    
-        config = {"configurable": {"thread_id": thread_id}}
-        
-        # Get current state
-        current_state = self.app.get_state(config)  #type:ignore
-        
-        # Prepare input message
-        user_message = HumanMessage(content=user_input)
-        
-        if current_state.values:
-            # Continue existing conversation
-            current_messages = current_state.values.get("messages", [])
-            input_state = {
-                "messages": current_messages + [user_message],
-                "stage": current_state.values.get("stage", FillingStage(stage='processing')),
-                "user_choice": current_state.values.get("user_choice", "")
-            }
-        else:
-            # Start new conversation
-            input_state = {
-                "messages": [user_message],
-                "stage": FillingStage(stage='processing'),
-                "user_choice": ""
-            }
-        
-        # Run the graph
-        result = await self.app.ainvoke(input_state, config)  #type:ignore
-        
-        # Extract the final response
-        final_messages = result["messages"]
-        if final_messages:
-            # Return the last AI message
-            for msg in reversed(final_messages):
-                if isinstance(msg, AIMessage):
-                    return msg.content  #type:ignore
-        
-        return "No response generated"
-    
-    def stream_run(self, user_input: str, thread_id: str = "default"):
-        """Stream the agent execution for real-time updates"""
-        config = {"configurable": {"thread_id": thread_id}}
-        
-        # Get current state and prepare input
-        current_state = self.app.get_state(config)  #type:ignore
-        user_message = HumanMessage(content=user_input)
-        
-        if current_state.values:
-            current_messages = current_state.values.get("messages", [])
-            input_state = {
-                "messages": current_messages + [user_message],
-                "stage": current_state.values.get("stage", FillingStage(stage='processing')),
-                "user_choice": current_state.values.get("user_choice", "")
-            }
-        else:
-            input_state = {
-                "messages": [user_message],
-                "stage": FillingStage(stage='processing'),
-                "user_choice": ""
-            }
-        
-        # Stream the execution
-        for chunk in self.app.stream(input_state, config):  #type:ignore
-            yield chunk
-    
-    def get_conversation_history(self, thread_id: str = "default") -> List[BaseMessage]:
-        """Get the conversation history for a thread"""
-        config = {"configurable": {"thread_id": thread_id}}
-        state = self.app.get_state(config)  #type:ignore
-        return state.values.get("messages", []) if state.values else []
-    
-    # def reset_conversation(self, thread_id: str = "default") -> None:
-    #     """Reset conversation for a thread"""
-    #     config = {"configurable": {"thread_id": thread_id}}
-        # Clear the checkpointer state for this thread
-        # Note: This depends on your MemorySaver implementation
-        pass
+            self.logger.error(f"Unhandled config mode: {config_mode}")
+            print("Invalid configuration mode selected.")
+            return "END"
 
 
-async def main(): 
-    client =  MultiServerMCPClient({
-            "validation": {
-                "command": "python",
-                "args": ["/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/validation_server.py"],
-                "transport": "stdio"
-            }
-        })  # type: ignore
+# =================
+# FACTORY FUNCTION FOR EASY SETUP
+# =================
+
+async def create_filter_agent(
+    provider: str = global_config.DEFAULT_PROVIDER,
+    model: str = global_config.DEFAULT_MODEL,
+    mcp_tool_path: str = global_config.FILTER_MCP_PATH  # Update this path
+) -> FilterAgent:
+    """Factory function to create a Filter agent with MCP tools"""
+    
+    client = MultiServerMCPClient({
+        "validation": {
+            "command": "python",
+            "args": [mcp_tool_path],
+            "transport": "stdio"
+        }
+    })
+    
     tools = await client.get_tools()
-    agent = FilterAgent(model_name='alias-large', tools=tools)
+    return FilterAgent(provider=provider, model=model, tools=tools)
 
-   # Example conversation flow with validation
-    thread_id = "100"
-    print("=== Filter Configuration Chatbot Demo ===\n")
 
-    # Start conversation
+# =================
+# EXAMPLE USAGE
+# =================
+
+async def main():
+    """Example usage of the migrated Filter Agent"""
+    print("🚀 Initializing Filter Agent...")
+    
+    # Create agent using factory function
+    agent = await create_filter_agent()
+    
+    # Example conversation flow
+    thread_id = "filter_100"
+    print("=== Neutron Filter Configuration Demo ===\n")
+    
     print("🤖 Starting conversation...")
-    await agent.run("", thread_id)
+    result = await agent.run("", thread_id)
+    
+    print("\n" + "="*60)
+    print("FINAL FILTER PARAMS:")
+    print("="*60)
+    print(result)
+    
+    # Example of getting conversation history
+    history = agent.get_conversation_history(thread_id)
+    print(f"\nConversation had {len(history)} messages")
+    
+    # Example of accessing the logger for this specific agent
+    agent.logger.info("Filter agent demo completed successfully")
 
-# Example usage
+
 if __name__ == "__main__":
     import asyncio
     
+    # Run the main example
     asyncio.run(main())
+    

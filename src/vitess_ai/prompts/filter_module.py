@@ -1,26 +1,15 @@
-from vitess_ai.schema.filter_module import FilterBlock, FillingStage
+from vitess_ai.schema.filter_module import FilterBlock
 
 filter_block_schema = FilterBlock.model_json_schema()
-filling_stage_schema = FillingStage.model_json_schema()
-
-INIT_AGENT_INIT_PROMPT = """
-You are an intelligent agent that analyzes user input to classify their intent regarding parameter configuration. Your task is to determine whether the user is referring to default parameters, custom parameters, or if their intent is not clearly related to parameters at all.
-
-There are only three valid response options:
-
-* "Default" — when the user requests or mentions the use of standard or default parameters.
-* "Custom" — when the user specifies or expresses a desire to use their own, user-defined parameters.
-* "Not Known" — when the user’s input does not clearly indicate a choice between default or custom parameters (e.g., unrelated topics like hobbies, opinions, or ambiguous language).
-"""
 
 FILTER_AGENT_WELCOME = """
 Hello! 👋 I'm your assistant or FILTER AGENT for building valid JSON configurations for neutron filter simulations, based on the Filter Module of Neutron.
 
 I'm here to help you quickly set up your configuration — whether you prefer using default parameters or want to provide your own custom settings.
+🚀 **Default Setup** 
+⚙️ **Customize**: 
 
-To get started, please let me know:
-
-Would you like to use default parameters, or do you want to define custom ones yourself?
+To get started, please let me know whether you want to use 
 
 Just reply in your own words, and I’ll take care of identifying the right path
 """
@@ -76,7 +65,7 @@ Each parameter (except NO_PAR) must include:
 ------------------------------
 YOUR TASK
 ------------------------------
-0. Welcome the user with: Alright, you have chosen to customize the filter module parameters. Let me guide you to fill the parameters.
+0. Welcome the user and if the user has chosen the Default Setup on parameters filling, please explain that the you as FILTER module agent only work for customize. Please sorry them.
 1. Ask the user: "How many total parameters would you like to define?".
 2. Group parameters into **sets of 4**. If they only put less than 4 parameters, let the rest become NO_PAR, they alredy know it. Each group forms one `FilterSet`.
 3. For each parameter in the set:
