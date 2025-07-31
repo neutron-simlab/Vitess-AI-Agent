@@ -8,6 +8,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from vitess_ai.schema.guide_module import InitialResponseGuide
 from vitess_ai.prompts.guide_module import GUIDE_AGENT_PROMPT, GUIDE_AGENT_WELCOME
 from vitess_ai.agents.base_module_agent import BaseModuleAgent
+from vitess_ai.core.config import global_config
 
 
 class GuideAgent(BaseModuleAgent[InitialResponseGuide]):
@@ -21,9 +22,9 @@ class GuideAgent(BaseModuleAgent[InitialResponseGuide]):
     - Neutron transport optimization
     """
     
-    def __init__(self, model_name: str, tools: List[BaseTool] = []):
+    def __init__(self, provider: str, model: str, tools: List[BaseTool] = []):
         """Initialize the Guide Agent with base functionality"""
-        super().__init__(model_name, tools)
+        super().__init__(provider, model, tools)
     
     # =================
     # REQUIRED ABSTRACT METHODS
@@ -115,9 +116,10 @@ class GuideAgent(BaseModuleAgent[InitialResponseGuide]):
 # =================
 
 async def create_guide_agent(
-    model_name: str = 'gpt-4o-mini-2024-07-18',
-    mcp_tool_path: str = "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/guide_module_tools.py"
-) -> GuideAgent:
+    provider: str = global_config.DEFAULT_PROVIDER,
+    model: str = global_config.DEFAULT_MODEL,
+    mcp_tool_path: str = global_config.GUIDE_MCP_PATH
+    ) -> GuideAgent:
     """Factory function to create a Guide agent with MCP tools"""
     
     client = MultiServerMCPClient({
@@ -129,7 +131,7 @@ async def create_guide_agent(
     })
     
     tools = await client.get_tools()
-    return GuideAgent(model_name=model_name, tools=tools)
+    return GuideAgent(provider=provider, model=model, tools=tools)
 
 
 # =================

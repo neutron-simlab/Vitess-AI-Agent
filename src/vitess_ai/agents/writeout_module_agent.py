@@ -8,6 +8,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from vitess_ai.schema.writeout_module import InitialResponseWriteout
 from vitess_ai.prompts.writeout_module import WRITEOUT_AGENT_PROMPT, WRITEOUT_AGENT_WELCOME
 from vitess_ai.agents.base_module_agent import BaseModuleAgent
+from vitess_ai.core.config import global_config
 
 
 class WriteoutAgent(BaseModuleAgent[InitialResponseWriteout]):
@@ -21,9 +22,9 @@ class WriteoutAgent(BaseModuleAgent[InitialResponseWriteout]):
     - Post-processing configurations
     """
     
-    def __init__(self, model_name: str, tools: List[BaseTool] = []):
+    def __init__(self, provider:str, model: str, tools: List[BaseTool] = []):
         """Initialize the Writeout Agent with base functionality"""
-        super().__init__(model_name, tools)
+        super().__init__(provider, model, tools)
     
     # =================
     # REQUIRED ABSTRACT METHODS
@@ -138,9 +139,10 @@ class WriteoutAgent(BaseModuleAgent[InitialResponseWriteout]):
 # =================
 
 async def create_writeout_agent(
-    model_name: str = 'gpt-4o-mini-2024-07-18',
-    mcp_tool_path: str = "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/writeout_module_tools.py"
-) -> WriteoutAgent:
+    provider: str = global_config.DEFAULT_PROVIDER,
+    model: str = global_config.DEFAULT_MODEL,
+    mcp_tool_path: str = global_config.WRITEOUT_MCP_PATH
+    ) -> WriteoutAgent:
     """Factory function to create a Writeout agent with MCP tools"""
     
     client = MultiServerMCPClient({
@@ -152,7 +154,7 @@ async def create_writeout_agent(
     })
     
     tools = await client.get_tools()
-    return WriteoutAgent(model_name=model_name, tools=tools)
+    return WriteoutAgent(provider=provider, model=model, tools=tools)
 
 
 # =================

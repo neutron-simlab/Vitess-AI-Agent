@@ -9,7 +9,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
-from langchain_openai import ChatOpenAI
+from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langchain.tools import BaseTool
 from langgraph.graph import StateGraph, END, START, MessagesState
 from langgraph.prebuilt import ToolNode
@@ -41,17 +41,19 @@ class BaseModuleAgent(ABC, Generic[R]):
     - Structured logging throughout
     """
     
-    def __init__(self, model_name: str, tools: List[BaseTool] = []):
+    def __init__(self, provider:str, model: str, tools: List[BaseTool] = []):
         """Initialize the base module agent"""
-        self.llm = ChatOpenAI(model=model_name, temperature=0)
-        self.model_name = model_name
+        self.provider = provider
+        self.model = model
         self.tools = tools
+        self.llm = create_llm_with_fallback(provider=self.provider, model=self.model)
+        
         
         # Setup logging
         self._setup_logging()
         
         # Log initialization
-        self.logger.info(f"Initializing {self.name} with model {model_name}")
+        self.logger.info(f"Initializing {self.name} with model {model}")
         if tools:
             self.logger.info(f"Loaded {len(tools)} MCP tools")
         

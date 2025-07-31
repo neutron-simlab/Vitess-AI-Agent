@@ -6,7 +6,7 @@ import logging
 import json
 from typing import Dict, List, Any, Optional, Callable, Type
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, MessagesState, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import Field
@@ -23,6 +23,7 @@ from vitess_ai.agents.base_module_agent import (
     ModuleResult
 )
 
+from vitess_ai.core.config import global_config
 # =================
 # CONFIG BUILDER - Creates supervisor configurations
 # =================
@@ -32,20 +33,23 @@ class SupervisorConfigBuilder:
     
     @staticmethod
     def create(
-        model_name: str = 'gpt-4o-mini-2024-07-18',
+        provider: str = global_config.DEFAULT_PROVIDER,
+        model: str = global_config.DEFAULT_MODEL,
         welcome_message: str = None
     ) -> SupervisorConfig:
         """
-        Create a supervisor config - simple!
+        Create a supervisor config 
         
         Args:
-            model_name: LLM model to use
+            provider: Provider of LLM
+            model: LLM model to use
             max_retries: How many times to retry failed modules
             allow_skipping: Can users skip optional modules?
             welcome_message: Custom welcome text (uses default if None)
         """
         config = SupervisorConfig(
-            model_name=model_name
+            provider=provider,
+            model=model
         )
         
         if welcome_message:
@@ -60,7 +64,7 @@ class SupervisorConfigBuilder:
 class SupervisorState(MessagesState):
     """Enhanced state for the supervisor"""
     current_stage: SupervisorStage = SupervisorStage.WELCOME
-    module_results: Dict[str, ModuleResult] = Field(default={})
+    module_results: Dict[str, ModuleResult] = Field(default={}) # State storing Vitess modules parameters
     current_module: Optional[str] = None
     execution_order: List[str] = Field(default=[])
     pending_modules: List[str] = Field(default=[])
@@ -80,7 +84,7 @@ class SupervisorAgent:
     def __init__(self, config: SupervisorConfig = None):
         """Initialize the supervisor agent"""
         self.config = SupervisorConfigBuilder.create()
-        self.llm = ChatOpenAI(model=self.config.model_name, temperature=0)
+        self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
         self.registry = ModuleRegistry()
         
         # Runtime components
@@ -142,7 +146,7 @@ class SupervisorAgent:
             display_name="Read-in Parameters",
             description="Configure neutron input parameters and initial conditions",
             agent_class=ReadInAgent,
-            config_path=config_path or "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/readin_module_tools.py",
+            config_path=global_config.READIN_MCP_PATH,
             order=1
         )
         self.register_module(module)
@@ -156,7 +160,7 @@ class SupervisorAgent:
             display_name="Guide Parameters", 
             description="Configure neutron guide specifications and geometry",
             agent_class=GuideAgent,
-            config_path=config_path or "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/guide_module_tools.py",
+            config_path=global_config.GUIDE_MCP_PATH,
             order=2
         )
         self.register_module(module)
@@ -170,7 +174,7 @@ class SupervisorAgent:
             display_name="Writeout Parameters",
             description="Configure output settings and data formats", 
             agent_class=WriteoutAgent,
-            config_path=config_path or "/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/vitess-ai-agent/src/vitess_ai/mcp/writeout_module_tools.py",
+            config_path=global_config.WRITEOUT_MCP_PATH,
             order=3
         )
         self.register_module(module)
@@ -234,7 +238,7 @@ class SupervisorAgent:
                 self._logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
         
         # Create agent instance
-        agent = module_metadata.agent_class(model_name=self.config.model_name, tools=tools)
+        agent = module_metadata.agent_class(provider=self.config.provider, model=self.config.model, tools=tools)
         self._agent_instances[module_name] = agent
         
         self._logger.info(f"Initialized agent for module: {module_name}")
@@ -672,9 +676,12 @@ Type 'start' when you're ready to begin!
 # CONVENIENCE FACTORY FUNCTIONS
 # =================
 
-async def create_default_supervisor(model_name: str = 'gpt-4o-mini-2024-07-18') -> SupervisorAgent:
+async def create_default_supervisor(
+        provider = global_config.DEFAULT_PROVIDER, 
+        model: str = global_config.DEFAULT_MODEL
+        ) -> SupervisorAgent:
     """Create supervisor with default modules (readin, guide, writeout)"""
-    config = SupervisorConfigBuilder.create(model_name=model_name)
+    config = SupervisorConfigBuilder.create(provider=provider, model=model)
     supervisor = SupervisorAgent(config)
     supervisor.add_default_modules()
     await supervisor.initialize()
@@ -699,7 +706,7 @@ def show_execution_order(supervisor: SupervisorAgent):
 async def main():
     """Example: Different ways to use the combined supervisor"""
     
-    print("🚀 Initializing Neutron Simulation Supervisor..."
+    print("🚀 Initializing Neutron Simulation Supervisor...")
     print("=" * 50)
     
     # Example 1: Default supervisor

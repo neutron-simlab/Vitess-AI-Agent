@@ -6,7 +6,6 @@ from typing import Dict, List, Any, Optional
 from enum import Enum
 from pydantic import BaseModel, Field
 
-
 class SupervisorStage(str, Enum):
     """Overall supervisor stages"""
     WELCOME = "welcome"
@@ -17,7 +16,8 @@ class SupervisorStage(str, Enum):
 
 class SupervisorConfig(BaseModel):
     """Configuration for the supervisor agent"""
-    model_name: str = Field(default='gpt-4o-mini-2024-07-18')
+    provider:str = Field(default='openai')
+    model: str = Field(default='gpt-4o-mini-2024-07-18')
     welcome_message: str = Field(
         default="""
 🤖 **Neutron Simulation Configuration System**

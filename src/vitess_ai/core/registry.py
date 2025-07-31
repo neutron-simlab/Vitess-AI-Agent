@@ -3,7 +3,7 @@ registry.py - Simplified Module Registry (No Dependencies)
 Handles module registration and simple execution planning
 """
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from vitess_ai.schema.supervisor_modules import ExecutionPlan
 from vitess_ai.agents.base_module_agent import ModuleMetadata
 
@@ -15,13 +15,13 @@ class ModuleRegistry:
         self._modules: Dict[str, ModuleMetadata] = {}
         self._logger = logging.getLogger(__name__)
     
-    def register_module(self, module_def: ModuleMetadata) -> None:
+    def register_module(self, module_metadata: ModuleMetadata) -> None:
         """Register a new module"""
-        if module_def.name in self._modules:
-            self._logger.warning(f"Module '{module_def.name}' already registered, overwriting")
+        if module_metadata.name in self._modules:
+            self._logger.warning(f"Module '{module_metadata.name}' already registered, overwriting")
         
-        self._modules[module_def.name] = module_def
-        self._logger.info(f"Registered module: {module_def.name}")
+        self._modules[module_metadata.name] = module_metadata
+        self._logger.info(f"Registered module: {module_metadata.name}")
     
     def unregister_module(self, module_name: str) -> bool:
         """Unregister a module"""
@@ -44,14 +44,14 @@ class ModuleRegistry:
         return self._modules.copy()
     
     def get_execution_order(self, requested_modules: Optional[List[str]] = None) -> List[str]:
-        """Get execution order - just sort by order since no dependencies"""
+        """Get execution order"""
         if requested_modules is None:
             requested_modules = list(self._modules.keys())
         
         # Simple: sort by order (1, 2, 3, etc.)
         def get_order(module_name: str) -> int:
-            module_def = self._modules.get(module_name)
-            return module_def.order if module_def else 999
+            module_metadata = self._modules.get(module_name)
+            return module_metadata.order if module_metadata else 999
         
         return sorted(requested_modules, key=get_order)
     
@@ -62,13 +62,13 @@ class ModuleRegistry:
             
             modules_info = []
             for module_name in execution_order:
-                module_def = self._modules.get(module_name)
-                if module_def:
+                module_metadata = self._modules.get(module_name)
+                if module_metadata:
                     modules_info.append({
                         "name": module_name,
-                        "display_name": module_def.display_name,
-                        "optional": module_def.optional,
-                        "order": module_def.order
+                        "display_name": module_metadata.display_name,
+                        "optional": module_metadata.optional,
+                        "order": module_metadata.order
                     })
             
             return ExecutionPlan(
@@ -83,16 +83,16 @@ class ModuleRegistry:
                 error=str(e)
             )
     
-    def get_modules_info(self) -> List[Dict[str, any]]:
+    def get_modules_info(self) -> List[Dict[str, Any]]:
         """Get formatted information about all modules"""
         modules = []
-        for name, module_def in self._modules.items():
+        for name, module_metadata in self._modules.items():
             modules.append({
                 "name": name,
-                "display_name": module_def.display_name,
-                "description": module_def.description,
-                "optional": module_def.optional,
-                "order": module_def.order
+                "display_name": module_metadata.display_name,
+                "description": module_metadata.description,
+                "optional": module_metadata.optional,
+                "order": module_metadata.order
             })
         return sorted(modules, key=lambda x: x["order"])
     
@@ -104,8 +104,8 @@ class ModuleRegistry:
     
     def bulk_register_modules(self, modules: List[ModuleMetadata]) -> None:
         """Register multiple modules at once"""
-        for module_def in modules:
-            self.register_module(module_def)
+        for module_metadata in modules:
+            self.register_module(module_metadata)
         self._logger.info(f"Bulk registered {len(modules)} modules")
     
     def validate_modules(self) -> List[str]:
@@ -114,15 +114,15 @@ class ModuleRegistry:
         
         # Check for duplicate orders (warning, not error)
         orders = {}
-        for name, module_def in self._modules.items():
-            if module_def.order in orders:
-                issues.append(f"Modules '{name}' and '{orders[module_def.order]}' have same order {module_def.order}")
+        for name, module_metadata in self._modules.items():
+            if module_metadata.order in orders:
+                issues.append(f"Modules '{name}' and '{orders[module_metadata.order]}' have same order {module_metadata.order}")
             else:
-                orders[module_def.order] = name
+                orders[module_metadata.order] = name
         
         # Check for missing agent classes
-        for name, module_def in self._modules.items():
-            if not module_def.agent_class:
+        for name, module_metadata in self._modules.items():
+            if not module_metadata.agent_class:
                 issues.append(f"Module '{name}' has no agent class")
         
         return issues
@@ -151,8 +151,8 @@ class ModuleRegistry:
     def get_order_groups(self) -> Dict[int, List[str]]:
         """Group modules by order level"""
         groups = {}
-        for name, module_def in self._modules.items():
-            order = module_def.order
+        for name, module_metadata in self._modules.items():
+            order = module_metadata.order
             if order not in groups:
                 groups[order] = []
             groups[order].append(name)
