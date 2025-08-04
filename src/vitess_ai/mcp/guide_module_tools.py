@@ -2,9 +2,29 @@
 from mcp.server.fastmcp import FastMCP
 import json
 from vitess_ai.schema.guide_module import GuideParameters
+from vitess_ai.schema.base import get_field_flag
 from typing import Any, Union
 
 mcp = FastMCP("Guide Parameter Validation Server")
+
+def guide_params_to_cli(params:dict) -> str:
+    cli_params = list()
+
+    for key, value in params.items():
+        flag = get_field_flag(GuideParameters, key)
+        
+        # Skip None values
+        if value is None:
+            continue
+        
+        if isinstance(value, (int, float, str)): 
+            cli_params.append((flag, str(value)))
+
+        # Handle enum types (like VtGdeShape)
+        elif hasattr(value, 'value'):
+            cli_params.append((flag, str(value.value)))
+
+    return ' '.join([f'{flag}{param}' for flag, param in cli_params])
 
 @mcp.tool()  
 async def validate_guide_parameters(parameters: Union[str, dict[str, Any]]) -> dict[str, Any]:
@@ -39,9 +59,11 @@ async def validate_guide_parameters(parameters: Union[str, dict[str, Any]]) -> d
         
         # Now use the parsed parameters for validation
         validated = GuideParameters(**parsed_parameters)
+        cli = guide_params_to_cli(validated.model_dump())
         return {
             "validation_status": True,
             "validated_params": validated,
+            "cli_parameters": cli,
             "message": "Guide module parameters are valid!"
         }
        

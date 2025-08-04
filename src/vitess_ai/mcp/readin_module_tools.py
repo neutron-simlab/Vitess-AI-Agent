@@ -13,6 +13,7 @@ from typing import Any
 from vitess_ai.schema.readin_module import NF_MAX, ReadInParameters
 from vitess_ai.gui.file_upload import FileListManager
 from vitess_ai.gui.inst_file_upload import InstrumentFileManager
+from vitess_ai.schema.base import get_field_flag
 
 
 # Initialize FastMCP server
@@ -546,8 +547,40 @@ async def clear_instrument_file() -> dict:
         }
 
 # ============================================================================
-# VALIDATION TOOLS (Parameter Validation)
+# VALIDATION and CLI TOOLS (Parameter Validation)
 # ============================================================================
+
+def readin_params_to_cli(params: dict)-> str:
+    cli_params = list()
+
+    for key, value in params.items():
+        flag = get_field_flag(ReadInParameters, key)
+        
+        # Skip None values
+        if value is None:
+            continue
+        
+        if isinstance(value, (int, float, str)): 
+            cli_params.append((flag, str(value)))
+        
+        elif isinstance(value, list):
+            if key in ['sInputFileName', 'Weight']: 
+                flags = flag.split(" ")
+                for i, val in enumerate(value):
+                    if i < len(flags):  # Safety check to avoid index errors
+                        cli_params.append((flags[i], str(val)))
+            else:
+                # Handle other list types if needed
+                for val in value:
+                    cli_params.append((flag, str(val)))
+        
+        # Handle enum types (like VtPrgFormat, VtDataFormat, VtTrace)
+        elif hasattr(value, 'value'):
+            cli_params.append((flag, str(value.value)))
+
+    # Build the CLI string properly
+    # This wil make e.g., "-f2 -F1 -Afile1.dat -Bfile2.dat -a1.0"
+    return ' '.join([f'{flag}{param}' for flag, param in cli_params])
 
 @mcp.tool()  
 async def validate_readin_module(parameters: str) -> dict:
@@ -563,9 +596,12 @@ async def validate_readin_module(parameters: str) -> dict:
     try:
         params = json.loads(parameters)
         validated = ReadInParameters(**params)
+        validated = validated.model_dump()
+        cli = readin_params_to_cli(validated) # function to parse the flag and value for Vitess CLI
         return {
             "validation_status": True,
             "validated_params": validated,
+            "cli_parameters": cli,
             "message": "Read-in module parameters are valid!"
         }
     except Exception as e:

@@ -151,19 +151,19 @@ class SupervisorAgent:
         )
         self.register_module(module)
 
-    def add_filter_module(self, config_path: str = None) -> None:
-        """Add the standard guide module"""  
-        from vitess_ai.agents.filter_module_agent import FilterAgent
+    # def add_filter_module(self, config_path: str = None) -> None:
+    #     """Add the standard guide module"""  
+    #     from vitess_ai.agents.filter_module_agent import FilterAgent
         
-        module = ModuleBuilder.create(
-            name="filter",
-            display_name="Filter Parameters", 
-            description="Configure filter on simulation input",
-            agent_class=FilterAgent,
-            config_path=global_config.FILTER_MCP_PATH,
-            order=2
-        )
-        self.register_module(module)
+    #     module = ModuleBuilder.create(
+    #         name="filter",
+    #         display_name="Filter Parameters", 
+    #         description="Configure filter on simulation input",
+    #         agent_class=FilterAgent,
+    #         config_path=global_config.FILTER_MCP_PATH,
+    #         order=2
+    #     )
+    #     self.register_module(module)
     
     def add_guide_module(self, config_path: str = None) -> None:
         """Add the standard guide module"""  
@@ -218,7 +218,7 @@ class SupervisorAgent:
     def add_default_modules(self) -> None:
         """Add all default modules (readin, guide, writeout)"""
         self.add_readin_module()
-        self.add_filter_module()
+        # self.add_filter_module()
         self.add_guide_module()
         self.add_writeout_module()
         
@@ -363,7 +363,8 @@ class SupervisorAgent:
                     module_result = ModuleResult(
                         module_name=module_name,
                         status=ModuleStatus.COMPLETED,
-                        parameters=result,
+                        parameters=result['parameters'],
+                        cli_parameters=result['cli_parameters'],
                         thread_id=thread_id
                     )
                     
@@ -596,16 +597,22 @@ Type 'start' when you're ready to begin!
             
             if result['current_stage'] == SupervisorStage.COMPLETION:
                 # Extract successful results
-                successful_results = {
+                parameters = {
                     name: result_obj.parameters 
+                    for name, result_obj in result.get('module_results', {}).items()
+                    if result_obj.status == ModuleStatus.COMPLETED
+                }
+                cli_parameters = {
+                    name: result_obj.cli_parameters
                     for name, result_obj in result.get('module_results', {}).items()
                     if result_obj.status == ModuleStatus.COMPLETED
                 }
                 
                 return {
                     "status": "success",
-                    "simulation_config": successful_results,
-                    "completed_modules": list(successful_results.keys()),
+                    "simulation_config": parameters,
+                    "cli_parameters": cli_parameters,
+                    "completed_modules": list(parameters.keys()),
                     "execution_order": result.get('execution_order', [])
                 }
             else:

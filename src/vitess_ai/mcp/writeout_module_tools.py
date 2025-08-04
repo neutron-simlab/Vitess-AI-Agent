@@ -10,7 +10,12 @@ from fastmcp import FastMCP
 from typing import Any
 
 # Import our modules
-from vitess_ai.schema.writeout_module import WriteoutParameters
+from vitess_ai.schema.writeout_module import (
+    WriteoutParameters, 
+    VtFilterLimits, 
+    VtOutputFlags
+)
+from vitess_ai.schema.base import get_field_flag
 from vitess_ai.gui.file_save import FileSaveManager
 
 
@@ -323,6 +328,69 @@ async def clear_save_path() -> dict:
 # VALIDATION TOOLS (Parameter Validation)
 # ============================================================================
 
+def writeout_params_to_cli(params: dict) -> str:
+    cli_params = list()
+
+    for key, value in params.items():
+        # Handle nested objects specially
+        if key == 'output_flags':
+            if value is not None:
+                # Convert VtOutputFlags to string of 1s and 0s
+                flag_values = []
+                if hasattr(value, 'model_dump'):
+                    # If it's a Pydantic model
+                    flags_dict = value.model_dump()
+                else:
+                    # If it's already a dict
+                    flags_dict = value
+                
+                # Get the flag values in order (assuming they follow the field order)
+                for _, flag_val in flags_dict.items():
+                    flag_values.append('1' if flag_val else '0')
+                
+                flag_string = ''.join(flag_values)
+                cli_params.append(('-c', flag_string))
+            continue
+        
+        if key == 'filter_limits':
+            # Handle filter limits - each field gets its own flag
+            if value is not None:
+                if hasattr(value, 'model_dump'):
+                    limits_dict = value.model_dump()
+                else:
+                    limits_dict = value
+                
+                for limit_key, limit_val in limits_dict.items():
+                    if limit_val is not None:
+                        limit_flag = get_field_flag(VtFilterLimits, limit_key)
+                        cli_params.append((limit_flag, str(limit_val)))
+            continue
+        
+        # Get the flag for the current parameter
+        flag = get_field_flag(WriteoutParameters, key)
+        
+        # Skip None values
+        if value is None:
+            continue
+        
+        # Check boolean first (before int, since bool is subclass of int in Python)
+        if isinstance(value, bool):
+            # Convert boolean to 1/0
+            cli_params.append((flag, '1' if value else '0'))
+        
+        # Handle string representations of booleans
+        elif isinstance(value, str) and value.lower() in ('true', 'false'):
+            cli_params.append((flag, '1' if value.lower() == 'true' else '0'))
+        
+        elif isinstance(value, (int, float, str)): 
+            cli_params.append((flag, str(value)))
+
+        # Handle enum types (like VtPrgFormat, VtDataFormat, VtSeparator)
+        elif hasattr(value, 'value'):
+            cli_params.append((flag, str(value.value)))
+
+    return ' '.join([f'{flag}{param}' for flag, param in cli_params])
+
 @mcp.tool()  
 async def validate_writeout_module(parameters: str) -> dict:
     """
@@ -337,9 +405,11 @@ async def validate_writeout_module(parameters: str) -> dict:
     try:
         params = json.loads(parameters)
         validated = WriteoutParameters(**params)
+        cli = writeout_params_to_cli(validated.model_dump())
         return {
             "validation_status": True,
             "validated_params": validated,
+            "cli_parameters": cli,
             "message": "Writeout module parameters are valid!"
         }
     except Exception as e:

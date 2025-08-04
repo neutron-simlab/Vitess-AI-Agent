@@ -68,3 +68,11 @@ class FillingStage(BaseModel):
     Always use this tool to structure your response to the user.
     """
     stage: Literal["processing", "completed"]
+
+
+def get_field_flag(model_class, field_name: str) -> str:
+    """Get the flag value for a field."""
+    field_info = model_class.model_fields.get(field_name)
+    if not field_info or not hasattr(field_info, 'json_schema_extra') or not field_info.json_schema_extra:
+        return ""
+    return field_info.json_schema_extra.get("flag", "")
