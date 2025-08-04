@@ -26,6 +26,7 @@ class BaseModuleState(MessagesState):
     validation_status: Optional[bool] = None
     error_message: Optional[str] = None
     parameters: Any = None
+    cli_parameters: str = None
 
 
 class BaseModuleAgent(ABC, Generic[R]):
@@ -354,6 +355,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         print(f"\nAssistant:\n{response.content}")
         
         # Check for tool calls
+        # future: check with other providers
         has_tool_calls = hasattr(response, 'tool_calls') and response.tool_calls
         self.logger.info(f"Tool calls detected: {has_tool_calls}")
         
@@ -389,18 +391,19 @@ class BaseModuleAgent(ABC, Generic[R]):
         print(self.get_completion_message())
         
         last_message = state['messages'][-1].content
-        
         try:
             parsed_result = json.loads(last_message)
-            result_key = self.get_result_key()
             validation_status = parsed_result.get('validation_status', True)
+
+            self.logger.info(f"the cli parameters are {parsed_result['cli_parameters']}")
             
             result_dict = {
                 'stage': FillingStage(stage='completed'),
                 'config_mode': state.get('config_mode', ''),
                 'validation_status': validation_status,
                 'error_message': None,
-                'parameters': parsed_result['validated_params']
+                'parameters': parsed_result['validated_params'],
+                'cli_parameters': parsed_result['cli_parameters']
             }
             
             return result_dict
@@ -433,7 +436,7 @@ class BaseModuleAgent(ABC, Generic[R]):
                 self.logger.info("Tool validation successful, routing to finalize")
                 return 'finalize'
             else:
-                self.logger.info("Tool validation failed, routing back to params_config")
+                self.logger.info("Tool validation failed or Tool does other except validation, routing back to params_config")
                 return 'params_config'
                 
         except Exception as e:
@@ -500,7 +503,10 @@ class BaseModuleAgent(ABC, Generic[R]):
              # Return results in standardized format
             if result.get('validation_status'):
                 self.logger.info("Agent run completed successfully")
-                return result['parameters']
+                return {
+                    'parameters':result['parameters'],
+                    'cli_parameters':result['cli_parameters']
+                }
             else:
                 self.logger.warning("Agent run completed but no valid results generated")
                 return "No response generated"
@@ -609,10 +615,11 @@ class ModuleStatus(str, Enum):
     COMPLETED = "completed"
    
 class ModuleResult(BaseModel):
-    """Result from a completed module"""
+    """Result from a completed module agent"""
     module_name: str
     status: ModuleStatus
     parameters: Optional[Dict[str, Any]] = None
+    cli_parameters: Optional[str] = None
     error_message: Optional[str] = None
     execution_time: Optional[float] = None
     thread_id: Optional[str] = None

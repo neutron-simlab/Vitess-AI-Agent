@@ -16,7 +16,8 @@ class GuideParameters(BaseModel):
                     "VT_PARABOLIC (3): Several straight pieces approach parabola defined by entrance/exit width, requires number of pieces. "
                     "VT_ELLIPTIC (4): Several straight pieces approach ellipse defined by entrance/exit width and angle, requires angle and number of pieces. "
                     "VT_FROM_FILE (5): Several pieces with different lengths/coatings from file. "
-                    "VT_LIN_CURV (6): Same as curved but with different entrance/exit widths (horizontal plane only).")
+                    "VT_LIN_CURV (6): Same as curved but with different entrance/exit widths (horizontal plane only)."),
+        json_schema_extra={"flag": "-Y"}
     )]
     
     eGuideShapeZ: Annotated[VtGdeShape, Field(
@@ -28,7 +29,8 @@ class GuideParameters(BaseModel):
                     "VT_PARABOLIC (3): Several straight pieces approach parabola defined by entrance/exit height, requires number of pieces. "
                     "VT_ELLIPTIC (4): Several straight pieces approach ellipse defined by entrance/exit height and angle, requires angle and number of pieces. "
                     "VT_FROM_FILE (5): Several pieces with different lengths/coatings from file. "
-                    "VT_LIN_CURV (6): Same as curved but with different entrance/exit heights (horizontal plane only).")
+                    "VT_LIN_CURV (6): Same as curved but with different entrance/exit heights (horizontal plane only)."),
+        json_schema_extra={"flag": "-Z"}
     )]
     
     # File configuration
@@ -37,7 +39,8 @@ class GuideParameters(BaseModel):
         description=("-S [-] Name of the file containing the sizes of the guide, output or input file. "
                     "Used for VT_FROM_FILE shape type where each piece is described by one line in the file "
                     "with parameters: Position, width and height of the beginning of the piece, "
-                    "reflectivity files for left, right, top and bottom plane.")
+                    "reflectivity files for left, right, top and bottom plane."),
+        json_schema_extra={"flag": "-S"}
     )]
     
     # Guide piece configuration
@@ -46,29 +49,34 @@ class GuideParameters(BaseModel):
         description=("-N [-] Number of guide pieces. "
                     "For VT_CONSTANT and VT_LINEAR usually 1 piece. "
                     "For VT_CURVED, VT_PARABOLIC, VT_ELLIPTIC, and VT_LIN_CURV multiple pieces are required "
-                    "to approximate the curved geometry.")
+                    "to approximate the curved geometry."),
+        json_schema_extra={"flag": "-N"}
     )]
     
     # Entrance dimensions
     GuideEntrWidth: Annotated[float, Field(
         default=3.0,
-        description="-w [cm] Width of the guide entrance"
+        description="-w [cm] Width of the guide entrance",
+        json_schema_extra={"flag": "-w"}
     )]
     
     GuideEntrHeight: Annotated[float, Field(
         default=3.0,
-        description="-h [cm] Height of the guide entrance"
+        description="-h [cm] Height of the guide entrance",
+        json_schema_extra={"flag": "-h"}
     )]
     
     # Exit dimensions
     GuideExitWidth: Annotated[float, Field(
         default=3.0,
-        description="-W [cm] Width of the guide exit"
+        description="-W [cm] Width of the guide exit",
+        json_schema_extra={"flag": "-W"}
     )]
     
     GuideExitHeight: Annotated[float, Field(
         default=3.0,
-        description="-H [cm] Height of the guide exit"
+        description="-H [cm] Height of the guide exit",
+        json_schema_extra={"flag": "-H"}
     )]
     
     # Physical parameters
@@ -76,43 +84,50 @@ class GuideParameters(BaseModel):
         default=50.0,
         description=("-p [cm] Length of 1 piece of the guide. "
                     "For multi-piece guides (curved, parabolic, elliptic), this is the length of each "
-                    "individual straight segment that approximates the overall shape.")
+                    "individual straight segment that approximates the overall shape."),
+        json_schema_extra={"flag": "-p"}
     )]
     
     Radius: Annotated[float, Field(
         default=0.0,
         description=("-R [m] Radius of a guide that is curved (in horizontal plane). "
                     "Used for VT_CURVED and VT_LIN_CURV shapes where several pieces form part of a regular polygon. "
-                    "The radius defines the circle through the polygon corners. Set to 0.0 for straight guides.")
+                    "The radius defines the circle through the polygon corners. Set to 0.0 for straight guides."),
+        json_schema_extra={"flag": "-R"}
     )]
     
     # Focal point positions (for elliptic shape)
     D_Foc2Y: Annotated[float, Field(
         default=0.0,
         description=("-f [cm] Position behind guide of 2nd focal point in horizontal direction (for elliptic shape). "
-                    "Used with VT_ELLIPTIC shape type to define the ellipse geometry along with entrance/exit dimensions.")
+                    "Used with VT_ELLIPTIC shape type to define the ellipse geometry along with entrance/exit dimensions."),
+        json_schema_extra={"flag": "-f"}
     )]
     
     D_Foc2Z: Annotated[float, Field(
         default=0.0,
         description=("-F [cm] Position behind guide of 2nd focal point in vertical direction (for elliptic shape). "
-                    "Used with VT_ELLIPTIC shape type to define the ellipse geometry along with entrance/exit dimensions.")
+                    "Used with VT_ELLIPTIC shape type to define the ellipse geometry along with entrance/exit dimensions."),
+        json_schema_extra={"flag": "-F"}
     )]
     
     # M-values for different walls
     MValGenL: Annotated[float, Field(
         default=3.0,
-        description="-L [-] M-value for left wall"
+        description="-L [-] M-value for left wall",
+        json_schema_extra={"flag": "-L"}
     )]
     
     MValGenR: Annotated[float, Field(
         default=3.0,
-        description="-Q [-] M-value for right wall"
+        description="-Q [-] M-value for right wall",
+        json_schema_extra={"flag": "-Q"}
     )]
     
     MValGenTB: Annotated[float, Field(
         default=3.0,
-        description="-G [-] M-value for top and bottom wall"
+        description="-G [-] M-value for top and bottom wall",
+        json_schema_extra={"flag": "-G"}
     )]
 
 
@@ -124,6 +139,7 @@ class InitialResponseGuide(BaseModel):
     """
     response: Annotated[Literal['Default Setup', 'Customize', 'Not Known'], 
                         Field(description="Initial guide module response type")]
+
 
 
 # Example usage
@@ -151,6 +167,5 @@ if __name__ == "__main__":
     )
     
     # Print the configuration
+    print(f"\nDefault config JSON:")
     print(config.model_dump_json(indent=2))
-    print("\nCustom configuration:")
-    print(custom_config.model_dump_json(indent=2))
