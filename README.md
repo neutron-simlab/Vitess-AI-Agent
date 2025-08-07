@@ -23,10 +23,9 @@
 
 - Install VITESS following the official documentation
 - Ensure `vitess` command is available in your system PATH
-- Verify installation by running: `vitess --version`
 
 ### System Requirements
-- Python 3.8+
+- Python 3.13+
 - Compatible with Windows, macOS, and Linux
 
 ---
@@ -85,7 +84,6 @@ Manages output settings and data formats:
 
 #### **FilterAgent**
 Configures neutron filter parameters:
-- Filter materials and specifications
 - Filter dimensions and positioning
 - Transmission properties
 - Multi-filter configurations
