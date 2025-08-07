@@ -1,14 +1,15 @@
 """
-supervisor_agent.py - Combined Builder and Supervisor Agent
-Everything you need for the scalable supervisor system in one file
+supervisor_agent.py - Enhanced Supervisor Agent with CLI Generation
+Combined Builder and Supervisor Agent with MCP CLI generation tools
 """
 import logging
 import json
 from typing import Dict, List, Any, Optional, Callable, Type
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, MessagesState, END, START
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import ToolNode
 from pydantic import Field
 
 from vitess_ai.schema.supervisor_modules import (
@@ -24,6 +25,7 @@ from vitess_ai.agents.base_module_agent import (
 )
 
 from vitess_ai.core.config import global_config
+
 # =================
 # CONFIG BUILDER - Creates supervisor configurations
 # =================
@@ -35,7 +37,8 @@ class SupervisorConfigBuilder:
     def create(
         provider: str = global_config.DEFAULT_PROVIDER,
         model: str = global_config.DEFAULT_MODEL,
-        welcome_message: str = None
+        welcome_message: str = None,
+        cli_tools_path: str = None
     ) -> SupervisorConfig:
         """
         Create a supervisor config 
@@ -43,9 +46,8 @@ class SupervisorConfigBuilder:
         Args:
             provider: Provider of LLM
             model: LLM model to use
-            max_retries: How many times to retry failed modules
-            allow_skipping: Can users skip optional modules?
             welcome_message: Custom welcome text (uses default if None)
+            cli_tools_path: Path to CLI generation MCP tools
         """
         config = SupervisorConfig(
             provider=provider,
@@ -72,20 +74,26 @@ class SupervisorState(MessagesState):
     error_message: Optional[str] = None
     user_preferences: Dict[str, Any] = Field(default={})
     session_metadata: Dict[str, Any] = Field(default={})
-
+    cli_generation_ready: bool = False
+    cli_command: Optional[str] = None
+    simulation_finish: Optional[bool] = None
 
 # =================
 # MAIN SUPERVISOR AGENT
 # =================
 
 class SupervisorAgent:
-    """Supervisor agent with module registration system and built-in builders"""
+    """Supervisor agent with module registration system and CLI generation capabilities"""
     
-    def __init__(self, config: SupervisorConfig = None):
+    def __init__(self, config: SupervisorConfig = None, simulation_tools_path: str = None):
         """Initialize the supervisor agent"""
-        self.config = SupervisorConfigBuilder.create()
+        self.config = config or SupervisorConfigBuilder.create()
         self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
         self.registry = ModuleRegistry()
+        
+        # Simulation tools configuration
+        self.simulation_tools_path = simulation_tools_path or "vitess_ai/mcp_tools/supervisor_mcp_tools.py"
+        self.simulation_tools = []
         
         # Runtime components
         self._agent_instances: Dict[str, BaseModuleAgent] = {}
@@ -95,7 +103,33 @@ class SupervisorAgent:
         self._initialized = False
         
         # Setup logging
-        self._logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger(__name__)
+    
+    # =================
+    # CLI TOOLS SETUP
+    # =================
+    
+    async def _setup_simulation_tools(self):
+        """Setup simulation execution MCP tools"""
+        try:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+            client = MultiServerMCPClient({
+                "simulation_runner": {
+                    "command": "python",
+                    "args": [self.simulation_tools_path],
+                    "transport": "stdio"
+                }
+            })
+            self.simulation_tools = await client.get_tools()
+            self.logger.info(f"Loaded {len(self.simulation_tools)} simulation tools")
+            
+            # Bind tools to LLM
+            if self.simulation_tools:
+                self.llm = self.llm.bind_tools(self.simulation_tools, parallel_tool_calls=False)
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to load simulation tools: {e}")
+            self.simulation_tools = []
     
     # =================
     # MODULE REGISTRATION API
@@ -107,7 +141,7 @@ class SupervisorAgent:
         
         # Invalidate graph if already built
         if self._initialized:
-            self._logger.info("New module registered, graph will be rebuilt on next run")
+            self.logger.info("New module registered, graph will be rebuilt on next run")
             self._initialized = False
     
     def unregister_module(self, module_name: str) -> bool:
@@ -146,24 +180,10 @@ class SupervisorAgent:
             display_name="Read-in Parameters",
             description="Configure neutron input parameters and initial conditions",
             agent_class=ReadInAgent,
-            config_path=global_config.READIN_MCP_PATH,
+            config_path=config_path or global_config.READIN_MCP_PATH,
             order=1
         )
         self.register_module(module)
-
-    # def add_filter_module(self, config_path: str = None) -> None:
-    #     """Add the standard guide module"""  
-    #     from vitess_ai.agents.filter_module_agent import FilterAgent
-        
-    #     module = ModuleBuilder.create(
-    #         name="filter",
-    #         display_name="Filter Parameters", 
-    #         description="Configure filter on simulation input",
-    #         agent_class=FilterAgent,
-    #         config_path=global_config.FILTER_MCP_PATH,
-    #         order=2
-    #     )
-    #     self.register_module(module)
     
     def add_guide_module(self, config_path: str = None) -> None:
         """Add the standard guide module"""  
@@ -174,8 +194,8 @@ class SupervisorAgent:
             display_name="Guide Parameters", 
             description="Configure neutron guide specifications and geometry",
             agent_class=GuideAgent,
-            config_path=global_config.GUIDE_MCP_PATH,
-            order=3
+            config_path=config_path or global_config.GUIDE_MCP_PATH,
+            order=2
         )
         self.register_module(module)
     
@@ -188,8 +208,8 @@ class SupervisorAgent:
             display_name="Writeout Parameters",
             description="Configure output settings and data formats", 
             agent_class=WriteoutAgent,
-            config_path=global_config.WRITEOUT_MCP_PATH,
-            order=4
+            config_path=config_path or global_config.WRITEOUT_MCP_PATH,
+            order=3
         )
         self.register_module(module)
     
@@ -218,10 +238,8 @@ class SupervisorAgent:
     def add_default_modules(self) -> None:
         """Add all default modules (readin, guide, writeout)"""
         self.add_readin_module()
-        # self.add_filter_module()
         self.add_guide_module()
         self.add_writeout_module()
-        
     
     # =================
     # AGENT INITIALIZATION
@@ -249,34 +267,37 @@ class SupervisorAgent:
                     }
                 })
                 tools = await client.get_tools()
-                self._logger.info(f"Loaded {len(tools)} MCP tools for {module_name}")
+                self.logger.info(f"Loaded {len(tools)} MCP tools for {module_name}")
             except Exception as e:
-                self._logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
+                self.logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
         
         # Create agent instance
         agent = module_metadata.agent_class(provider=self.config.provider, model=self.config.model, tools=tools)
         self._agent_instances[module_name] = agent
         
-        self._logger.info(f"Initialized agent for module: {module_name}")
+        self.logger.info(f"Initialized agent for module: {module_name}")
         return agent
     
     async def initialize(self, requested_modules: Optional[List[str]] = None):
         """Initialize the supervisor with the requested modules"""
         if self._initialized:
-            self._logger.info("Supervisor already initialized")
+            self.logger.info("Supervisor already initialized")
             return
         
-        self._logger.info("Initializing Supervisor...")
+        self.logger.info("Initializing Supervisor...")
+        
+        # Setup simulation tools first
+        await self._setup_simulation_tools()
         
         # Basic validation 
         issues = self.registry.validate_modules()
         if issues:
-            self._logger.warning(f"Module validation issues: {issues}")
+            self.logger.warning(f"Module validation issues: {issues}")
         
         # Get execution order
         try:
             execution_order = self.registry.get_execution_order(requested_modules)
-            self._logger.info(f"Execution order: {execution_order}")
+            self.logger.info(f"Execution order: {execution_order}")
         except Exception as e:
             raise ValueError(f"Failed to get execution order: {e}")
         
@@ -289,7 +310,7 @@ class SupervisorAgent:
         self._app = self._graph.compile(checkpointer=self.memory)
         
         self._initialized = True
-        self._logger.info(f"Supervisor initialized with {len(execution_order)} modules")
+        self.logger.info(f"Supervisor initialized with {len(execution_order)} modules and simulation tools")
     
     # =================
     # DYNAMIC GRAPH CREATION
@@ -301,8 +322,13 @@ class SupervisorAgent:
         
         # Add standard nodes
         workflow.add_node("welcome", self._welcome_node)
+        workflow.add_node("run_simulation", self._run_simulation_node)
         workflow.add_node("completion", self._completion_node)
         workflow.add_node("error_handler", self._error_handler_node)
+        
+        # Add simulation tools node if available
+        if self.simulation_tools:
+            workflow.add_node("simulation_tools", ToolNode(self.simulation_tools))
         
         # Add module nodes dynamically
         for module_name in execution_order:
@@ -318,7 +344,7 @@ class SupervisorAgent:
             current_node = f"module_{module_name}"
             
             if i == len(execution_order) - 1:
-                # Last module - routes to completion
+                # Last module - routes to simulation execution
                 workflow.add_conditional_edges(current_node, 
                     lambda state, mn=module_name: self._route_from_module(state, mn, is_last=True))
             else:
@@ -326,6 +352,11 @@ class SupervisorAgent:
                 next_module = execution_order[i + 1]
                 workflow.add_conditional_edges(current_node,
                     lambda state, mn=module_name, nm=next_module: self._route_from_module(state, mn, next_module=nm))
+        
+        # Simulation execution routing
+        workflow.add_conditional_edges("run_simulation", self._route_from_simulation)
+        if self.simulation_tools:
+            workflow.add_conditional_edges("simulation_tools", self._route_after_simulation_tools)
         
         workflow.add_edge("completion", END)
         workflow.add_edge("error_handler", END)
@@ -341,7 +372,7 @@ class SupervisorAgent:
             if not module_metadata:
                 return self._create_error_state(state, f"Module '{module_name}' not found")
             
-            self._logger.info(f"Executing module: {module_name}")
+            self.logger.info(f"Executing module: {module_name}")
             print(f"\n{'='*60}")
             print(f"📋 MODULE: {module_metadata.display_name.upper()}")
             print(f"{'='*60}")
@@ -383,13 +414,125 @@ class SupervisorAgent:
                     return self._create_error_state(state, f"Module '{module_name}' returned invalid result")
                     
             except Exception as e:
-                self._logger.error(f"Module {module_name} failed: {e}")
+                self.logger.error(f"Module {module_name} failed: {e}")
                 return self._create_error_state(state, f"Module '{module_name}' failed: {str(e)}")
         
         return module_node
     
     # =================
-    # NODE IMPLEMENTATIONS
+    # Vitess Simulation Node
+    # =================
+    
+    def _run_simulation_node(self, state: SupervisorState) -> SupervisorState:
+        """Simulation execution node - runs simulation directly using module results"""
+        self.logger.info("Entering simulation execution phase")
+        print(f"\n{'='*60}")
+        print("🚀 RUNNING SIMULATION")
+        print(f"{'='*60}")
+        
+        # Extract module results from state
+        module_results = state.get('module_results', {})
+        execution_order = state.get('execution_order', [])
+        
+        print(f"Executing simulation with {len(module_results)} configured modules:")
+        for module in execution_order:
+            if module in module_results:
+                result = module_results[module]
+                cli_params = result.cli_parameters if hasattr(result, 'cli_parameters') else result.get('cli_parameters', '')
+                param_count = len(cli_params.split()) if cli_params else 0
+                print(f"   ✅ {module}: {param_count} parameters")
+            else:
+                print(f"   ❌ {module}: Missing parameters")
+        
+        print("\nStarting simulation execution...")
+        
+        # Create system message for simulation execution
+        simulation_system_prompt = SystemMessage(content=f"""
+You are a neutron simulation executor. All modules have been configured and you need to run the simulation.
+
+IMPORTANT: You must call the run_simulation tool with these EXACT parameters:
+
+Tool Call Required:
+```
+run_simulation(
+    module_results={module_results},
+    execution_order={execution_order},
+    execute=true
+)
+```
+
+Module Summary:
+- Configured modules: {list(module_results.keys())}
+- Execution order: {execution_order}
+- Total modules: {len(module_results)}
+
+Each module has generated CLI parameters that will be combined into a simulation pipeline.
+
+Execute the simulation immediately using the run_simulation tool with the exact parameters shown above.
+Do not modify or interpret the module_results data - pass it exactly as provided.
+""")
+
+        try:
+            messages = [simulation_system_prompt]
+            response = self.llm.invoke(messages)
+            self.logger.info("LLM response received successfully")
+        except Exception as e:
+            self.logger.error(f"LLM invocation failed: {e}")
+            response = None
+
+        # Update messages
+        updated_messages = state.get('messages', []) + messages + [response]
+
+        self.logger.info(f"Updated message after run simulation llm invocation: {updated_messages}")
+
+        return {
+            'messages': updated_messages
+        }
+        
+    
+    def _route_from_simulation(self, state: SupervisorState) -> str:
+        """Route from simulation execution based on tools availability"""
+        last_message = state['messages'][-1]
+        self.logger.info(f"Last message after run simulation node {last_message}")
+        
+        # Check for tool calls only if tools are available
+        if (self.simulation_tools and 
+            hasattr(last_message, 'tool_calls') and 
+            last_message.tool_calls
+            ):
+            self.logger.info('Tool calls detected, routing to simulation tools')
+            return "simulation_tools"
+    
+        else: 
+            self.logger.info("There is a problem with simulation tool calling, particularly with LLM can't understand the instruction.")
+            return END
+        
+        
+    def _route_after_simulation_tools(self, state: SupervisorState) -> str:
+        """Route after simulation tools execution"""
+
+        
+        last_message = state['messages'][-1].content
+        self.logger.info("Processing simulation execution results")
+        
+        
+        try:
+            parsed_message = json.loads(last_message)
+            validation_status = parsed_message.get('simulation_finish', False)
+        except (json.JSONDecodeError, TypeError) as e:
+            self.logger.error(f"Failed to parse simulation result: {e}")
+            return END
+        
+        if validation_status:
+            self.logger.info("Simulation is executed succesfully, routing to finalize")
+            return 'completion'
+        else:
+            self.logger.info("Simulation is exectued but not run sucessfully.")
+            return END
+                
+    
+    # =================
+    # STANDARD NODE IMPLEMENTATIONS
     # =================
     
     def _welcome_node(self, state: SupervisorState) -> SupervisorState:
@@ -405,7 +548,9 @@ class SupervisorAgent:
                 optional_text = " (optional)" if module_metadata.optional else ""
                 modules_info.append(f"{module_metadata.order}. **{module_metadata.display_name}**{optional_text}: {module_metadata.description}")
         
-        welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info)
+        simulation_info = f"\n🚀 **Simulation Execution**: Automatic execution of configured simulation" if self.simulation_tools else ""
+        
+        welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info) + simulation_info
         print(welcome_text)
         
         user_input = input("\nSupervisor: ").strip()
@@ -438,8 +583,10 @@ Respond with only one word: START, HELP, or UNCLEAR
                 'current_module': execution_order[0] if execution_order else None,
                 'module_results': {},
                 'session_metadata': {'start_intent': user_input},
+                'cli_generation_ready': False,
                 'error_message': None
             }
+        
         elif intent == "HELP":
             self._show_help()
             return state  # Stay in welcome
@@ -448,15 +595,16 @@ Respond with only one word: START, HELP, or UNCLEAR
             return state  # Stay in welcome for retry
     
     def _completion_node(self, state: SupervisorState) -> SupervisorState:
-        """Completion node with dynamic results"""
+        """Enhanced completion node with CLI information"""
         print(f"\n{'='*60}")
-        print("🎉 SIMULATION CONFIGURATION COMPLETED!")
+        print("🎉 VITESS SIMULATION CONFIGURATION COMPLETED and EXECUTED")
         print(f"{'='*60}")
         
         # Generate summary
         module_results = state.get('module_results', {})
         completed_modules = [name for name, result in module_results.items() 
-                           if result.status == ModuleStatus.COMPLETED]
+                           if (hasattr(result, 'status') and result.status == ModuleStatus.COMPLETED) or
+                              (isinstance(result, dict) and result.get('status') == 'completed')]
         
         print(f"\n📋 **CONFIGURATION SUMMARY:**")
         print(f"✅ Completed modules: {len(completed_modules)}")
@@ -465,8 +613,7 @@ Respond with only one word: START, HELP, or UNCLEAR
             module_metadata = self.registry.get_module(module_name)
             if module_metadata:
                 print(f"   {module_metadata.order}. {module_metadata.display_name}")
-        
-        print(f"\n📄 Configuration ready for export")
+
         
         return {
             **state,
@@ -507,17 +654,21 @@ Respond with only one word: START, HELP, or UNCLEAR
     
     def _route_from_module(self, state: SupervisorState, module_name: str, 
                           next_module: str = None, is_last: bool = False) -> str:
-        """Route from a module to next module, completion, or error"""
+        """Route from a module to next module, CLI generation, or error"""
         
         module_results = state.get('module_results', {})
         current_result = module_results.get(module_name)
         
         # Check if module completed successfully
-        if current_result and current_result.status == ModuleStatus.COMPLETED:
-            if is_last:
-                return "completion"
-            elif next_module:
-                return f"module_{next_module}"
+        if current_result:
+            status = current_result.status if hasattr(current_result, 'status') else current_result.get('status')
+            if status == ModuleStatus.COMPLETED or status == 'completed':
+                if is_last:
+                    # Last module completed - go to simulation execution
+                    self.logger.info("All modules completed, routing to simulation execution")
+                    return "run_simulation"
+                elif next_module:
+                    return f"module_{next_module}"
         
         # Module failed
         return "error_handler"
@@ -539,9 +690,9 @@ Respond with only one word: START, HELP, or UNCLEAR
         execution_order = self.registry.get_execution_order()
         
         help_text = f"""
-📖 **HELP - Independent Module Configuration**
+📖 **HELP - Neutron Simulation Configuration System**
 
-This system will guide you through {len(execution_order)} independent modules:
+This system will guide you through {len(execution_order)} simulation modules:
 """
         
         for module_name in execution_order:
@@ -550,15 +701,24 @@ This system will guide you through {len(execution_order)} independent modules:
                 optional_text = " (optional)" if module_metadata.optional else " (required)"
                 help_text += f"\n{module_metadata.order}. **{module_metadata.display_name}**{optional_text}\n   {module_metadata.description}"
         
-        help_text += """
+        simulation_features = ""
+        if self.simulation_tools:
+            simulation_features = """
+
+🚀 **Simulation Execution:**
+- Automatic execution of configured simulation
+- Direct execution with error handling and logging
+- Post-processing and result collection"""
+        
+        help_text += simulation_features + """
 
 Each module is independent and has a specialized AI agent that will:
 - Ask you questions about your simulation needs
 - Provide default recommendations  
 - Validate your parameter choices
-- Generate the final configuration
+- Generate CLI parameters for execution
 
-Modules run in order, but each one is self-contained.
+After all modules complete, the system will generate and execute your simulation.
 Type 'start' when you're ready to begin!
         """
         print(help_text)
@@ -569,13 +729,13 @@ Type 'start' when you're ready to begin!
     
     async def run(self, thread_id: str = "supervisor_default", 
                   requested_modules: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Run the complete simulation configuration process"""
+        """Run the complete simulation configuration and execution process"""
         
         # Initialize if needed
         if not self._initialized:
             await self.initialize(requested_modules)
         
-        self._logger.info(f"Starting configuration process with thread_id: {thread_id}")
+        self.logger.info(f"Starting configuration process with thread_id: {thread_id}")
         
         config = {"configurable": {"thread_id": thread_id}}
         
@@ -589,7 +749,9 @@ Type 'start' when you're ready to begin!
             "current_agent_thread": "",
             "error_message": None,
             "user_preferences": {},
-            "session_metadata": {"thread_id": thread_id}
+            "session_metadata": {"thread_id": thread_id},
+            "cli_generation_ready": False,
+            "cli_command": None
         }
         
         try:
@@ -597,23 +759,45 @@ Type 'start' when you're ready to begin!
             
             if result['current_stage'] == SupervisorStage.COMPLETION:
                 # Extract successful results
-                parameters = {
-                    name: result_obj.parameters 
-                    for name, result_obj in result.get('module_results', {}).items()
-                    if result_obj.status == ModuleStatus.COMPLETED
-                }
-                cli_parameters = {
-                    name: result_obj.cli_parameters
-                    for name, result_obj in result.get('module_results', {}).items()
-                    if result_obj.status == ModuleStatus.COMPLETED
-                }
+                module_results = result.get('module_results', {})
+                parameters = {}
+                cli_parameters = {}
+                
+                for name, result_obj in module_results.items():
+                    if ((hasattr(result_obj, 'status') and result_obj.status == ModuleStatus.COMPLETED) or
+                        (isinstance(result_obj, dict) and result_obj.get('status') == 'completed')):
+                        
+                        if hasattr(result_obj, 'parameters'):
+                            parameters[name] = result_obj.parameters
+                        elif isinstance(result_obj, dict):
+                            parameters[name] = result_obj.get('parameters', {})
+                        
+                        if hasattr(result_obj, 'cli_parameters'):
+                            cli_parameters[name] = result_obj.cli_parameters
+                        elif isinstance(result_obj, dict):
+                            cli_parameters[name] = result_obj.get('cli_parameters', '')
+                
+                # Extract CLI command if generated
+                messages = result.get('messages', [])
+                cli_command = None
+                execution_results = None
+                
+                for msg in reversed(messages):
+                    if hasattr(msg, 'content'):
+                        content = str(msg.content)
+                        if 'cli_command' in content or 'simulation' in content.lower():
+                            # Try to extract execution info from message content
+                            break
                 
                 return {
                     "status": "success",
                     "simulation_config": parameters,
                     "cli_parameters": cli_parameters,
+                    "cli_command": cli_command,
+                    "execution_results": execution_results,
                     "completed_modules": list(parameters.keys()),
-                    "execution_order": result.get('execution_order', [])
+                    "execution_order": result.get('execution_order', []),
+                    "simulation_tools_available": len(self.simulation_tools) > 0
                 }
             else:
                 return {
@@ -622,12 +806,13 @@ Type 'start' when you're ready to begin!
                     "current_stage": result['current_stage'],
                     "completed_modules": [
                         name for name, res in result.get('module_results', {}).items()
-                        if res.status == ModuleStatus.COMPLETED
+                        if ((hasattr(res, 'status') and res.status == ModuleStatus.COMPLETED) or
+                            (isinstance(res, dict) and res.get('status') == 'completed'))
                     ]
                 }
                 
         except Exception as e:
-            self._logger.error(f"Configuration failed: {e}")
+            self.logger.error(f"Configuration failed: {e}")
             return {
                 "status": "error", 
                 "error_message": f"Configuration process failed: {str(e)}",
@@ -654,7 +839,11 @@ Type 'start' when you're ready to begin!
             )
         
         module_results = state.values.get('module_results', {})
-        completed = [name for name, res in module_results.items() if res.status == ModuleStatus.COMPLETED]
+        completed = [
+            name for name, res in module_results.items() 
+            if ((hasattr(res, 'status') and res.status == ModuleStatus.COMPLETED) or
+                (isinstance(res, dict) and res.get('status') == 'completed'))
+        ]
         total_modules = len(state.values.get('execution_order', []))
         
         return SupervisorStatus(
@@ -680,9 +869,11 @@ Type 'start' when you're ready to begin!
         
         return ConfigurationExport(
             simulation_configuration={
-                f"{name}_parameters": result.parameters
+                f"{name}_parameters": (result.parameters if hasattr(result, 'parameters') 
+                                     else result.get('parameters', {}))
                 for name, result in module_results.items()
-                if result.status == ModuleStatus.COMPLETED
+                if ((hasattr(result, 'status') and result.status == ModuleStatus.COMPLETED) or
+                    (isinstance(result, dict) and result.get('status') == 'completed'))
             },
             metadata={
                 "thread_id": thread_id,
@@ -690,7 +881,9 @@ Type 'start' when you're ready to begin!
                 "execution_order": state.values.get('execution_order', []),
                 "completed_modules": status.completed_modules,
                 "total_modules": len(state.values.get('execution_order', [])),
-                "session_info": state.values.get('session_metadata', {})
+                "session_info": state.values.get('session_metadata', {}),
+                "cli_tools_enabled": len(self.simulation_tools) > 0,
+                "cli_generated": state.values.get('cli_command') is not None
             }
         )
 
@@ -701,11 +894,12 @@ Type 'start' when you're ready to begin!
 
 async def create_default_supervisor(
         provider = global_config.DEFAULT_PROVIDER, 
-        model: str = global_config.DEFAULT_MODEL
+        model: str = global_config.DEFAULT_MODEL,
+        cli_tools_path: str = None
         ) -> SupervisorAgent:
-    """Create supervisor with default modules (readin, guide, writeout)"""
+    """Create supervisor with default modules and CLI generation"""
     config = SupervisorConfigBuilder.create(provider=provider, model=model)
-    supervisor = SupervisorAgent(config)
+    supervisor = SupervisorAgent(config, simulation_tools_path=global_config.SUPERVISOR_MCP_PATH)
     supervisor.add_default_modules()
     await supervisor.initialize()
     return supervisor
@@ -727,21 +921,22 @@ def show_execution_order(supervisor: SupervisorAgent):
 
 
 async def main():
-    """Example: Different ways to use the combined supervisor"""
+    """Supervisor running Vitess simulation"""
     
-    print("🚀 Initializing Neutron Simulation Supervisor...")
+    print("🚀 Initializing Vitess Simulation Supervisor...")
     print("=" * 50)
     
-    # Example 1: Default supervisor
-    print("\n1️⃣ Default supervisor (readin → guide → writeout):")
-    supervisor = await create_default_supervisor()
+    # Example 1: Default supervisor with CLI generation
+    supervisor = await create_default_supervisor(
+        cli_tools_path="vitess_ai/mcp_tools/supervisor_mcp_tools.py"
+    )
     show_execution_order(supervisor)
 
     result = await supervisor.run("simulation_001")
     print("\n" + "="*60)
     print("🏁 FINAL RESULT:")
     print("="*60)
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, default=str))
 
 if __name__ == "__main__":
     import asyncio
