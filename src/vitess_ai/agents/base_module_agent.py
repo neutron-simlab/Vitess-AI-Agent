@@ -351,7 +351,6 @@ class BaseModuleAgent(ABC, Generic[R]):
         # Always add the AI response to messages first
         updated_messages = state['messages'] + [response]
         self.logger.info(f"Updated messages count after adding response: {len(updated_messages)}")
-        
         print(f"\nAssistant:\n{response.content}")
         
         # Check for tool calls

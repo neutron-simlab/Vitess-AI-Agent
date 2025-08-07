@@ -11,7 +11,7 @@ from typing import Any
 
 # Import our modules
 from vitess_ai.schema.readin_module import NF_MAX, ReadInParameters
-from vitess_ai.gui.file_upload import FileListManager
+from vitess_ai.gui.file_upload_readin import FileListManager
 from vitess_ai.gui.inst_file_upload import InstrumentFileManager
 from vitess_ai.schema.base import get_field_flag
 

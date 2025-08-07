@@ -55,7 +55,17 @@ class Config:
     GUIDE_MCP_PATH = os.getenv("GUIDE_MCP_PATH") 
     WRITEOUT_MCP_PATH = os.getenv("WRITEOUT_MCP_PATH")
     FILTER_MCP_PATH = os.getenv("FILTER_MCP_PATH")
+    # Supervisor CLI tools path
+    SUPERVISOR_MCP_PATH = os.getenv("SUPERVISOR_MCP_PATH")
     
+    # =============================================================================
+    # VITESS SIMULATION ENVIRONMENT
+    # =============================================================================
+    
+    # Default Vitess environment variables (from your script)
+    VITESS_MODULES_PATH = os.getenv("VITESS_MODULES_PATH")
+    VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH")
+    VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH")
     
     # =============================================================================
     # ENVIRONMENT
@@ -96,7 +106,8 @@ class Config:
         path_map = {
             "readin": cls.READIN_MCP_PATH,
             "guide": cls.GUIDE_MCP_PATH,
-            "writeout": cls.WRITEOUT_MCP_PATH
+            "writeout": cls.WRITEOUT_MCP_PATH,
+            "supervisor": cls.SUPERVISOR_CLI_MCP_PATH
         }
         
         path = path_map.get(module_name)
@@ -104,6 +115,16 @@ class Config:
             raise ValueError(f"No MCP path configured for module: {module_name}")
         
         return path
+    
+    @classmethod
+    def get_vitess_variables(cls) -> dict:
+        """Get default Vitess environment variables"""
+        return {
+            "V": cls.VITESS_MODULES_PATH,
+            "P": cls.VITESS_PROJECT_PATH, 
+            "L": cls.VITESS_LOG_PATH
+        }
+    
     
     @classmethod
     def initialize(cls):
@@ -114,6 +135,8 @@ class Config:
         print(f"✅ Configuration initialized")
         print(f"✅ Environment: {cls.ENVIRONMENT}")
         print(f"✅ LangSmith: {'enabled' if langsmith_enabled else 'disabled'}")
+        print(f"✅ Vitess Modules: {cls.VITESS_MODULES_PATH}")
+        print(f"✅ Vitess Project: {cls.VITESS_PROJECT_PATH}")
         
         return cls
 
