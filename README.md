@@ -71,7 +71,7 @@ Configures neutron input parameters and initial simulation conditions:
 #### **GuideAgent** 
 Handles neutron guide specifications and geometry:
 - Guide dimensions (width, height, length)
-- Reflectivity parameters (m-value coating)
+- Reflectivity parameters (m-value)
 - Guide geometry and curvature
 - Surface properties and specifications
 
