@@ -7,7 +7,7 @@
 ## ✨ Key Features
 
 - **Multi-Agent Architecture**: Specialized AI agents for different simulation modules
-- **Conversational Interface**: LangGraph-based conversational AI (Streamlit UI in development)
+- **Conversational Interface**: LangGraph-based conversational AI (FastHTML UI in development)
 - **Automated Configuration**: Guide users through neutron simulation parameters
 - **Parameter Validation**: Built-in validation using MCP (Model Context Protocol) tools
 - **CLI Generation**: Automatic generation of VITESS command-line parameters
