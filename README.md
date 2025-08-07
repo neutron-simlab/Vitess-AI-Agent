@@ -435,9 +435,9 @@ LOG_LEVEL=INFO
 ### Supported LLM Providers
 
 - **Anthropic**: Claude models (recommended)
-- **OpenAI**: GPT models  
+- **OpenAI**: GPT models (recommended)
 - **Ollama**: Local models
-- **Other providers**: Extensible through LangChain
+- **Blablador**: Extensible through LangChain
 
 ---
 
