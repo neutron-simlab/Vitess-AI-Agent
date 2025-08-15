@@ -1,5 +1,5 @@
 # filter_module_tools.py
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 import json
 from vitess_ai.schema.filter_module import FilterBlock, FilterParameterSet
 from typing import Any, Union, List

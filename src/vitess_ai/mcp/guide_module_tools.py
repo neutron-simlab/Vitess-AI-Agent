@@ -1,5 +1,5 @@
 # guide_module_tools.py
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 import json
 import os
 from vitess_ai.gui.file_upload_guide import GuideFileListManager

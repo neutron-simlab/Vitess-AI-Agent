@@ -2,8 +2,8 @@
 supervisor_mcp_tools.py - MCP Tools for Supervisor Agent CLI Generation
 FastMCP tools for converting collected module parameters to CLI commands
 """
-from mcp.server.fastmcp import FastMCP
-from typing import Any, Dict, List
+from fastmcp import FastMCP
+from typing import Any, Dict, List, Optional
 from vitess_ai.core.config import global_config
 import logging
 
@@ -28,8 +28,8 @@ COMMON_PARAMS = " ".join([
 ])
 
 def generate_cli_command(
-   module_results: dict = None,
-   execution_order: List[str] = None,
+   module_results: Optional[dict] = None,
+   execution_order: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
    """
    Generate CLI command from collected module results.
@@ -42,6 +42,11 @@ def generate_cli_command(
        Dictionary with CLI command and metadata
    """
    try:
+       if module_results is None:
+           module_results = {}
+       if execution_order is None:
+           execution_order = []
+           
        cli_command = []
        
        for i, module in enumerate(execution_order, 1):  # Start from 1 for ordering
@@ -89,8 +94,8 @@ def generate_cli_command(
    
 @mcp.tool()
 async def run_simulation(
-    module_results: dict = None,
-    execution_order: List[str] = None,
+    module_results: Optional[dict] = None,
+    execution_order: Optional[List[str]] = None,
     execute: bool = False
 ) -> Dict[str, Any]:
     """
@@ -120,7 +125,7 @@ async def run_simulation(
         return str(data)
     
     try:
-        cli_result = generate_cli_command(module_results, execution_order)
+        cli_result = generate_cli_command(module_results or {}, execution_order or [])
         if not cli_result.get('success', False):
             return cli_result  # Return error immediately
             
