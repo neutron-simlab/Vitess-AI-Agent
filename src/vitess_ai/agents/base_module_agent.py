@@ -6,6 +6,7 @@ import json
 import logging
 from typing import List, Optional, Any, Type, TypeVar, Generic, Dict
 from enum import Enum
+from langgraph.types import interrupt, Command, Interrupt 
 from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
@@ -232,8 +233,9 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.logger.info("Starting welcome interaction")
         
         print(f"{self.welcome_prompt.content}")
-        user_init_message = input("\nUser:\n").strip()
-        
+        # user_init_message = input("\nUser:\n").strip()
+        user_init_message = interrupt("\nUser:\n")
+        self.logger.info("Interrupt triggered for initial user input")
         self.logger.info(f"User initial input received: {user_init_message[:50]}{'...' if len(user_init_message) > 50 else ''}")
         
         # Create instruction message for parsing
@@ -369,7 +371,9 @@ class BaseModuleAgent(ABC, Generic[R]):
             }
         else:
             self.logger.info("No tool calls, getting user input")
-            user_input = input("\nUser:\n").strip()
+            # user_input = input("\nUser:\n").strip()
+            user_input = interrupt("\nUser:\n")
+            self.logger.info("Interrupt triggered for user input in parameters configuration")
             self.logger.info(f"User input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
             
             final_messages = updated_messages + [HumanMessage(content=user_input)]
@@ -499,6 +503,28 @@ class BaseModuleAgent(ABC, Generic[R]):
             # Run the graph
             self.logger.info("Invoking agent graph")
             result = await self.app.ainvoke(input_state, config)
+            print(result)
+            
+            # Handle multiple interrupts in a loop
+            interrupt_count = 0
+            while result.get("__interrupt__"):
+                interrupt_count += 1
+                self.logger.info(f"Handling interrupt #{interrupt_count}")
+                
+                # Extract the interrupt value from the first interrupt in the list
+                interrupt_value = result["__interrupt__"][0].value
+                self.logger.info(f"Graph interrupted, waiting for user input: {interrupt_value}")
+                
+                # Get user input (this is where the interrupt message is displayed)
+                user_response = input(interrupt_value).strip()
+                self.logger.info(f"User provided input: {user_response[:50]}{'...' if len(user_response) > 50 else ''}")
+                
+                # Resume the graph with user input
+                self.logger.info(f"Resuming graph with user input (interrupt #{interrupt_count})")
+                result = await self.app.ainvoke(Command(resume=user_response), config)
+                self.logger.info(f"Graph resumed after interrupt #{interrupt_count}")
+            
+            self.logger.info(f"Graph completed after handling {interrupt_count} interrupt(s)")
              # Return results in standardized format
             if result.get('validation_status'):
                 self.logger.info("Agent run completed successfully")
@@ -509,7 +535,7 @@ class BaseModuleAgent(ABC, Generic[R]):
             else:
                 self.logger.warning("Agent run completed but no valid results generated")
                 return "No response generated"
-                
+        
         except Exception as e:
             self.logger.error(f"Agent run failed: {e}")
             return f"Agent execution failed: {str(e)}"
