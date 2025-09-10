@@ -5,7 +5,7 @@ Combined Builder and Supervisor Agent with MCP CLI generation tools
 import logging
 import json
 from typing import Dict, List, Any, Optional, Callable, Type
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, MessagesState, END, START
 from langgraph.checkpoint.memory import MemorySaver
@@ -366,6 +366,7 @@ class SupervisorAgent:
     def _create_module_node(self, module_name: str) -> Callable:
         """Create a node function for a specific module"""
         
+        # Subgraph for module execution taking the SupervisorState as input and returning the SupervisorState
         async def module_node(state: SupervisorState) -> SupervisorState:
             """Dynamic module node implementation"""
             module_metadata = self.registry.get_module(module_name)
@@ -536,7 +537,7 @@ Do not modify or interpret the module_results data - pass it exactly as provided
     # =================
     
     def _welcome_node(self, state: SupervisorState) -> SupervisorState:
-        """Welcome node with dynamic module information"""
+        """Welcome node with dynamic module information - automatically proceeds to configuration"""
         
         # Show available modules
         modules_info = []
@@ -551,48 +552,45 @@ Do not modify or interpret the module_results data - pass it exactly as provided
         simulation_info = f"\n🚀 **Simulation Execution**: Automatic execution of configured simulation" if self.simulation_tools else ""
         
         welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info) + simulation_info
-        print(welcome_text)
         
-        user_input = input("\nSupervisor: ").strip()
-        
-        # Use LLM to interpret user intent
-        system_prompt = SystemMessage(content="""
-You are analyzing user input to determine their intent in a simulation configuration system.
+        # Add explanation about Vitess AI Agent
+        vitess_explanation = """
 
-Classify the user's response into one of these categories:
-- "START": User wants to begin the configuration process (e.g., "start", "begin", "let's go", "yes", "ready")
-- "HELP": User wants more information or help (e.g., "help", "what is this", "explain", "info") 
-- "UNCLEAR": User input is unclear or unrelated
+🤖 **About Vitess AI Agent:**
+The Vitess AI Agent is an intelligent simulation configuration system designed to help you set up neutron scattering simulations using the Vitess simulation framework. This system uses specialized AI agents for each simulation module to guide you through the configuration process.
 
-Respond with only one word: START, HELP, or UNCLEAR
-        """)
+**How it works:**
+- Each module has a dedicated AI agent that understands the specific parameters and requirements
+- The agents will ask you questions about your simulation needs and provide intelligent recommendations
+- All modules will be configured automatically, and then the simulation will be executed
+- The system handles parameter validation and generates the appropriate CLI commands
+
+**Process:**
+1. Configuration: Each module agent will guide you through setting up parameters
+2. Validation: Parameters are validated using specialized tools
+3. Execution: The complete simulation is automatically executed
+4. Results: You'll receive the simulation results and configuration summary
+
+🚀 **Starting simulation configuration process automatically...**
+        """
         
-        messages = [system_prompt, HumanMessage(content=user_input)]
-        response = self.llm.invoke(messages)
-        intent = response.content.strip().upper()
+        full_welcome = welcome_text + vitess_explanation
+        print(full_welcome)
         
-        if intent == "START":
-            print("🚀 Starting simulation configuration process...")
-            execution_order = self.registry.get_execution_order()
-            
-            return {
-                'messages': [HumanMessage(content=user_input)],
-                'current_stage': SupervisorStage.MODULE_EXECUTION,
-                'execution_order': execution_order,
-                'pending_modules': execution_order.copy(),
-                'current_module': execution_order[0] if execution_order else None,
-                'module_results': {},
-                'session_metadata': {'start_intent': user_input},
-                'cli_generation_ready': False,
-                'error_message': None
-            }
+        # Automatically proceed to module execution
+        execution_order = self.registry.get_execution_order()
         
-        elif intent == "HELP":
-            self._show_help()
-            return state  # Stay in welcome
-        else:
-            print("I'm not sure what you mean. Please type something like 'start' to begin or 'help' for more information.")
-            return state  # Stay in welcome for retry
+        return {
+            'messages': [HumanMessage(content="Automatic start")],
+            'current_stage': SupervisorStage.MODULE_EXECUTION,
+            'execution_order': execution_order,
+            'pending_modules': execution_order.copy(),
+            'current_module': execution_order[0] if execution_order else None,
+            'module_results': {},
+            'session_metadata': {'start_intent': 'automatic_start'},
+            'cli_generation_ready': False,
+            'error_message': None
+        }
     
     def _completion_node(self, state: SupervisorState) -> SupervisorState:
         """Enhanced completion node with CLI information"""
@@ -650,7 +648,13 @@ Respond with only one word: START, HELP, or UNCLEAR
         if state.get('current_stage') == SupervisorStage.ERROR:
             return "error_handler"
         
-        return "welcome"  # Stay in welcome
+        # If we're still in welcome stage, automatically proceed to module execution
+        execution_order = self.registry.get_execution_order()
+        if execution_order:
+            first_module = execution_order[0]
+            return f"module_{first_module}"
+        
+        return "error_handler"  # No modules available
     
     def _route_from_module(self, state: SupervisorState, module_name: str, 
                           next_module: str = None, is_last: bool = False) -> str:
@@ -684,44 +688,6 @@ Respond with only one word: START, HELP, or UNCLEAR
             'current_stage': SupervisorStage.ERROR,
             'error_message': error_message
         }
-    
-    def _show_help(self):
-        """Show help information"""
-        execution_order = self.registry.get_execution_order()
-        
-        help_text = f"""
-📖 **HELP - Neutron Simulation Configuration System**
-
-This system will guide you through {len(execution_order)} simulation modules:
-"""
-        
-        for module_name in execution_order:
-            module_metadata = self.registry.get_module(module_name)
-            if module_metadata:
-                optional_text = " (optional)" if module_metadata.optional else " (required)"
-                help_text += f"\n{module_metadata.order}. **{module_metadata.display_name}**{optional_text}\n   {module_metadata.description}"
-        
-        simulation_features = ""
-        if self.simulation_tools:
-            simulation_features = """
-
-🚀 **Simulation Execution:**
-- Automatic execution of configured simulation
-- Direct execution with error handling and logging
-- Post-processing and result collection"""
-        
-        help_text += simulation_features + """
-
-Each module is independent and has a specialized AI agent that will:
-- Ask you questions about your simulation needs
-- Provide default recommendations  
-- Validate your parameter choices
-- Generate CLI parameters for execution
-
-After all modules complete, the system will generate and execute your simulation.
-Type 'start' when you're ready to begin!
-        """
-        print(help_text)
     
     # =================
     # PUBLIC API
