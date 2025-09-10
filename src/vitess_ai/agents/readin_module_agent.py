@@ -142,12 +142,15 @@ async def main():
     print("=== Neutron Simulation Read-in Parameters Configuration ===\n")
     
     print("🤖 Starting conversation...")
-    result = await agent.run("", thread_id)
+    final_result = None
+    async for event in agent.stream_run("", thread_id):
+        if event["type"] == "chunk":
+            final_result = event["data"]  # Keep track of the last chunk
     
     print("\n" + "="*60)
-    print("FINAL READ-IN PARAMS:")
+    print("FINAL GUIDE PARAMS:")
     print("="*60)
-    print(result)
+    print(final_result)
     
     # Example of getting conversation history
     history = agent.get_conversation_history(thread_id)

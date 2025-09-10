@@ -536,12 +536,13 @@ class BaseModuleAgent(ABC, Generic[R]):
             self.logger.error(f"Agent run failed: {e}")
             return f"Agent execution failed: {str(e)}"
     
-    def stream_run(self, user_input: str, thread_id: str = "default"):
-        """Standardized streaming method"""
+    async def stream_run(self, user_input: str, thread_id: str = "default"):
+        """Async streaming method that handles interrupts recursively with input()"""
         config = {"configurable": {"thread_id": thread_id}}
         current_state = self.app.get_state(config)
         user_message = HumanMessage(content=user_input)
         
+        # Prepare input state
         if current_state.values:
             current_messages = current_state.values.get("messages", [])
             input_state = {
@@ -560,8 +561,34 @@ class BaseModuleAgent(ABC, Generic[R]):
                 "error_message": None
             }
         
-        for chunk in self.app.stream(input_state, config):
-            yield chunk
+        # Start async streaming with interrupt handling
+        async for event in self._astream_with_interrupts(input_state, config):
+            yield event
+
+    async def _astream_with_interrupts(self, input_state, config):
+        """Recursive helper to handle interrupts in async streaming"""
+        async for chunk in self.app.astream(input_state, config):
+            if chunk.get("__interrupt__"):
+                # Yield interrupt event
+                yield {
+                    "type": "interrupt",
+                    "interrupt_value": chunk["__interrupt__"][0].value,
+                    "thread_id": config["configurable"]["thread_id"]
+                }
+                
+                # Get user response with simple input()
+                interrupt_value = chunk["__interrupt__"][0].value
+                user_response = input(interrupt_value).strip()
+                
+                # Recursively handle any further interrupts
+                async for event in self._astream_with_interrupts(Command(resume=user_response), config):
+                    yield event
+            else:
+                # Regular chunk
+                yield {
+                    "type": "chunk",
+                    "data": chunk
+                }
     
     def get_conversation_history(self, thread_id: str = "default") -> List[BaseMessage]:
         """Standardized conversation history method"""
