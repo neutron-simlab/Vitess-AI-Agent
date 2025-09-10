@@ -233,7 +233,6 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.logger.info("Starting welcome interaction")
         
         print(f"{self.welcome_prompt.content}")
-        # user_init_message = input("\nUser:\n").strip()
         user_init_message = interrupt("\nUser:\n")
         self.logger.info("Interrupt triggered for initial user input")
         self.logger.info(f"User initial input received: {user_init_message[:50]}{'...' if len(user_init_message) > 50 else ''}")
@@ -371,7 +370,6 @@ class BaseModuleAgent(ABC, Generic[R]):
             }
         else:
             self.logger.info("No tool calls, getting user input")
-            # user_input = input("\nUser:\n").strip()
             user_input = interrupt("\nUser:\n")
             self.logger.info("Interrupt triggered for user input in parameters configuration")
             self.logger.info(f"User input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
@@ -503,8 +501,6 @@ class BaseModuleAgent(ABC, Generic[R]):
             # Run the graph
             self.logger.info("Invoking agent graph")
             result = await self.app.ainvoke(input_state, config)
-            print(result)
-            
             # Handle multiple interrupts in a loop
             interrupt_count = 0
             while result.get("__interrupt__"):
