@@ -217,11 +217,19 @@ rm ${{L}}*
                     "message": f"Simulation execution failed: {e}"
                 })
             finally:
-                # Clean up script file
+                # Move script to VITESS_PROJECT_PATH for reference
                 try:
-                    os.unlink(script_path)
-                except:
-                    pass
+                    import shutil
+                    script_name = f"simulation_script_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sh"
+                    final_script_path = os.path.join(global_config.VITESS_PROJECT_PATH, script_name)
+                    shutil.move(script_path, final_script_path)
+                    result["saved_script_path"] = final_script_path
+                except Exception as e:
+                    # If moving fails, try to clean up the temp file
+                    try:
+                        os.unlink(script_path)
+                    except:
+                        pass
         
         return result
         
