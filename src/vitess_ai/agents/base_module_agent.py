@@ -233,9 +233,9 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.logger.info("Starting welcome interaction")
         
         print(f"{self.welcome_prompt.content}")
-        user_init_message = interrupt("\nUser:\n")
+        user_input = interrupt("\nUser:\n")
         self.logger.info("Interrupt triggered for initial user input")
-        self.logger.info(f"User initial input received: {user_init_message[:50]}{'...' if len(user_init_message) > 50 else ''}")
+        self.logger.info(f"User initial input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
         
         # Create instruction message for parsing
         instruction_message = SystemMessage(content=f"""
@@ -246,7 +246,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         between the valid options (e.g., unrelated topics, ambiguous language)
         """)
         
-        messages = [self.welcome_prompt, instruction_message, HumanMessage(user_init_message)]
+        messages = [self.welcome_prompt, instruction_message, HumanMessage(user_input)]
         
         # Use structured output to parse response
         initial_response_schema = self.get_initial_response_schema()
@@ -501,7 +501,75 @@ class BaseModuleAgent(ABC, Generic[R]):
             # Run the graph
             self.logger.info("Invoking agent graph")
             result = await self.app.ainvoke(input_state, config)
-            # Handle multiple interrupts in a loop
+            # Return immediately if interrupted - supervisor will handle resume
+            if result.get("__interrupt__"):
+                return {"__interrupt__": result["__interrupt__"]}
+
+             # Return results in standardized format
+            if result.get('validation_status'):
+                self.logger.info("Agent run completed successfully")
+                return {
+                    'parameters':result['parameters'],
+                    'cli_parameters':result['cli_parameters']
+                }
+            else:
+                self.logger.warning("Agent run completed but no valid results generated")
+                return "No response generated"
+        
+        except Exception as e:
+            self.logger.error(f"Agent run failed: {e}")
+            return f"Agent execution failed: {str(e)}"
+    
+    async def run_standalone(self, user_input: str, thread_id: str = "default") -> str | dict:
+        """
+        Standalone run method with built-in interrupt handling for individual module testing.
+        
+        This method is designed for testing individual modules without the supervisor.
+        It includes the interrupt handling loop that was removed from the main run() method.
+        
+        Use this when:
+        - Testing individual modules (e.g., guide_module_agent.py)
+        - Developing new modules
+        - Debugging module-specific issues
+        
+        The supervisor uses run() method, while individual testing uses run_standalone().
+        """
+        self.logger.info(f"Starting standalone agent run with thread_id: {thread_id}")
+        
+        config = {"configurable": {"thread_id": thread_id}}
+        current_state = self.app.get_state(config)
+        
+        # Prepare input message
+        user_message = HumanMessage(content=user_input)
+        
+        if current_state.values:
+            # Continue existing conversation
+            self.logger.info("Continuing existing conversation")
+            current_messages = current_state.values.get("messages", [])
+            input_state = {
+                "messages": current_messages + [user_message],
+                "stage": current_state.values.get("stage", FillingStage(stage='processing')),
+                "config_mode": current_state.values.get("config_mode", ""),
+                "validation_status": current_state.values.get("validation_status"),
+                "error_message": current_state.values.get("error_message")
+            }
+        else:
+            # Start new conversation
+            self.logger.info("Starting new conversation")
+            input_state = {
+                "messages": [user_message],
+                "stage": FillingStage(stage='processing'),
+                "config_mode": "",
+                "validation_status": None,
+                "error_message": None
+            }
+        
+        try:
+            # Run the graph
+            self.logger.info("Invoking agent graph")
+            result = await self.app.ainvoke(input_state, config)
+            
+            # Handle interrupts in standalone mode (for individual module testing)
             interrupt_count = 0
             while result.get("__interrupt__"):
                 interrupt_count += 1
@@ -520,21 +588,51 @@ class BaseModuleAgent(ABC, Generic[R]):
                 result = await self.app.ainvoke(Command(resume=user_response), config)
                 self.logger.info(f"Graph resumed after interrupt #{interrupt_count}")
             
-            self.logger.info(f"Graph completed after handling {interrupt_count} interrupt(s)")
-             # Return results in standardized format
+            self.logger.info(f"Standalone agent run completed after handling {interrupt_count} interrupt(s)")
+            
+            # Return results in standardized format
             if result.get('validation_status'):
                 self.logger.info("Agent run completed successfully")
                 return {
-                    'parameters':result['parameters'],
-                    'cli_parameters':result['cli_parameters']
+                    'parameters': result['parameters'],
+                    'cli_parameters': result['cli_parameters']
                 }
             else:
                 self.logger.warning("Agent run completed but no valid results generated")
                 return "No response generated"
         
         except Exception as e:
-            self.logger.error(f"Agent run failed: {e}")
+            self.logger.error(f"Standalone agent run failed: {e}")
             return f"Agent execution failed: {str(e)}"
+    
+    async def test_standalone(self, thread_id: str = None) -> str | dict:
+        """
+        Convenience method for testing individual modules.
+        
+        This is a simple wrapper around run_standalone() that provides
+        a clean interface for testing modules individually.
+        
+        Usage in module files:
+        ```python
+        if __name__ == "__main__":
+            import asyncio
+            agent = YourModuleAgent(provider="openai", model="gpt-4")
+            result = asyncio.run(agent.test_standalone())
+            print(result)
+        ```
+        """
+        if thread_id is None:
+            thread_id = f"test_{self.module_name}_{hash(str(self))}"
+        
+        print(f"\n{'='*60}")
+        print(f"🧪 TESTING {self.name.upper()} MODULE")
+        print(f"{'='*60}")
+        print(f"Module: {self.name}")
+        print(f"Description: {self.welcome_message}")
+        print(f"Thread ID: {thread_id}")
+        print(f"{'='*60}\n")
+        
+        return await self.run_standalone("", thread_id)
     
     async def stream_run(self, user_input: str, thread_id: str = "default"):
         """Async streaming method that handles interrupts recursively with input()"""
@@ -724,4 +822,64 @@ class ModuleBuilder:
             optional=optional,
             order=order
         )
+
+
+# =================
+# USAGE EXAMPLES FOR STANDALONE TESTING
+# =================
+
+"""
+STANDALONE MODULE TESTING EXAMPLES:
+
+1. Basic standalone testing:
+```python
+if __name__ == "__main__":
+    import asyncio
+    from vitess_ai.agents.guide_module_agent import GuideAgent
+    
+    async def test_guide():
+        agent = GuideAgent(provider="openai", model="gpt-4")
+        result = await agent.test_standalone()
+        print("Test result:", result)
+    
+    asyncio.run(test_guide())
+```
+
+2. Custom standalone testing with specific thread:
+```python
+if __name__ == "__main__":
+    import asyncio
+    from vitess_ai.agents.readin_module_agent import ReadInAgent
+    
+    async def test_readin():
+        agent = ReadInAgent(provider="openai", model="gpt-4")
+        result = await agent.run_standalone("", "my_test_thread")
+        print("Test result:", result)
+    
+    asyncio.run(test_readin())
+```
+
+3. Testing with MCP tools:
+```python
+if __name__ == "__main__":
+    import asyncio
+    from vitess_ai.agents.writeout_module_agent import WriteoutAgent
+    
+    async def test_writeout():
+        # Agent will automatically load MCP tools if config_path is set
+        agent = WriteoutAgent(provider="openai", model="gpt-4")
+        result = await agent.test_standalone()
+        print("Test result:", result)
+    
+    asyncio.run(test_writeout())
+```
+
+KEY DIFFERENCES:
+- run(): Used by supervisor, returns on interrupt (no HITL)
+- run_standalone(): Used for individual testing, handles interrupts (HITL)
+- test_standalone(): Convenience wrapper with nice output formatting
+
+The supervisor uses InterruptManager with run() method for centralized interrupt handling.
+Individual module testing uses run_standalone() or test_standalone() for direct HITL.
+"""
 

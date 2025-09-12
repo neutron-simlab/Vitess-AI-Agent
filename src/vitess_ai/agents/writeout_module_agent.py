@@ -183,6 +183,29 @@ async def main():
     print("="*60)
     print(final_result)
 
+async def test_standalone():
+    """Simple standalone testing example using the new test_standalone() method"""
+    print("🧪 Testing Writeout Agent Standalone...")
+    
+    # Create agent with MCP tools
+    agent = WriteoutAgent(provider="openai", model="gpt-4")
+    
+    # Test using the new standalone method
+    result = await agent.test_standalone()
+    
+    print("\n" + "="*60)
+    print("STANDALONE TEST RESULT:")
+    print("="*60)
+    print(result)
+    return result
+
+
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main())
+    
+    # Choose which test to run:
+    # Option 1: Full demo (existing)
+    # asyncio.run(main())
+    
+    # Option 2: Simple standalone test (new)
+    asyncio.run(test_standalone())

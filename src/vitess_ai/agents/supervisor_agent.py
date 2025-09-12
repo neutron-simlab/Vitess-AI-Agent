@@ -17,6 +17,7 @@ from vitess_ai.schema.supervisor_modules import (
       SupervisorStatus, ConfigurationExport
 )
 from vitess_ai.core.registry import ModuleRegistry
+from vitess_ai.core.interrupt import InterruptManager
 
 from vitess_ai.agents.base_module_agent import (
     BaseModuleAgent, ModuleBuilder, 
@@ -388,7 +389,9 @@ class SupervisorAgent:
                 
                 # Execute the module
                 thread_id = f"{module_name}_{hash(str(state.get('session_metadata', {})))}"
-                result = await agent.run("", thread_id)
+                # Use InterruptManager:
+                interrupt_manager = InterruptManager(self.logger)
+                result = await interrupt_manager.execute_module_agent(agent, thread_id, "")
                 
                 # Create module result
                 if isinstance(result, dict):
