@@ -4,8 +4,9 @@ Combined Builder and Supervisor Agent with MCP CLI generation tools
 """
 import logging
 import json
+from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable, Type
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, MessagesState, END, START
 from langgraph.checkpoint.memory import MemorySaver
@@ -17,6 +18,7 @@ from vitess_ai.schema.supervisor_modules import (
     SupervisorConfig, SupervisorStage, 
       SupervisorStatus, ConfigurationExport
 )
+from vitess_ai.schema.server import ActiveModuleContext
 from vitess_ai.core.registry import ModuleRegistry
 
 from vitess_ai.agents.base_module_agent import (
@@ -78,6 +80,10 @@ class SupervisorState(MessagesState):
     cli_generation_ready: bool = False
     cli_command: Optional[str] = None
     simulation_finish: Optional[bool] = None
+    
+    # Module interrupt handling fields
+    waiting_for_module: Optional[str] = None  # Which module is waiting for input
+    active_module_context: Optional[ActiveModuleContext] = None  # Current module execution context
 
 # =================
 # MAIN SUPERVISOR AGENT
@@ -276,7 +282,7 @@ class SupervisorAgent:
                 self.logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
         
         # Create agent instance
-        agent = module_metadata.agent_class(provider=self.config.provider, model=self.config.model, tools=tools)
+        agent = module_metadata.agent_class(provider=self.config.provider, model=self.config.model, tools=tools, serverless_mode=self.serverless_mode)
         self.agent_instances[module_name] = agent
         
         self.logger.info(f"Initialized agent for module: {module_name}")
@@ -391,7 +397,8 @@ class SupervisorAgent:
                 agent = self.agent_instances[module_name]
                 
                 # Execute the module using appropriate method based on mode
-                thread_id = f"{module_name}_{hash(str(state.get('session_metadata', {})))}"
+                # Use the same thread ID for the entire conversation (LangGraph design)
+                thread_id = state.get('session_metadata', {}).get('thread_id', 'default')
                 
                 if self.serverless_mode:
                     # Serverless mode: Use run_serverless for direct console interaction
@@ -429,13 +436,26 @@ class SupervisorAgent:
                     # Handle interrupt response
                     if isinstance(result, dict) and result.get("status") == "interrupted":
                         # Module agent hit an interrupt - we need to propagate this to the FastAPI layer
-                        interrupt_value = result.get("interrupt_value", "No message provided")
+                        interrupt_value = result.get("interrupt_value", "No message provided") ## TODO: check if the index of interrupt_value is correct
                         self.logger.info(f"Module {module_name} interrupted with message: {interrupt_value}")
+                        
+                        # Create module execution context for interrupt handling
+                        active_context = ActiveModuleContext(
+                            module_name=module_name,
+                            thread_id=thread_id,  # Same thread ID for entire conversation
+                            interrupt_value=interrupt_value,
+                            interrupt_count=result.get('interrupt_count', 1),
+                            created_at=datetime.now().isoformat(),
+                            status="interrupted"
+                        )
+                        
                         return {
                             **state,
                             'current_stage': SupervisorStage.MODULE_EXECUTION,
                             'current_module': module_name,
-                            'error_message': f"Module {module_name} interrupted: {interrupt_value}",
+                            'waiting_for_module': module_name,
+                            'active_module_context': active_context,
+                            'error_message': None,
                             '__interrupt__': [Interrupt(value=interrupt_value)]
                         }
                 
@@ -457,6 +477,8 @@ class SupervisorAgent:
                         **state,
                         'current_stage': SupervisorStage.MODULE_EXECUTION,
                         'current_module': module_name,
+                        'waiting_for_module': None,  # Clear waiting state
+                        'active_module_context': None,  # Clear active context
                         'module_results': updated_results,
                         'error_message': None
                     }
@@ -624,28 +646,46 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
         """
         
         full_welcome = welcome_text + vitess_explanation
-        print(full_welcome)
         
-        # Automatically proceed to module execution
-        execution_order = self.registry.get_execution_order()
-        
-        return {
-            'messages': [HumanMessage(content="Automatic start")],
-            'current_stage': SupervisorStage.MODULE_EXECUTION,
-            'execution_order': execution_order,
-            'pending_modules': execution_order.copy(),
-            'current_module': execution_order[0] if execution_order else None,
-            'module_results': {},
-            'session_metadata': {'start_intent': 'automatic_start'},
-            'cli_generation_ready': False,
-            'error_message': None
-        }
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(full_welcome)
+            return {
+                'messages': [HumanMessage(content="Automatic start")],
+                'current_stage': SupervisorStage.MODULE_EXECUTION,
+                'execution_order': execution_order,
+                'pending_modules': execution_order.copy(),
+                'current_module': execution_order[0] if execution_order else None,
+                'module_results': {},
+                'session_metadata': {'start_intent': 'automatic_start'},
+                'cli_generation_ready': False,
+                'error_message': None,
+                # Module interrupt handling fields
+                'waiting_for_module': None,
+                'active_module_context': None
+            }
+        else:
+            # Server mode: return welcome message in messages for streaming
+            return {
+                'messages': [
+                    HumanMessage(content="Automatic start"),
+                    AIMessage(content=full_welcome)
+                ],
+                'current_stage': SupervisorStage.MODULE_EXECUTION,
+                'execution_order': execution_order,
+                'pending_modules': execution_order.copy(),
+                'current_module': execution_order[0] if execution_order else None,
+                'module_results': {},
+                'session_metadata': {'start_intent': 'automatic_start'},
+                'cli_generation_ready': False,
+                'error_message': None,
+                # Module interrupt handling fields
+                'waiting_for_module': None,
+                'active_module_context': None
+            }
     
     def _completion_node(self, state: SupervisorState) -> SupervisorState:
         """Enhanced completion node with CLI information"""
-        print(f"\n{'='*60}")
-        print("🎉 VITESS SIMULATION CONFIGURATION COMPLETED and EXECUTED")
-        print(f"{'='*60}")
         
         # Generate summary
         module_results = state.get('module_results', {})
@@ -653,37 +693,65 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
                            if (hasattr(result, 'status') and result.status == ModuleStatus.COMPLETED) or
                               (isinstance(result, dict) and result.get('status') == 'completed')]
         
-        print(f"\n📋 **CONFIGURATION SUMMARY:**")
-        print(f"✅ Completed modules: {len(completed_modules)}")
+        completion_message = f"""
+{'='*60}
+🎉 VITESS SIMULATION CONFIGURATION COMPLETED and EXECUTED
+{'='*60}
+
+📋 **CONFIGURATION SUMMARY:**
+✅ Completed modules: {len(completed_modules)}
+"""
         
         for module_name in completed_modules:
             module_metadata = self.registry.get_module(module_name)
             if module_metadata:
-                print(f"   {module_metadata.order}. {module_metadata.display_name}")
-
+                completion_message += f"   {module_metadata.order}. {module_metadata.display_name}\n"
         
-        return {
-            **state,
-            'current_stage': SupervisorStage.COMPLETION,
-            'error_message': None
-        }
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(completion_message)
+            return {
+                **state,
+                'current_stage': SupervisorStage.COMPLETION,
+                'error_message': None
+            }
+        else:
+            # Server mode: return completion message in messages for streaming
+            return {
+                **state,
+                'current_stage': SupervisorStage.COMPLETION,
+                'error_message': None,
+                'messages': state.get('messages', []) + [AIMessage(content=completion_message)]
+            }
     
     def _error_handler_node(self, state: SupervisorState) -> SupervisorState:
         """Error handler node"""
         error_msg = state.get('error_message', 'Unknown error occurred')
         current_module = state.get('current_module', 'unknown')
         
-        print(f"\n❌ **ERROR in {current_module.upper()} module**")
+        error_message = f"""
+❌ **ERROR in {current_module.upper()} module**
+"""
         if error_msg and error_msg != 'None':
-            print(f"Error: {error_msg}")
+            error_message += f"Error: {error_msg}\n"
         else:
-            print("Error: Module execution failed with no specific error message")
-        print("Configuration process terminated.")
+            error_message += "Error: Module execution failed with no specific error message\n"
+        error_message += "Configuration process terminated."
         
-        return {
-            **state,
-            'current_stage': SupervisorStage.ERROR
-        }
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(error_message)
+            return {
+                **state,
+                'current_stage': SupervisorStage.ERROR
+            }
+        else:
+            # Server mode: return error message in messages for streaming
+            return {
+                **state,
+                'current_stage': SupervisorStage.ERROR,
+                'messages': state.get('messages', []) + [AIMessage(content=error_message)]
+            }
     
     # =================
     # ROUTING FUNCTIONS
@@ -769,7 +837,10 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
             "user_preferences": {},
             "session_metadata": {"thread_id": thread_id},
             "cli_generation_ready": False,
-            "cli_command": None
+            "cli_command": None,
+            # Module interrupt handling fields
+            "waiting_for_module": None,
+            "active_module_context": None
         }
         
         try:

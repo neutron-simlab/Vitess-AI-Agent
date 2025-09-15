@@ -22,9 +22,9 @@ class GuideAgent(BaseModuleAgent[InitialResponseGuide]):
     - Neutron transport optimization
     """
     
-    def __init__(self, provider: str, model: str, tools: List[BaseTool] = []):
+    def __init__(self, provider: str, model: str, tools: List[BaseTool] = [], serverless_mode: bool = False):
         """Initialize the Guide Agent with base functionality"""
-        super().__init__(provider, model, tools)
+        super().__init__(provider, model, tools, serverless_mode)
     
     # =================
     # REQUIRED ABSTRACT METHODS
@@ -131,7 +131,7 @@ async def create_guide_agent(
     })
     
     tools = await client.get_tools()
-    return GuideAgent(provider=provider, model=model, tools=tools)
+    return GuideAgent(provider=provider, model=model, tools=tools, serverless_mode=True)
 
 
 # =================

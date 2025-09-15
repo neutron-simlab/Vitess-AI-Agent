@@ -6,7 +6,7 @@ import json
 import logging
 from typing import List, Optional, Any, Type, TypeVar, Generic, Dict
 from enum import Enum
-from langgraph.types import interrupt, Command 
+from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
@@ -44,11 +44,12 @@ class BaseModuleAgent(ABC, Generic[R]):
     - Structured logging throughout
     """
     
-    def __init__(self, provider:str, model: str, tools: List[BaseTool] = []):
+    def __init__(self, provider:str, model: str, tools: List[BaseTool] = [], serverless_mode: bool = False):
         """Initialize the base module agent"""
         self.provider = provider
         self.model = model
         self.tools = tools
+        self.serverless_mode = serverless_mode
         self.llm = create_llm_with_fallback(provider=self.provider, model=self.model)
         
         
@@ -233,10 +234,19 @@ class BaseModuleAgent(ABC, Generic[R]):
         """Standardized welcome node implementation"""
         self.logger.info("Starting welcome interaction")
         
-        print(f"{self.welcome_prompt.content}")
-        user_input = interrupt("\nUser:\n")
-        self.logger.info("Interrupt triggered for initial user input")
-        self.logger.info(f"User initial input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(f"{self.welcome_prompt.content}")
+            user_input = interrupt("\nUser:\n")
+            self.logger.info("Interrupt triggered for initial user input")
+            self.logger.info(f"User initial input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
+        else:
+            # Server mode: return welcome message in messages for streaming
+            return {
+                **state,
+                'messages': state.get('messages', []) + [AIMessage(content=self.welcome_prompt.content)],
+                '__interrupt__': [interrupt("\nUser:\n")]
+            }
         
         # Create instruction message for parsing
         instruction_message = SystemMessage(content=f"""
@@ -247,7 +257,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         between the valid options (e.g., unrelated topics, ambiguous language)
         """)
         
-        messages = [self.welcome_prompt, instruction_message, HumanMessage(user_input)]
+        messages = [self.welcome_prompt, instruction_message, HumanMessage(content=user_input)]
         
         # Use structured output to parse response
         initial_response_schema = self.get_initial_response_schema()
@@ -276,7 +286,8 @@ class BaseModuleAgent(ABC, Generic[R]):
         
         if not self.validate_config_mode(config_mode):
             self.logger.warning(f"Invalid config mode '{config_mode}', ending conversation")
-            print("We don't understand your choice.\nWe will end the conversation.")
+            if self.serverless_mode:
+                print("We don't understand your choice.\nWe will end the conversation.")
             return END
         
         # Map config modes to nodes - customize this mapping in subclasses if needed
@@ -288,13 +299,25 @@ class BaseModuleAgent(ABC, Generic[R]):
             return 'default_setup'
         else:
             self.logger.error(f"Unhandled config mode: {config_mode}")
-            print("Invalid configuration mode selected.")
+            if self.serverless_mode:
+                print("Invalid configuration mode selected.")
             return END
     
     def _default_setup_node(self, state: BaseModuleState) -> BaseModuleState:
         """Standardized default setup node"""
         self.logger.info("Entering default setup configuration")
-        print(f"\n=== HANDLING DEFAULT SETUP CONFIGURATION ===")
+        
+        setup_message = f"\n=== HANDLING DEFAULT SETUP CONFIGURATION ==="
+        
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(setup_message)
+        else:
+            # Server mode: return setup message in messages for streaming
+            return {
+                **state,
+                'messages': state.get('messages', []) + [AIMessage(content=setup_message)]
+            }
         
         sys_default_message = SystemMessage(content=self.get_default_setup_message())
         
@@ -309,7 +332,18 @@ class BaseModuleAgent(ABC, Generic[R]):
     def _customize_setup_node(self, state: BaseModuleState) -> BaseModuleState:
         """Standardized customize setup node"""
         self.logger.info("Entering customized configuration")
-        print(f"\n=== HANDLING CUSTOMIZED CONFIGURATION ===")
+        
+        setup_message = f"\n=== HANDLING CUSTOMIZED CONFIGURATION ==="
+        
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(setup_message)
+        else:
+            # Server mode: return setup message in messages for streaming
+            return {
+                **state,
+                'messages': state.get('messages', []) + [AIMessage(content=setup_message)]
+            }
         
         sys_customize_message = SystemMessage(content=self.get_customize_setup_message())
         
@@ -330,7 +364,11 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.logger.info(f"Current state messages count: {len(state['messages'])}")
         self.logger.info(f"Config mode: {state.get('config_mode', 'not set')}")
         
-        print(f"\n=== ENTERING _parameters_configuration for {self.name} ===")
+        config_message = f"\n=== ENTERING _parameters_configuration for {self.name} ==="
+        
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(config_message)
         
         # Use LLM with tools for enhanced functionality
         try:
@@ -353,7 +391,10 @@ class BaseModuleAgent(ABC, Generic[R]):
         # Always add the AI response to messages first
         updated_messages = state['messages'] + [response]
         self.logger.info(f"Updated messages count after adding response: {len(updated_messages)}")
-        print(f"\nAssistant:\n{response.content}")
+        
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(f"\nAssistant:\n{response.content}")
         
         # Check for tool calls
         # future: check with other providers
@@ -389,8 +430,18 @@ class BaseModuleAgent(ABC, Generic[R]):
     def _finalize_node(self, state: BaseModuleState) -> BaseModuleState:
         """Standardized finalization node"""
         self.logger.info(f"Entering finalization for {self.name}")
-        print(f"\n=== HANDLING FINAL STEP for {self.name} ===")
-        print(self.get_completion_message())
+        
+        final_message = f"\n=== HANDLING FINAL STEP for {self.name} ===\n{self.get_completion_message()}"
+        
+        # In console mode, print directly; in server mode, return in messages
+        if self.serverless_mode:
+            print(final_message)
+        else:
+            # Server mode: return final message in messages for streaming
+            return {
+                **state,
+                'messages': state.get('messages', []) + [AIMessage(content=final_message)]
+            }
         
         last_message = state['messages'][-1].content
         try:
@@ -750,7 +801,7 @@ if __name__ == "__main__":
     from vitess_ai.agents.guide_module_agent import GuideAgent
     
     async def test_guide():
-        agent = GuideAgent(provider="openai", model="gpt-4")
+        agent = GuideAgent(provider="openai", model="gpt-4", serverless_mode=True)
         result = await agent.run_serverless("", "test_thread")
         print("Test result:", result)
     
@@ -764,7 +815,7 @@ if __name__ == "__main__":
     from vitess_ai.agents.readin_module_agent import ReadInAgent
     
     async def test_readin():
-        agent = ReadInAgent(provider="openai", model="gpt-4")
+        agent = ReadInAgent(provider="openai", model="gpt-4", serverless_mode=True)
         result = await agent.run_serverless("Configure readin parameters", "my_test_thread")
         print("Test result:", result)
     
@@ -779,7 +830,7 @@ if __name__ == "__main__":
     
     async def test_writeout():
         # Agent will automatically load MCP tools if config_path is set
-        agent = WriteoutAgent(provider="openai", model="gpt-4")
+        agent = WriteoutAgent(provider="openai", model="gpt-4", serverless_mode=True)
         result = await agent.run_serverless("", "test_thread")
         print("Test result:", result)
     
