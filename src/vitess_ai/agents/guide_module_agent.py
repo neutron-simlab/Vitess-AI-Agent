@@ -150,12 +150,9 @@ async def main():
     print("=== Neutron Guide Parameters Configuration ===\n")
     
     print("🤖 Starting conversation...")
-    # result = await agent.stream_run("", thread_id)
 
-    final_result = None
-    async for event in agent.stream_run("", thread_id):
-        if event["type"] == "chunk":
-            final_result = event["data"]  # Keep track of the last chunk
+    # Use run_serverless for standalone testing
+    final_result = await agent.run_serverless("", thread_id)
     
     print("\n" + "="*60)
     print("FINAL GUIDE PARAMS:")
@@ -163,29 +160,8 @@ async def main():
     print(final_result)
     
 
-async def test_standalone():
-    """Simple standalone testing example using the new test_standalone() method"""
-    print("🧪 Testing Guide Agent Standalone...")
-    
-    # Create agent with MCP tools
-    agent = GuideAgent(provider="openai", model="gpt-4")
-    
-    # Test using the new standalone method
-    result = await agent.test_standalone()
-    
-    print("\n" + "="*60)
-    print("STANDALONE TEST RESULT:")
-    print("="*60)
-    print(result)
-    return result
-
-
 if __name__ == "__main__":
     import asyncio
     
-    # Choose which test to run:
-    # Option 1: Full demo (existing)
-    # asyncio.run(main())
-    
-    # Option 2: Simple standalone test (new)
-    asyncio.run(test_standalone())
+    # Run the main demo
+    asyncio.run(main())

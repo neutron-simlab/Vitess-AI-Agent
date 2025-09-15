@@ -157,13 +157,12 @@ async def main():
     print("=== Neutron Filter Configuration Demo ===\n")
     
     print("🤖 Starting conversation...")
-    final_result = None
-    async for event in agent.stream_run("", thread_id):
-        if event["type"] == "chunk":
-            final_result = event["data"]  # Keep track of the last chunk
+
+    # Use run_serverless for standalone testing
+    final_result = await agent.run_serverless("", thread_id)
     
     print("\n" + "="*60)
-    print("FINAL GUIDE PARAMS:")
+    print("FINAL FILTER PARAMS:")
     print("="*60)
     print(final_result)
     
@@ -175,30 +174,9 @@ async def main():
     agent.logger.info("Filter agent demo completed successfully")
 
 
-async def test_standalone():
-    """Simple standalone testing example using the new test_standalone() method"""
-    print("🧪 Testing Filter Agent Standalone...")
-    
-    # Create agent with MCP tools
-    agent = FilterAgent(provider="openai", model="gpt-4")
-    
-    # Test using the new standalone method
-    result = await agent.test_standalone()
-    
-    print("\n" + "="*60)
-    print("STANDALONE TEST RESULT:")
-    print("="*60)
-    print(result)
-    return result
-
-
 if __name__ == "__main__":
     import asyncio
     
-    # Choose which test to run:
-    # Option 1: Full demo (existing)
-    # asyncio.run(main())
-    
-    # Option 2: Simple standalone test (new)
-    asyncio.run(test_standalone())
+    # Run the main demo
+    asyncio.run(main())
     

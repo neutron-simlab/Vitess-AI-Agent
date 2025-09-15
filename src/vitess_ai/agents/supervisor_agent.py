@@ -10,6 +10,7 @@ from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, MessagesState, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import ToolNode
+from langgraph.types import Interrupt
 from pydantic import Field
 
 from vitess_ai.schema.supervisor_modules import (
@@ -17,7 +18,6 @@ from vitess_ai.schema.supervisor_modules import (
       SupervisorStatus, ConfigurationExport
 )
 from vitess_ai.core.registry import ModuleRegistry
-from vitess_ai.core.interrupt import InterruptManager
 
 from vitess_ai.agents.base_module_agent import (
     BaseModuleAgent, ModuleBuilder, 
@@ -86,7 +86,7 @@ class SupervisorState(MessagesState):
 class SupervisorAgent:
     """Supervisor agent with module registration system and CLI generation capabilities"""
     
-    def __init__(self, config: SupervisorConfig = None, simulation_tools_path: str = None):
+    def __init__(self, config: SupervisorConfig = None, simulation_tools_path: str = None, serverless_mode: bool = False):
         """Initialize the supervisor agent"""
         self.config = config or SupervisorConfigBuilder.create()
         self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
@@ -97,11 +97,14 @@ class SupervisorAgent:
         self.simulation_tools = []
         
         # Runtime components
-        self._agent_instances: Dict[str, BaseModuleAgent] = {}
-        self._graph: Optional[StateGraph] = None
-        self._app = None
+        self.agent_instances: Dict[str, BaseModuleAgent] = {}
+        self.graph: Optional[StateGraph] = None
+        self.app = None
         self.memory = MemorySaver()
-        self._initialized = False
+        self.initialized = False
+        
+        # Execution mode
+        self.serverless_mode = serverless_mode
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -141,21 +144,21 @@ class SupervisorAgent:
         self.registry.register_module(module_metadata)
         
         # Invalidate graph if already built
-        if self._initialized:
+        if self.initialized:
             self.logger.info("New module registered, graph will be rebuilt on next run")
-            self._initialized = False
+            self.initialized = False
     
     def unregister_module(self, module_name: str) -> bool:
         """Unregister a module"""
         result = self.registry.unregister_module(module_name)
         
         # Clean up agent instance
-        if module_name in self._agent_instances:
-            del self._agent_instances[module_name]
+        if module_name in self.agent_instances:
+            del self.agent_instances[module_name]
         
         # Invalidate graph
-        if self._initialized:
-            self._initialized = False
+        if self.initialized:
+            self.initialized = False
             
         return result
     
@@ -248,8 +251,8 @@ class SupervisorAgent:
     
     async def _setup_agent_instance(self, module_name: str) -> BaseModuleAgent:
         """Setup an agent instance for a module"""
-        if module_name in self._agent_instances:
-            return self._agent_instances[module_name]
+        if module_name in self.agent_instances:
+            return self.agent_instances[module_name]
         
         module_metadata = self.registry.get_module(module_name)
         if not module_metadata:
@@ -274,14 +277,14 @@ class SupervisorAgent:
         
         # Create agent instance
         agent = module_metadata.agent_class(provider=self.config.provider, model=self.config.model, tools=tools)
-        self._agent_instances[module_name] = agent
+        self.agent_instances[module_name] = agent
         
         self.logger.info(f"Initialized agent for module: {module_name}")
         return agent
     
     async def initialize(self, requested_modules: Optional[List[str]] = None):
         """Initialize the supervisor with the requested modules"""
-        if self._initialized:
+        if self.initialized:
             self.logger.info("Supervisor already initialized")
             return
         
@@ -307,10 +310,10 @@ class SupervisorAgent:
             await self._setup_agent_instance(module_name)
         
         # Create and compile graph
-        self._graph = self._create_dynamic_graph(execution_order)
-        self._app = self._graph.compile(checkpointer=self.memory)
+        self.graph = self._create_dynamic_graph(execution_order)
+        self.app = self.graph.compile(checkpointer=self.memory)
         
-        self._initialized = True
+        self.initialized = True
         self.logger.info(f"Supervisor initialized with {len(execution_order)} modules and simulation tools")
     
     # =================
@@ -382,19 +385,62 @@ class SupervisorAgent:
             
             try:
                 # Get agent instance
-                if module_name not in self._agent_instances:
+                if module_name not in self.agent_instances:
                     await self._setup_agent_instance(module_name)
                 
-                agent = self._agent_instances[module_name]
+                agent = self.agent_instances[module_name]
                 
-                # Execute the module
+                # Execute the module using appropriate method based on mode
                 thread_id = f"{module_name}_{hash(str(state.get('session_metadata', {})))}"
-                # Use InterruptManager:
-                interrupt_manager = InterruptManager(self.logger)
-                result = await interrupt_manager.execute_module_agent(agent, thread_id, "")
                 
-                # Create module result
-                if isinstance(result, dict):
+                if self.serverless_mode:
+                    # Serverless mode: Use run_serverless for direct console interaction
+                    self.logger.info(f"Executing {module_name} in serverless mode")
+                    result = await agent.run_serverless("", thread_id)
+                    
+                    # In serverless mode, result should be the final parameters
+                    if isinstance(result, dict) and result.get('parameters'):
+                        module_result = ModuleResult(
+                            module_name=module_name,
+                            status=ModuleStatus.COMPLETED,
+                            parameters=result['parameters'],
+                            cli_parameters=result['cli_parameters'],
+                            thread_id=thread_id
+                        )
+                        
+                        # Update state
+                        updated_results = state.get('module_results', {}).copy()
+                        updated_results[module_name] = module_result
+                        
+                        return {
+                            **state,
+                            'current_stage': SupervisorStage.MODULE_EXECUTION,
+                            'current_module': module_name,
+                            'module_results': updated_results,
+                            'error_message': None
+                        }
+                    else:
+                        return self._create_error_state(state, f"Module '{module_name}' failed in serverless mode")
+                else:
+                    # Server mode: Use run method for API integration
+                    self.logger.info(f"Executing {module_name} in server mode")
+                    result = await agent.run("", thread_id)
+                    
+                    # Handle interrupt response
+                    if isinstance(result, dict) and result.get("status") == "interrupted":
+                        # Module agent hit an interrupt - we need to propagate this to the FastAPI layer
+                        interrupt_value = result.get("interrupt_value", "No message provided")
+                        self.logger.info(f"Module {module_name} interrupted with message: {interrupt_value}")
+                        return {
+                            **state,
+                            'current_stage': SupervisorStage.MODULE_EXECUTION,
+                            'current_module': module_name,
+                            'error_message': f"Module {module_name} interrupted: {interrupt_value}",
+                            '__interrupt__': [Interrupt(value=interrupt_value)]
+                        }
+                
+                # Create module result for successful completion
+                if isinstance(result, dict) and result.get('parameters'):
                     module_result = ModuleResult(
                         module_name=module_name,
                         status=ModuleStatus.COMPLETED,
@@ -628,7 +674,10 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
         current_module = state.get('current_module', 'unknown')
         
         print(f"\n❌ **ERROR in {current_module.upper()} module**")
-        print(f"Error: {error_msg}")
+        if error_msg and error_msg != 'None':
+            print(f"Error: {error_msg}")
+        else:
+            print("Error: Module execution failed with no specific error message")
         print("Configuration process terminated.")
         
         return {
@@ -701,7 +750,7 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
         """Run the complete simulation configuration and execution process"""
         
         # Initialize if needed
-        if not self._initialized:
+        if not self.initialized:
             await self.initialize(requested_modules)
         
         self.logger.info(f"Starting configuration process with thread_id: {thread_id}")
@@ -724,7 +773,7 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
         }
         
         try:
-            result = await self._app.ainvoke(input_state, config)
+            result = await self.app.ainvoke(input_state, config)
             
             if result['current_stage'] == SupervisorStage.COMPLETION:
                 # Extract successful results
@@ -790,7 +839,7 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
     
     def get_status(self, thread_id: str = "supervisor_default") -> SupervisorStatus:
         """Get current configuration status"""
-        if not self._initialized:
+        if not self.initialized:
             return SupervisorStatus(
                 status="not_initialized",
                 current_stage="none",
@@ -798,7 +847,7 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
             )
         
         config = {"configurable": {"thread_id": thread_id}}
-        state = self._app.get_state(config)
+        state = self.app.get_state(config)
         
         if not state.values:
             return SupervisorStatus(
@@ -832,7 +881,7 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
             raise ValueError(f"Configuration not complete. Status: {status.status}")
         
         config = {"configurable": {"thread_id": thread_id}}
-        state = self._app.get_state(config)
+        state = self.app.get_state(config)
         
         module_results = state.values.get('module_results', {})
         
@@ -864,14 +913,29 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
 async def create_default_supervisor(
         provider = global_config.DEFAULT_PROVIDER, 
         model: str = global_config.DEFAULT_MODEL,
-        cli_tools_path: str = None
+        cli_tools_path: str = None,
+        serverless_mode: bool = False
         ) -> SupervisorAgent:
     """Create supervisor with default modules and CLI generation"""
     config = SupervisorConfigBuilder.create(provider=provider, model=model)
-    supervisor = SupervisorAgent(config, simulation_tools_path=global_config.SUPERVISOR_MCP_PATH)
+    supervisor = SupervisorAgent(config, simulation_tools_path=global_config.SUPERVISOR_MCP_PATH, serverless_mode=serverless_mode)
     supervisor.add_default_modules()
     await supervisor.initialize()
     return supervisor
+
+
+async def create_serverless_supervisor(
+        provider = global_config.DEFAULT_PROVIDER, 
+        model: str = global_config.DEFAULT_MODEL,
+        cli_tools_path: str = None
+        ) -> SupervisorAgent:
+    """Create supervisor in serverless mode for direct console execution"""
+    return await create_default_supervisor(
+        provider=provider, 
+        model=model, 
+        cli_tools_path=cli_tools_path, 
+        serverless_mode=True
+    )
 
 
 # =================
@@ -895,8 +959,8 @@ async def main():
     print("🚀 Initializing Vitess Simulation Supervisor...")
     print("=" * 50)
     
-    # Example 1: Default supervisor with CLI generation
-    supervisor = await create_default_supervisor(
+    # Example 1: Serverless supervisor for direct console execution
+    supervisor = await create_serverless_supervisor(
         cli_tools_path="vitess_ai/mcp_tools/supervisor_mcp_tools.py"
     )
     show_execution_order(supervisor)

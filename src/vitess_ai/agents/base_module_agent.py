@@ -6,7 +6,7 @@ import json
 import logging
 from typing import List, Optional, Any, Type, TypeVar, Generic, Dict
 from enum import Enum
-from langgraph.types import interrupt, Command, Interrupt 
+from langgraph.types import interrupt, Command 
 from pydantic import BaseModel, Field
 from abc import ABC, abstractmethod
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
@@ -16,6 +16,7 @@ from langgraph.graph import StateGraph, END, START, MessagesState
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 from vitess_ai.schema.base import FillingStage
+from vitess_ai.core.interrupt import InterruptManager
 
 # Type variables for generic parameter types
 R = TypeVar('R')  # For initial response types
@@ -459,15 +460,22 @@ class BaseModuleAgent(ABC, Generic[R]):
             return 'params_config'
     
     # =================
-    # PUBLIC API
+    # PUBLIC API - TWO CLEAR METHODS
     # =================
     
     async def run(self, user_input: str, thread_id: str = "default") -> str | dict:
         """
-        Standardized run method that all modules can use
-        Can be overridden for custom behavior
+        Run method for server integration - returns interrupts instead of blocking.
+        
+        This method is used by the supervisor agent and server endpoints.
+        It returns interrupt information instead of blocking on input().
+        
+        Returns:
+        - dict with 'parameters' and 'cli_parameters' on success
+        - dict with 'status': 'interrupted' and interrupt info on interrupt
+        - str error message on failure
         """
-        self.logger.info(f"Starting agent run with thread_id: {thread_id}")
+        self.logger.info(f"Starting server agent run with thread_id: {thread_id}")
         
         config = {"configurable": {"thread_id": thread_id}}
         current_state = self.app.get_state(config)
@@ -498,150 +506,58 @@ class BaseModuleAgent(ABC, Generic[R]):
             }
         
         try:
-            # Run the graph
-            self.logger.info("Invoking agent graph")
-            result = await self.app.ainvoke(input_state, config)
-            # Return immediately if interrupted - supervisor will handle resume
-            if result.get("__interrupt__"):
-                return {"__interrupt__": result["__interrupt__"]}
-
-             # Return results in standardized format
-            if result.get('validation_status'):
-                self.logger.info("Agent run completed successfully")
-                return {
-                    'parameters':result['parameters'],
-                    'cli_parameters':result['cli_parameters']
-                }
-            else:
-                self.logger.warning("Agent run completed but no valid results generated")
-                return "No response generated"
-        
-        except Exception as e:
-            self.logger.error(f"Agent run failed: {e}")
-            return f"Agent execution failed: {str(e)}"
-    
-    async def run_standalone(self, user_input: str, thread_id: str = "default") -> str | dict:
-        """
-        Standalone run method with built-in interrupt handling for individual module testing.
-        
-        This method is designed for testing individual modules without the supervisor.
-        It includes the interrupt handling loop that was removed from the main run() method.
-        
-        Use this when:
-        - Testing individual modules (e.g., guide_module_agent.py)
-        - Developing new modules
-        - Debugging module-specific issues
-        
-        The supervisor uses run() method, while individual testing uses run_standalone().
-        """
-        self.logger.info(f"Starting standalone agent run with thread_id: {thread_id}")
-        
-        config = {"configurable": {"thread_id": thread_id}}
-        current_state = self.app.get_state(config)
-        
-        # Prepare input message
-        user_message = HumanMessage(content=user_input)
-        
-        if current_state.values:
-            # Continue existing conversation
-            self.logger.info("Continuing existing conversation")
-            current_messages = current_state.values.get("messages", [])
-            input_state = {
-                "messages": current_messages + [user_message],
-                "stage": current_state.values.get("stage", FillingStage(stage='processing')),
-                "config_mode": current_state.values.get("config_mode", ""),
-                "validation_status": current_state.values.get("validation_status"),
-                "error_message": current_state.values.get("error_message")
-            }
-        else:
-            # Start new conversation
-            self.logger.info("Starting new conversation")
-            input_state = {
-                "messages": [user_message],
-                "stage": FillingStage(stage='processing'),
-                "config_mode": "",
-                "validation_status": None,
-                "error_message": None
-            }
-        
-        try:
-            # Run the graph
-            self.logger.info("Invoking agent graph")
-            result = await self.app.ainvoke(input_state, config)
+            # Use InterruptManager in server mode (non-blocking)
+            interrupt_manager = InterruptManager(self.logger, server_mode=True)
+            result = await interrupt_manager.execute_with_interrupts(self.app, input_state, config)
             
-            # Handle interrupts in standalone mode (for individual module testing)
-            interrupt_count = 0
-            while result.get("__interrupt__"):
-                interrupt_count += 1
-                self.logger.info(f"Handling interrupt #{interrupt_count}")
-                
-                # Extract the interrupt value from the first interrupt in the list
-                interrupt_value = result["__interrupt__"][0].value
-                self.logger.info(f"Graph interrupted, waiting for user input: {interrupt_value}")
-                
-                # Get user input (this is where the interrupt message is displayed)
-                user_response = input(interrupt_value).strip()
-                self.logger.info(f"User provided input: {user_response[:50]}{'...' if len(user_response) > 50 else ''}")
-                
-                # Resume the graph with user input
-                self.logger.info(f"Resuming graph with user input (interrupt #{interrupt_count})")
-                result = await self.app.ainvoke(Command(resume=user_response), config)
-                self.logger.info(f"Graph resumed after interrupt #{interrupt_count}")
-            
-            self.logger.info(f"Standalone agent run completed after handling {interrupt_count} interrupt(s)")
+            # Handle interrupt response
+            if isinstance(result, dict) and result.get("status") == "interrupted":
+                self.logger.info(f"Agent interrupted: {result['interrupt_value']}")
+                return result
             
             # Return results in standardized format
             if result.get('validation_status'):
-                self.logger.info("Agent run completed successfully")
+                self.logger.info("Server agent run completed successfully")
                 return {
                     'parameters': result['parameters'],
                     'cli_parameters': result['cli_parameters']
                 }
             else:
-                self.logger.warning("Agent run completed but no valid results generated")
+                self.logger.warning("Server agent run completed but no valid results generated")
                 return "No response generated"
         
         except Exception as e:
-            self.logger.error(f"Standalone agent run failed: {e}")
+            self.logger.error(f"Server agent run failed: {e}")
             return f"Agent execution failed: {str(e)}"
     
-    async def test_standalone(self, thread_id: str = None) -> str | dict:
+    async def run_serverless(self, user_input: str, thread_id: str = "default") -> str | dict:
         """
-        Convenience method for testing individual modules.
+        Run method for serverless/standalone testing - uses input() for interrupts.
         
-        This is a simple wrapper around run_standalone() that provides
-        a clean interface for testing modules individually.
+        This method is designed for testing individual modules without a server.
+        It blocks on input() when interrupts occur, making it suitable for CLI testing.
         
-        Usage in module files:
-        ```python
-        if __name__ == "__main__":
-            import asyncio
-            agent = YourModuleAgent(provider="openai", model="gpt-4")
-            result = asyncio.run(agent.test_standalone())
-            print(result)
-        ```
+        Use this when:
+        - Testing individual modules (e.g., guide_module_agent.py)
+        - Developing new modules
+        - Debugging module-specific issues
+        - Running without a server (serverless mode)
+        
+        Returns:
+        - dict with 'parameters' and 'cli_parameters' on success
+        - str error message on failure
         """
-        if thread_id is None:
-            thread_id = f"test_{self.module_name}_{hash(str(self))}"
+        self.logger.info(f"Starting serverless agent run with thread_id: {thread_id}")
         
-        print(f"\n{'='*60}")
-        print(f"🧪 TESTING {self.name.upper()} MODULE")
-        print(f"{'='*60}")
-        print(f"Module: {self.name}")
-        print(f"Description: {self.welcome_message}")
-        print(f"Thread ID: {thread_id}")
-        print(f"{'='*60}\n")
-        
-        return await self.run_standalone("", thread_id)
-    
-    async def stream_run(self, user_input: str, thread_id: str = "default"):
-        """Async streaming method that handles interrupts recursively with input()"""
         config = {"configurable": {"thread_id": thread_id}}
         current_state = self.app.get_state(config)
+        
+        # Prepare input message
         user_message = HumanMessage(content=user_input)
         
-        # Prepare input state
         if current_state.values:
+            # Continue existing conversation
+            self.logger.info("Continuing existing conversation")
             current_messages = current_state.values.get("messages", [])
             input_state = {
                 "messages": current_messages + [user_message],
@@ -651,6 +567,8 @@ class BaseModuleAgent(ABC, Generic[R]):
                 "error_message": current_state.values.get("error_message")
             }
         else:
+            # Start new conversation
+            self.logger.info("Starting new conversation")
             input_state = {
                 "messages": [user_message],
                 "stage": FillingStage(stage='processing'),
@@ -659,34 +577,28 @@ class BaseModuleAgent(ABC, Generic[R]):
                 "error_message": None
             }
         
-        # Start async streaming with interrupt handling
-        async for event in self._astream_with_interrupts(input_state, config):
-            yield event
-
-    async def _astream_with_interrupts(self, input_state, config):
-        """Recursive helper to handle interrupts in async streaming"""
-        async for chunk in self.app.astream(input_state, config):
-            if chunk.get("__interrupt__"):
-                # Yield interrupt event
-                yield {
-                    "type": "interrupt",
-                    "interrupt_value": chunk["__interrupt__"][0].value,
-                    "thread_id": config["configurable"]["thread_id"]
+        try:
+            # Use InterruptManager in serverless mode (with input() for testing)
+            interrupt_manager = InterruptManager(self.logger, server_mode=False)
+            result = await interrupt_manager.execute_with_interrupts(self.app, input_state, config)
+            
+            self.logger.info("Serverless agent run completed")
+            
+            # Return results in standardized format
+            if result.get('validation_status'):
+                self.logger.info("Serverless agent run completed successfully")
+                return {
+                    'parameters': result['parameters'],
+                    'cli_parameters': result['cli_parameters']
                 }
-                
-                # Get user response with simple input()
-                interrupt_value = chunk["__interrupt__"][0].value
-                user_response = input(interrupt_value).strip()
-                
-                # Recursively handle any further interrupts
-                async for event in self._astream_with_interrupts(Command(resume=user_response), config):
-                    yield event
             else:
-                # Regular chunk
-                yield {
-                    "type": "chunk",
-                    "data": chunk
-                }
+                self.logger.warning("Serverless agent run completed but no valid results generated")
+                return "No response generated"
+        
+        except Exception as e:
+            self.logger.error(f"Serverless agent run failed: {e}")
+            return f"Agent execution failed: {str(e)}"
+    
     
     def get_conversation_history(self, thread_id: str = "default") -> List[BaseMessage]:
         """Standardized conversation history method"""
@@ -839,7 +751,7 @@ if __name__ == "__main__":
     
     async def test_guide():
         agent = GuideAgent(provider="openai", model="gpt-4")
-        result = await agent.test_standalone()
+        result = await agent.run_serverless("", "test_thread")
         print("Test result:", result)
     
     asyncio.run(test_guide())
@@ -853,7 +765,7 @@ if __name__ == "__main__":
     
     async def test_readin():
         agent = ReadInAgent(provider="openai", model="gpt-4")
-        result = await agent.run_standalone("", "my_test_thread")
+        result = await agent.run_serverless("Configure readin parameters", "my_test_thread")
         print("Test result:", result)
     
     asyncio.run(test_readin())
@@ -868,18 +780,17 @@ if __name__ == "__main__":
     async def test_writeout():
         # Agent will automatically load MCP tools if config_path is set
         agent = WriteoutAgent(provider="openai", model="gpt-4")
-        result = await agent.test_standalone()
+        result = await agent.run_serverless("", "test_thread")
         print("Test result:", result)
     
     asyncio.run(test_writeout())
 ```
 
 KEY DIFFERENCES:
-- run(): Used by supervisor, returns on interrupt (no HITL)
-- run_standalone(): Used for individual testing, handles interrupts (HITL)
-- test_standalone(): Convenience wrapper with nice output formatting
+- run(): Used by supervisor and server endpoints, returns interrupt info (non-blocking)
+- run_serverless(): Used for individual testing, uses input() for interrupts (blocking)
 
-The supervisor uses InterruptManager with run() method for centralized interrupt handling.
-Individual module testing uses run_standalone() or test_standalone() for direct HITL.
+The supervisor uses run() method for server-compatible interrupt handling.
+Individual module testing uses run_serverless() for direct CLI interaction.
 """
 
