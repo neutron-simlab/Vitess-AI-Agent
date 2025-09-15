@@ -22,9 +22,9 @@ class WriteoutAgent(BaseModuleAgent[InitialResponseWriteout]):
     - Post-processing configurations
     """
     
-    def __init__(self, provider:str, model: str, tools: List[BaseTool] = []):
+    def __init__(self, provider:str, model: str, tools: List[BaseTool] = [], serverless_mode: bool = False):
         """Initialize the Writeout Agent with base functionality"""
-        super().__init__(provider, model, tools)
+        super().__init__(provider, model, tools, serverless_mode)
     
     # =================
     # REQUIRED ABSTRACT METHODS
@@ -154,7 +154,7 @@ async def create_writeout_agent(
     })
     
     tools = await client.get_tools()
-    return WriteoutAgent(provider=provider, model=model, tools=tools)
+    return WriteoutAgent(provider=provider, model=model, tools=tools, serverless_mode=True)
 
 
 # =================

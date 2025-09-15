@@ -106,7 +106,7 @@ class Config:
             "readin": cls.READIN_MCP_PATH,
             "guide": cls.GUIDE_MCP_PATH,
             "writeout": cls.WRITEOUT_MCP_PATH,
-            "supervisor": cls.SUPERVISOR_CLI_MCP_PATH
+            "supervisor": cls.SUPERVISOR_MCP_PATH
         }
         
         path = path_map.get(module_name)
