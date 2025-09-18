@@ -46,7 +46,6 @@ class SupervisorStatus(BaseModel):
     """Current status of the supervisor"""
     status: str  # "not_initialized", "not_started", "in_progress", "completed", "error"
     current_stage: str
-    current_module: Optional[str] = None
     completed_modules: List[str] = Field(default=[])
     execution_order: List[str] = Field(default=[])
     error_message: Optional[str] = None
@@ -61,4 +60,4 @@ class ConfigurationExport(BaseModel):
     def to_json(self) -> str:
         """Export as JSON string"""
         import json
-        return json.dumps(self.dict(), indent=2)
+        return json.dumps(self.model_dump(), indent=2)

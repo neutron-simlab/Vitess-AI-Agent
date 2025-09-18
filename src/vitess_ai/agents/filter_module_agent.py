@@ -20,9 +20,9 @@ class FilterAgent(BaseModuleAgent[InitialResponseFilter]):
     
     """
     
-    def __init__(self, provider: str, model: str, tools: List[BaseTool] = [], serverless_mode: bool = False):
+    def __init__(self, provider: str, model: str, tools: List[BaseTool] = []):
         """Initialize the Filter Agent with base functionality"""
-        super().__init__(provider, model, tools, serverless_mode)
+        super().__init__(provider, model, tools)
     
     # =================
     # REQUIRED ABSTRACT METHODS
