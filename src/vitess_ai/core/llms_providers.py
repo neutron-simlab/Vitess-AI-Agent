@@ -239,6 +239,8 @@ def test_all_available_providers() -> Dict[str, bool]:
     for provider, is_configured in available.items():
         if is_configured:
             print(f"  Testing {provider}...")
+            # Use default model for each provider
+            model = global_config.DEFAULT_MODEL
             results[provider] = test_provider_connection(provider, model)
             status = "✅ Working" if results[provider] else "❌ Failed"
             print(f"  {provider}: {status}")

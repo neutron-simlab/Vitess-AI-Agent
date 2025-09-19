@@ -44,16 +44,26 @@ def generate_cli_command(
    try:
        if module_results is None:
            module_results = {}
-       if execution_order is None:
-           execution_order = []
+       if execution_order is None or not execution_order:
+           # Fallback: use module_results keys as execution order
+           execution_order = list(module_results.keys())
+           logger.warning(f"No execution_order provided, using module order: {execution_order}")
            
        cli_command = []
        
        for i, module in enumerate(execution_order, 1):  # Start from 1 for ordering
            # Get module result (could be dict or object)
+           if module not in module_results:
+               logger.error(f"Module '{module}' not found in module_results: {list(module_results.keys())}")
+               continue
+               
            module_result = module_results[module]
            # Extract cli_parameters (handle both dict and object formats)
            cli_params = module_result.get('cli_parameters', '')
+           
+           if not cli_params:
+               logger.warning(f"No CLI parameters found for module '{module}'")
+               continue
 
            
            # Build module-specific ordering parameter
@@ -82,7 +92,12 @@ def generate_cli_command(
            "cli_command": final_command,
            "modules_included": [m for m in execution_order],
            "command_parts": len(cli_command),
-           "message": f"Generated CLI command for {len(cli_command)} modules"
+           "message": f"Generated CLI command for {len(cli_command)} modules",
+           "debug_info": {
+               "execution_order": execution_order,
+               "module_results_keys": list(module_results.keys()),
+               "modules_with_cli": [m for m in execution_order if m in module_results and module_results[m].get('cli_parameters')]
+           }
        }
    
    except Exception as e:

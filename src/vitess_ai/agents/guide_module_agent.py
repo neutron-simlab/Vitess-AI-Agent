@@ -150,12 +150,9 @@ async def main():
     print("=== Neutron Guide Parameters Configuration ===\n")
     
     print("🤖 Starting conversation...")
-    # result = await agent.stream_run("", thread_id)
 
-    final_result = None
-    async for event in agent.stream_run("", thread_id):
-        if event["type"] == "chunk":
-            final_result = event["data"]  # Keep track of the last chunk
+    # Use run_serverless for standalone testing
+    final_result = await agent.run_serverless("", thread_id)
     
     print("\n" + "="*60)
     print("FINAL GUIDE PARAMS:")
@@ -165,4 +162,6 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+    
+    # Run the main demo
     asyncio.run(main())

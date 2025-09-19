@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -31,11 +30,11 @@ class Config:
     # =============================================================================
     
     # Provider selection
-    DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER")
-    FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER")
+    DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "openai")
+    FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER", "openai")
     
     # OpenAI
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL")
+    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4o-mini")
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4000"))
     TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "60"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
@@ -50,22 +49,22 @@ class Config:
     # MCP TOOL PATHS
     # =============================================================================
     
-    # MCP tool paths for different modules
-    READIN_MCP_PATH = os.getenv("READIN_MCP_PATH")
-    GUIDE_MCP_PATH = os.getenv("GUIDE_MCP_PATH") 
-    WRITEOUT_MCP_PATH = os.getenv("WRITEOUT_MCP_PATH")
-    FILTER_MCP_PATH = os.getenv("FILTER_MCP_PATH")
+    # MCP tool paths for different modules (with defaults)
+    READIN_MCP_PATH = os.getenv("READIN_MCP_PATH", "src/vitess_ai/mcp/readin_module_tools.py")
+    GUIDE_MCP_PATH = os.getenv("GUIDE_MCP_PATH", "src/vitess_ai/mcp/guide_module_tools.py")
+    WRITEOUT_MCP_PATH = os.getenv("WRITEOUT_MCP_PATH", "src/vitess_ai/mcp/writeout_module_tools.py")
+    FILTER_MCP_PATH = os.getenv("FILTER_MCP_PATH", "src/vitess_ai/mcp/filter_module_tools.py")
     # Supervisor CLI tools path
-    SUPERVISOR_MCP_PATH = os.getenv("SUPERVISOR_MCP_PATH")
+    SUPERVISOR_MCP_PATH = os.getenv("SUPERVISOR_MCP_PATH", "src/vitess_ai/mcp/supervisor_tools.py")
     
     # =============================================================================
     # VITESS SIMULATION ENVIRONMENT
     # =============================================================================
     
     # Default Vitess environment variables (from your script)
-    VITESS_MODULES_PATH = os.getenv("VITESS_MODULES_PATH")
-    VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH")
-    VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH")
+    VITESS_MODULES_PATH = os.getenv("VITESS_MODULES_PATH", "/usr/local/vitess/bin")
+    VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH", "/tmp/vitess_project")
+    VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess_logs")
     
     # =============================================================================
     # ENVIRONMENT
@@ -107,7 +106,7 @@ class Config:
             "readin": cls.READIN_MCP_PATH,
             "guide": cls.GUIDE_MCP_PATH,
             "writeout": cls.WRITEOUT_MCP_PATH,
-            "supervisor": cls.SUPERVISOR_CLI_MCP_PATH
+            "supervisor": cls.SUPERVISOR_MCP_PATH
         }
         
         path = path_map.get(module_name)

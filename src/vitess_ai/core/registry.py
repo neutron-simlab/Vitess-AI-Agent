@@ -4,7 +4,7 @@ Handles module registration and simple execution planning
 """
 import logging
 from typing import Dict, List, Optional, Any
-from vitess_ai.schema.supervisor_modules import ExecutionPlan
+from vitess_ai.schema.supervisor import ExecutionPlan
 from vitess_ai.agents.base_module_agent import ModuleMetadata
 
 
