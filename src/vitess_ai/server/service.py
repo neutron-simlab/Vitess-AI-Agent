@@ -11,27 +11,19 @@ from datetime import datetime
 from fastapi import APIRouter, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from langchain_core._api import LangChainBetaWarning
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, AIMessageChunk
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, Interrupt
-from langsmith import Client as LangsmithClient
 
 from vitess_ai.server_agents.server_supervisor import create_default_server_supervisor
 from vitess_ai.schema.server import (
     AgentInfo,
-    ChatHistory,
-    ChatHistoryInput,
     ChatMessage,
-    Feedback,
-    FeedbackResponse,
-    ServiceMetadata,
     StreamInput,
     UserInput,
-    HealthStatus,
-    Provider,
+    HealthStatus
 )
-from vitess_ai.schema.llm_models import OpenAIModelName, BlabladorModelName, get_models_for_provider
 from vitess_ai.server.utils import (
     convert_message_content_to_string,
     langchain_to_chat_message,
@@ -119,22 +111,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(lifespan=lifespan)
 router = APIRouter()
 
-@router.get("/info")
-async def info() -> ServiceMetadata:
-    """Get service metadata including available agents, models, and providers."""
-    # Get all available models from all providers
-    all_models = []
-    for provider in Provider:
-        all_models.extend(get_models_for_provider(provider))
-    
-    return ServiceMetadata(
-        agents=get_all_agent_info(),
-        models=all_models,
-        providers=list(Provider),
-        default_agent=DEFAULT_AGENT,
-        default_model=OpenAIModelName.GPT_4O_MINI.value,
-        default_provider=Provider.OPENAI,
-    )
 
 async def _handle_input(user_input: UserInput, agent: CompiledStateGraph) -> tuple[dict[str, Any], UUID]:
     """
@@ -154,7 +130,6 @@ async def _handle_input(user_input: UserInput, agent: CompiledStateGraph) -> tup
 
     # Check for interrupts that need to be resumed
     state = await agent.aget_state(config=config)
-    logger.info(f"State after aget_state: {state}")
     interrupted_tasks = [
         task for task in state.tasks if hasattr(task, "interrupts") and task.interrupts
     ]
@@ -369,55 +344,6 @@ async def stream(user_input: StreamInput, agent_id: str = DEFAULT_AGENT) -> Stre
         media_type="text/event-stream",
     )
 
-
-
-@router.post("/feedback")
-async def feedback(feedback: Feedback) -> FeedbackResponse:
-    """
-    Record feedback for a run to LangSmith.
-
-    This is a simple wrapper for the LangSmith create_feedback API, so the
-    credentials can be stored and managed in the service rather than the client.
-    See: https://api.smith.langchain.com/redoc#tag/feedback/operation/create_feedback_api_v1_feedback_post
-    """
-    client = LangsmithClient()
-    kwargs = feedback.kwargs or {}
-    client.create_feedback(
-        run_id=feedback.run_id,
-        key=feedback.key,
-        score=feedback.score,
-        **kwargs,
-    )
-    return FeedbackResponse(
-        status="success",
-        message="Feedback recorded successfully"
-    )
-
-
-@router.post("/history")
-async def history(input: ChatHistoryInput) -> ChatHistory:
-    """
-    Get chat history.
-    """
-    # TODO: Hard-coding DEFAULT_AGENT here is wonky
-    agent: CompiledStateGraph = await get_agent(DEFAULT_AGENT)
-    try:
-        state_snapshot = await agent.aget_state(
-            config=RunnableConfig(configurable={"thread_id": input.thread_id})
-        )
-        messages: list[AnyMessage] = state_snapshot.values["messages"]
-        chat_messages: list[ChatMessage] = [langchain_to_chat_message(m) for m in messages]
-        return ChatHistory(
-            messages=chat_messages,
-            thread_id=input.thread_id,
-            total_messages=len(chat_messages),
-            last_updated=datetime.now()
-        )
-    except Exception as e:
-        logger.error(f"An exception occurred: {e}")
-        raise HTTPException(status_code=500, detail="Unexpected error")
-
-
 @app.get("/health")
 async def health_check() -> HealthStatus:
     """Health check endpoint."""
@@ -426,6 +352,5 @@ async def health_check() -> HealthStatus:
         version="0.1.0",
         details={"service": "vitess-ai-agent", "uptime": "running"}
     )
-
 
 app.include_router(router)

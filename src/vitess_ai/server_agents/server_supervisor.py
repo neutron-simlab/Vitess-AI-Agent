@@ -606,7 +606,6 @@ Do not modify or interpret the module_results data - pass it exactly as provided
     def _route_from_simulation(self, state: dict) -> str:
         """Route from simulation execution based on tools availability"""
         last_message = state['messages'][-1]
-        self.logger.info(f"Last message after run simulation node {last_message}")
         
         # Check for tool calls only if tools are available
         if (self.simulation_tools and 

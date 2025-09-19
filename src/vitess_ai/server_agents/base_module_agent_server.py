@@ -266,7 +266,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         """Parameters configuration node with tool support"""
         self.logger.info(f"Entering {self.name} parameters configuration")
         
-        config_message = f"\n=== ENTERING PARAMETERS CONFIGURATION for {self.name} ==="
+        # config_message = f"\n=== ENTERING PARAMETERS CONFIGURATION for {self.name} ==="
         
         # Use LLM with tools for enhanced functionality
         try:
@@ -286,7 +286,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
             }
         
         # Always add the AI response to messages first
-        updated_messages = state['messages'] + [AIMessage(content=config_message), response]
+        updated_messages = state['messages'] + [response]
         self.logger.info(f"Updated messages count after adding response: {len(updated_messages)}")
         
         # Check for tool calls
@@ -303,7 +303,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
             }
         else:
             self.logger.info("No tool calls, getting user input")
-            user_input = interrupt("\nUser:\n")
+            user_input = interrupt(f"\nAssistant:\n{response.content}\nUser:\n")
             self.logger.info("Interrupt triggered for user input in parameters configuration")
             self.logger.info(f"User input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
             
