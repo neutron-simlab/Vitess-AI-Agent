@@ -6,18 +6,13 @@ architecture for server mode, enabling unified state management and
 centralized interrupt handling.
 """
 
-from typing import Type, List
-from pydantic import BaseModel, Field
+from typing import Type
 from vitess_ai.server_agents.base_module_agent_server import BaseModuleAgentServer
 from vitess_ai.prompts.readin_module import READIN_AGENT_WELCOME, READIN_AGENT_PROMPT
+from vitess_ai.schema.readin_module import InitialResponseReadIn
 
 
-class ReadInInitialResponse(BaseModel):
-    """Schema for parsing initial user response in readin module"""
-    response: str = Field(description="User's configuration choice: 'Default Setup', 'Customize', or 'Custom'")
-
-
-class ReadInModuleAgentServer(BaseModuleAgentServer[ReadInInitialResponse]):
+class ReadInModuleAgentServer(BaseModuleAgentServer[InitialResponseReadIn]):
     """
     Server-optimized readin module agent.
     
@@ -45,9 +40,9 @@ class ReadInModuleAgentServer(BaseModuleAgentServer[ReadInInitialResponse]):
         """System prompt for the readin module"""
         return READIN_AGENT_PROMPT
     
-    def get_initial_response_schema(self) -> Type[ReadInInitialResponse]:
+    def get_initial_response_schema(self) -> Type[InitialResponseReadIn]:
         """Return the schema for initial response parsing"""
-        return ReadInInitialResponse
+        return InitialResponseReadIn
     
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
@@ -87,14 +82,32 @@ class ReadInModuleAgentServer(BaseModuleAgentServer[ReadInInitialResponse]):
         Let's start with the neutron source configuration.
         """
     
-    def get_completion_message(self) -> str:
+    def get_completion_message(self, state: dict = None) -> str:
         """Message shown on successful completion"""
-        return """
-        ✅ Read-in Parameters configuration completed successfully!
+        # Get next module using base class helper
+        next_module_name = self._get_next_module_name(state)
         
-        Your neutron input parameters have been configured and validated. 
-        The system has generated the appropriate CLI parameters for the 
-        readin module that will be used in the simulation execution.
+        # Map module names to display names
+        module_display_map = {
+            'readin': 'Read-in Parameters',
+            'guide': 'Guide Parameters',
+            'writeout': 'Writeout Parameters'
+        }
         
-        Next, we'll proceed to the guide parameters configuration.
-        """
+        if next_module_name:
+            next_module_display = module_display_map.get(
+                next_module_name, 
+                next_module_name.replace('_', ' ').title()
+            )
+            next_message = f"Next, we'll proceed to the {next_module_display.lower()} configuration."
+        else:
+            next_message = "Next, we'll proceed to the simulation execution."
+        
+        message = f"""Read-in Parameters configuration completed successfully!
+
+Your neutron input parameters have been configured and validated. 
+The system has generated the appropriate CLI parameters for the 
+readin module that will be used in the simulation execution.
+
+{next_message}"""
+        return message

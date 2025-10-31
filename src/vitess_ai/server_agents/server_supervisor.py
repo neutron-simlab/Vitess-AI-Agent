@@ -9,12 +9,11 @@ and centralized interrupt handling.
 import logging
 import json
 from typing import Dict, List, Any, Optional, Type
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, RemoveMessage, ToolMessage
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import ToolNode
-from pydantic import Field
 
 from vitess_ai.schema.supervisor import (
     SupervisorConfig, SupervisorStage, 
@@ -24,13 +23,11 @@ from vitess_ai.core.registry import ModuleRegistry
 from vitess_ai.agents.base_module_agent import (
     ModuleBuilder, 
     ModuleStatus, ModuleMetadata, 
-    ModuleResult
 )
 from vitess_ai.server_agents.base_module_agent_server import BaseModuleAgentServer
 from vitess_ai.server_agents.unified_state import UnifiedState
-from vitess_ai.schema.base import FillingStage
-# Remove the import of BaseServerAgent since we'll use BaseModuleAgent
 from vitess_ai.core.config import global_config
+from vitess_ai.prompts.supervisor import get_simulation_execution_prompt, get_post_simulation_response_prompt
 
 
 class ServerSupervisorAgent:
@@ -46,6 +43,8 @@ class ServerSupervisorAgent:
         """Initialize the server supervisor agent"""
         self.config = config or self._create_default_config()
         self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
+        # Create unbound LLM for post-simulation responses (no tools needed)
+        self.response_llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
         self.registry = ModuleRegistry()
         
         # Simulation tools configuration
@@ -302,6 +301,13 @@ class ServerSupervisorAgent:
         
         # Create and compile flat graph
         self.graph = self._create_flat_graph(execution_order)
+        # Compile with checkpointer for state persistence (LangGraph 1.x compatible)
+        # Note: For enhanced control, consider using static interrupts:
+        #   self.app = self.graph.compile(
+        #       checkpointer=self.memory,
+        #       interrupt_before=["node_name"],  # Interrupt before specific nodes
+        #       interrupt_after=["node_name"]     # Interrupt after specific nodes
+        #   )
         self.app = self.graph.compile(checkpointer=self.memory)
         
         self.initialized = True
@@ -317,9 +323,12 @@ class ServerSupervisorAgent:
         
         # Add supervisor nodes
         workflow.add_node("supervisor_welcome", self._welcome_node)
+        workflow.add_node("supervisor_prepare_simulation", self._prepare_simulation_node)
         workflow.add_node("supervisor_run_simulation", self._run_simulation_node)
+        workflow.add_node("supervisor_post_simulation_response", self._post_simulation_response_node)
         workflow.add_node("supervisor_completion", self._completion_node)
         workflow.add_node("supervisor_error_handler", self._error_handler_node)
+        workflow.add_node("supervisor_summarize", self._summarize_node)
         
         # Add simulation tools node if available
         if self.simulation_tools:
@@ -337,9 +346,10 @@ class ServerSupervisorAgent:
                 workflow.add_node(node_name, node_func)
             
             # Add module-specific edges with proper routing
-            # Welcome routing
+            # Wire welcome -> interrupt, then conditional routing from interrupt
+            workflow.add_edge(f"{module_name}_welcome", f"{module_name}_welcome_interrupt")
             workflow.add_conditional_edges(
-                f"{module_name}_welcome", 
+                f"{module_name}_welcome_interrupt", 
                 lambda state, mn=module_name: self._route_module_welcome(state, mn)
             )
             
@@ -371,10 +381,15 @@ class ServerSupervisorAgent:
         workflow.add_conditional_edges("supervisor_welcome", self._route_from_welcome)
         
         # Simulation execution routing
+        workflow.add_edge("supervisor_prepare_simulation", "supervisor_run_simulation")
         workflow.add_conditional_edges("supervisor_run_simulation", self._route_from_simulation)
         if self.simulation_tools:
             workflow.add_conditional_edges("supervisor_simulation_tools", self._route_after_simulation_tools)
+            workflow.add_conditional_edges("supervisor_post_simulation_response", self._route_after_post_simulation_response)
         
+        # After summarization, route to the next module's welcome
+        workflow.add_conditional_edges("supervisor_summarize", self._route_after_summarize)
+
         workflow.add_edge("supervisor_completion", END)
         workflow.add_edge("supervisor_error_handler", END)
         
@@ -398,39 +413,16 @@ class ServerSupervisorAgent:
                 optional_text = " (optional)" if module_metadata.optional else ""
                 modules_info.append(f"{module_metadata.order}. **{module_metadata.display_name}**{optional_text}: {module_metadata.description}")
         
-        simulation_info = f"\n🚀 **Simulation Execution**: Automatic execution of configured simulation" if self.simulation_tools else ""
+        simulation_info = f"\n **Simulation Execution**: Automatic execution of configured simulation" if self.simulation_tools else ""
         
-        welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info) + simulation_info
-        
-        # Add explanation about Vitess AI Agent
-        vitess_explanation = """
-
-🤖 **About Vitess AI Agent:**
-The Vitess AI Agent is an intelligent simulation configuration system designed to help you set up neutron scattering simulations using the Vitess simulation framework. This system uses specialized AI agents for each simulation module to guide you through the configuration process.
-
-**How it works:**
-- Each module has a dedicated AI agent that understands the specific parameters and requirements
-- The agents will ask you questions about your simulation needs and provide intelligent recommendations
-- All modules will be configured automatically, and then the simulation will be executed
-- The system handles parameter validation and generates the appropriate CLI commands
-
-**Process:**
-1. Configuration: Each module agent will guide you through setting up parameters
-2. Validation: Parameters are validated using specialized tools
-3. Execution: The complete simulation is automatically executed
-4. Results: You'll receive the simulation results and configuration summary
-
-🚀 **Starting simulation configuration process automatically...**
-        """
-        
-        full_welcome = welcome_text + vitess_explanation
+        welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info) + "\n" + simulation_info 
         
         # Return welcome message in messages for streaming
-        user_message = state.get('messages', [])[0] if state.get('messages') else HumanMessage(content="Start")
+        # user_message = state.get('messages', [])[0] if state.get('messages') else HumanMessage(content="Start")
         return {
             'messages': [
-                user_message,
-                AIMessage(content=full_welcome)
+                # user_message,
+                AIMessage(content=welcome_text)
             ],
             'current_stage': SupervisorStage.MODULE_EXECUTION,
             'execution_order': execution_order,
@@ -442,6 +434,45 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
             'error_message': None,
         }
     
+    def _prepare_simulation_node(self, state: dict) -> dict:
+        """Prepare simulation node - emits the 'starting simulation' message before execution"""
+        self.logger.info("Preparing simulation execution - showing start message")
+        
+        # Extract module results from state
+        module_results = state.get('module_results', {})
+        execution_order = state.get('execution_order', [])
+        
+        # Create user-visible message indicating simulation execution is starting
+        completed_modules = [name for name, result in module_results.items() 
+                             if result.status == ModuleStatus.COMPLETED]
+        simulation_start_message = f"""
+{'='*3}
+**STARTING SIMULATION EXECUTION**
+{'='*3}
+
+All modules have been configured successfully:
+"""
+        for module_name in completed_modules:
+            module_metadata = self.registry.get_module(module_name)
+            if module_metadata:
+                simulation_start_message += f"   • {module_metadata.display_name}\n"
+
+        simulation_start_message += f"""
+**Execution Order**: {' → '.join(execution_order)}
+
+**Executing simulation** with the configured parameters...
+
+"""
+        
+        # Add the start message to state immediately so it streams before tool execution
+        start_ai_message = AIMessage(content=simulation_start_message)
+        
+        return {
+            **state,
+            'messages': state.get('messages', []) + [start_ai_message],
+            'current_module': 'supervisor'  # Mark as supervisor message for proper display
+        }
+    
     def _run_simulation_node(self, state: dict) -> dict:
         """Simulation execution node - runs simulation directly using module results"""
         self.logger.info("Entering simulation execution phase")
@@ -451,36 +482,8 @@ The Vitess AI Agent is an intelligent simulation configuration system designed t
         execution_order = state.get('execution_order', [])
         
         # Create system message for simulation execution
-        simulation_system_prompt = SystemMessage(content=f"""
-You are a neutron simulation executor. All modules have been configured and you need to run the simulation.
-
-IMPORTANT: You must call the run_simulation tool with these EXACT parameters:
-
-Tool Call Required:
-```
-run_simulation(
-    module_results={module_results},
-    execution_order={execution_order},
-    execute=true
-)
-```
-
-Module Summary:
-- Configured modules: {list(module_results.keys())}
-- Execution order: {execution_order}
-- Total modules: {len(module_results)}
-
-Each module has generated CLI parameters that will be combined into a simulation pipeline.
-
-CRITICAL: You must call the run_simulation tool with execute=true to actually run the simulation.
-The tool expects:
-- module_results: Dictionary with module results (already provided)
-- execution_order: List of module names in execution order (already provided)  
-- execute: Boolean set to true to actually run the simulation
-
-Execute the simulation immediately using the run_simulation tool with the exact parameters shown above.
-Do not modify or interpret the module_results data - pass it exactly as provided.
-""")
+        simulation_prompt = get_simulation_execution_prompt(module_results, execution_order)
+        simulation_system_prompt = SystemMessage(content=simulation_prompt)
 
         try:
             messages = [simulation_system_prompt]
@@ -489,29 +492,36 @@ Do not modify or interpret the module_results data - pass it exactly as provided
         except Exception as e:
             self.logger.error(f"LLM invocation failed: {e}")
             response = None
+            # Add error message if LLM fails
+            error_message = AIMessage(content=f"Error during simulation execution: {str(e)}")
+            response = error_message
 
-        # Update messages
-        updated_messages = state.get('messages', []) + messages + [response]
+        # Update messages: Add system prompt and LLM response (start message already added in prepare node)
+        updated_messages = state.get('messages', []) + messages + [response] if response else state.get('messages', []) + messages
 
         return {
-            'messages': updated_messages
+            'messages': updated_messages,
+            'current_module': 'supervisor'  # Mark as supervisor message for proper display
         }
     
     def _completion_node(self, state: dict) -> dict:
-        """Enhanced completion node with CLI information"""
+        """Enhanced completion node with CLI information and simulation execution summary"""
         
         # Generate summary
         module_results = state.get('module_results', {})
         completed_modules = [name for name, result in module_results.items() 
                            if result.status == ModuleStatus.COMPLETED]
         
+        # Check if simulation was executed by looking for simulation finish status
+        simulation_executed = state.get('simulation_finish', False)
+        
         completion_message = f"""
-{'='*60}
-🎉 VITESS SIMULATION CONFIGURATION COMPLETED and EXECUTED
-{'='*60}
+{'='*3}
+**VITESS SIMULATION CONFIGURATION COMPLETED**
+{'='*3}
 
-📋 **CONFIGURATION SUMMARY:**
-✅ Completed modules: {len(completed_modules)}
+**CONFIGURATION SUMMARY:**
+Completed modules: {len(completed_modules)}
 """
         
         for module_name in completed_modules:
@@ -519,11 +529,32 @@ Do not modify or interpret the module_results data - pass it exactly as provided
             if module_metadata:
                 completion_message += f"   {module_metadata.order}. {module_metadata.display_name}\n"
         
+        # Add simulation execution status if applicable
+        if simulation_executed:
+            completion_message += f"""
+{'='*3}
+**SIMULATION EXECUTION**
+{'='*3}
+
+Simulation has been executed successfully with the configured parameters.
+
+All configuration and execution steps are complete!
+"""
+        else:
+            completion_message += f"""
+{'='*3}
+**NEXT STEPS**
+{'='*3}
+
+Configuration is complete. The simulation parameters are ready for execution.
+"""
+        
         # Return completion message in messages for streaming
         return {
             **state,
             'current_stage': SupervisorStage.COMPLETION,
             'error_message': None,
+            'current_module': 'supervisor',  # Mark as supervisor message for proper display
             'messages': state.get('messages', []) + [AIMessage(content=completion_message)]
         }
     
@@ -595,13 +626,79 @@ Do not modify or interpret the module_results data - pass it exactly as provided
         current_index = execution_order.index(module_name)
         
         if current_index == len(execution_order) - 1:
-            # Last module completed - go to simulation execution
-            self.logger.info("All modules completed, routing to simulation execution")
-            return "supervisor_run_simulation"
+            # Last module completed - go to simulation preparation (which shows start message)
+            self.logger.info("All modules completed, routing to simulation preparation")
+            return "supervisor_prepare_simulation"
         else:
-            # Go to next module
-            next_module = execution_order[current_index + 1]
-            return f"{next_module}_welcome"
+            # Summarize before proceeding to next module
+            return "supervisor_summarize"
+
+    def _route_after_summarize(self, state: dict) -> str:
+        """After summarization, continue to the next module or simulation if none left"""
+        execution_order = state.get('execution_order', [])
+        module_results = state.get('module_results', {})
+        completed = [name for name, res in module_results.items() if getattr(res, 'status', None) == ModuleStatus.COMPLETED]
+        # Find first module not completed
+        next_module = None
+        for mn in execution_order:
+            if mn not in completed:
+                next_module = mn
+                break
+        if next_module is None:
+            return "supervisor_prepare_simulation"
+        return f"{next_module}_welcome"
+
+    def _summarize_node(self, state: dict) -> dict:
+        """Summarize recent conversation and prune older messages before next module."""
+        self.logger.info("Summarizing conversation before next module")
+        messages = state.get('messages', [])
+        context = state.get('context', {}) or {}
+        running_summary = context.get('running_summary', "")
+
+        # Build summarization prompt
+        if running_summary:
+            summary_prompt = (
+                f"This is a summary of the conversation to date: {running_summary}\n\n"
+                "Extend the summary by taking into account the new messages above."
+            )
+        else:
+            summary_prompt = "Create a concise summary of the conversation above."
+
+        # Invoke the LLM to produce an updated summary
+        try:
+            prompt_msg = HumanMessage(content=summary_prompt)
+            summarizer = self.llm.bind(max_tokens=128)
+            response = summarizer.invoke(messages + [prompt_msg])
+            new_summary = response.content if hasattr(response, 'content') else str(response)
+        except Exception as e:
+            self.logger.error(f"Summarization failed: {e}")
+            new_summary = running_summary  # fallback to previous summary
+
+        # Prune old messages: keep last 4
+        to_delete = [RemoveMessage(id=m.id) for m in messages[:-4]] if len(messages) > 4 else []
+
+        # Ensure the kept window does not start with orphaned tool messages
+        kept_window = messages[-4:] if len(messages) > 4 else messages[:]
+        extra_delete = []
+        for m in kept_window:
+            # Stop dropping once we hit a non-tool message
+            if getattr(m, 'type', None) == 'tool':
+                extra_delete.append(RemoveMessage(id=m.id))
+            else:
+                break
+        if extra_delete:
+            to_delete.extend(extra_delete)
+
+        # Update context with new running_summary
+        new_context = dict(context)
+        new_context['running_summary'] = new_summary
+
+        update: Dict[str, Any] = {
+            'context': new_context
+        }
+        if to_delete:
+            update['messages'] = to_delete
+        return update
     
     def _route_from_simulation(self, state: dict) -> str:
         """Route from simulation execution based on tools availability"""
@@ -620,23 +717,87 @@ Do not modify or interpret the module_results data - pass it exactly as provided
             return END
     
     def _route_after_simulation_tools(self, state: dict) -> str:
-        """Route after simulation tools execution"""
-        last_message = state['messages'][-1].content
-        self.logger.info("Processing simulation execution results")
+        """Route after simulation tools execution to post-simulation response node"""
+        # Routing functions should not mutate state - just return next node
+        self.logger.info("Routing to post-simulation response node")
+        return 'supervisor_post_simulation_response'
+    
+    def _post_simulation_response_node(self, state: dict) -> dict:
+        """Post-simulation response node - generates AI response after tool execution"""
+        self.logger.info("Generating AI response after simulation execution")
+        
+        # Extract tool result from the last message (should be a ToolMessage)
+        messages = state.get('messages', [])
+        last_message = messages[-1] if messages else None
+        
+        # Parse tool result from the last message
+        tool_result = {}
+        if last_message:
+            if isinstance(last_message, ToolMessage):
+                last_message_content = last_message.content
+            elif hasattr(last_message, 'content'):
+                last_message_content = last_message.content
+            else:
+                last_message_content = str(last_message)
+            
+            try:
+                # Try to parse as JSON
+                if isinstance(last_message_content, str):
+                    tool_result = json.loads(last_message_content)
+                elif isinstance(last_message_content, dict):
+                    tool_result = last_message_content
+                else:
+                    tool_result = {}
+                
+                self.logger.info(f"Parsed tool result: {tool_result.get('simulation_finish', False)}")
+            except (json.JSONDecodeError, TypeError) as e:
+                self.logger.error(f"Failed to parse tool result: {e}")
+                tool_result = {}
+        
+        # Store parsed result in state for future reference
+        simulation_finish = tool_result.get('simulation_finish', False)
+        execution_results = tool_result.get('execution_results', {})
+        
+        # Create system prompt for post-simulation response
+        response_prompt = get_post_simulation_response_prompt(tool_result)
+        system_message = SystemMessage(content=response_prompt)
         
         try:
-            parsed_message = json.loads(last_message)
-            validation_status = parsed_message.get('simulation_finish', False)
-        except (json.JSONDecodeError, TypeError) as e:
-            self.logger.error(f"Failed to parse simulation result: {e}")
-            return END
+            # Invoke unbound LLM (without tools) to generate response
+            # Include recent conversation context (last few messages)
+            recent_messages = messages[-5:] if len(messages) > 5 else messages
+            response = self.response_llm.invoke([system_message] + recent_messages)
+            self.logger.info("AI response generated successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to generate AI response: {e}")
+            # Fallback message if LLM fails
+            if simulation_finish:
+                response = AIMessage(content="The simulation has been executed successfully! All configuration steps are complete and the simulation ran without errors.")
+            else:
+                response = AIMessage(content="The simulation execution has completed. Please check the tool results above for details.")
+        
+        # Add AI response to messages
+        updated_messages = messages + [response]
+        
+        return {
+            **state,
+            'messages': updated_messages,
+            'current_module': 'supervisor',  # Mark as supervisor message for proper display
+            'simulation_finish': simulation_finish,
+            'simulation_tool_result': tool_result,
+            'simulation_results': execution_results if execution_results else state.get('simulation_results')
+        }
+    
+    def _route_after_post_simulation_response(self, state: dict) -> str:
+        """Route after post-simulation response to completion"""
+        validation_status = state.get('simulation_finish', False)
         
         if validation_status:
-            self.logger.info("Simulation is executed successfully, routing to finalize")
-            return 'supervisor_completion'
+            self.logger.info("Simulation executed successfully, routing to completion")
         else:
-            self.logger.info("Simulation is executed but not run successfully.")
-            return END
+            self.logger.info("Simulation execution completed with issues, routing to completion")
+        
+        return 'supervisor_completion'
     
     # =================
     # PUBLIC API

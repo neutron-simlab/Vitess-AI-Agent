@@ -1,20 +1,16 @@
-import inspect
 import json
 import logging
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
-from uuid import UUID, uuid4
-from datetime import datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from langchain_core._api import LangChainBetaWarning
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, AIMessageChunk
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command, Interrupt
 
 from vitess_ai.server_agents.server_supervisor import create_default_server_supervisor
 from vitess_ai.schema.server import (
@@ -24,11 +20,16 @@ from vitess_ai.schema.server import (
     UserInput,
     HealthStatus
 )
-from vitess_ai.server.utils import (
-    convert_message_content_to_string,
-    langchain_to_chat_message,
-    remove_tool_calls
+from vitess_ai.server.utils import langchain_to_chat_message
+from vitess_ai.server.errors import (
+    AgentNotFoundError,
+    StreamingError,
+    InterruptError,
+    StateError,
+    VitessServerError
 )
+from vitess_ai.server.interrupt_handler import InterruptHandler
+from vitess_ai.server.streaming import StreamEventProcessor
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
@@ -85,14 +86,24 @@ async def get_agent(agent_id: str) -> CompiledStateGraph:
     logger.info(f"Getting agent: {agent_id}")
     if agent_id not in _agent_registry:
         if agent_id == "supervisor":
-            logger.info("Creating new server supervisor agent")
-            # Create server supervisor agent asynchronously
-            supervisor = await create_default_server_supervisor()
-            _agent_registry[agent_id] = supervisor.app
-            logger.info("Server supervisor agent created and registered")
+            try:
+                logger.info("Creating new server supervisor agent")
+                # Create server supervisor agent asynchronously
+                supervisor = await create_default_server_supervisor()
+                _agent_registry[agent_id] = supervisor.app
+                logger.info("Server supervisor agent created and registered")
+            except Exception as e:
+                logger.error(f"Failed to create supervisor agent: {e}")
+                raise AgentNotFoundError(
+                    agent_id,
+                    details={"error": str(e), "agent_type": "supervisor"}
+                )
         else:
             logger.error(f"Unknown agent requested: {agent_id}")
-            raise ValueError(f"Unknown agent: {agent_id}")
+            raise AgentNotFoundError(
+                agent_id,
+                details={"available_agents": list(_agent_registry.keys())}
+            )
     else:
         logger.info(f"Using existing agent: {agent_id}")
     
@@ -112,41 +123,6 @@ app = FastAPI(lifespan=lifespan)
 router = APIRouter()
 
 
-async def _handle_input(user_input: UserInput, agent: CompiledStateGraph) -> tuple[dict[str, Any], UUID]:
-    """
-    Parse user input and handle any required interrupt resumption.
-    Returns kwargs for agent invocation and the run_id.
-    """
-    run_id = uuid4()
-    thread_id = user_input.thread_id or str(uuid4())
-    user_id = user_input.user_id or str(uuid4())
-
-    configurable = {"thread_id": thread_id, "user_id": user_id}
-  
-    config = RunnableConfig(
-        configurable=configurable,
-        run_id=run_id,
-    )
-
-    # Check for interrupts that need to be resumed
-    state = await agent.aget_state(config=config)
-    interrupted_tasks = [
-        task for task in state.tasks if hasattr(task, "interrupts") and task.interrupts
-    ]
-
-    input: Command | dict[str, Any]
-    if interrupted_tasks:
-        # assume user input is response to resume agent execution from interrupt
-        input = Command(resume=user_input.message)
-    else:
-        input = {"messages": [HumanMessage(content=user_input.message)]}
-
-    kwargs = {
-        "input": input,
-        "config": config,
-    }
-
-    return kwargs, run_id
 
 @router.post("/{agent_id}/invoke")
 @router.post("/invoke")
@@ -164,31 +140,58 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
     # in interrupt-agent, or a tool step in research-assistant), it's omitted. Arguably,
     # you'd want to include it. You could update the API to return a list of ChatMessages
     # in that case.
-    agent: CompiledStateGraph = await get_agent(agent_id)
-    kwargs, run_id = await _handle_input(user_input, agent)
-    logger.info(f"Invoke complete, run_id: {run_id}")
-    logger.info(f"kwargs: {kwargs}")
+    try:
+        agent: CompiledStateGraph = await get_agent(agent_id)
+    except AgentNotFoundError as e:
+        logger.error(f"Agent not found: {e}")
+        raise HTTPException(status_code=404, detail=e.message)
+    
+    try:
+        kwargs, run_id = await InterruptHandler.prepare_input(
+            user_input.message,
+            agent,
+            thread_id=user_input.thread_id,
+            user_id=user_input.user_id
+        )
+        logger.info(f"Invoke prepared, run_id: {run_id}")
+    except (InterruptError, StateError) as e:
+        logger.error(f"Failed to prepare input: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to prepare input: {e.message}")
+    except Exception as e:
+        logger.error(f"Unexpected error preparing input: {e}")
+        raise HTTPException(status_code=500, detail="Unexpected error preparing input")
 
     try:
         response_events: list[tuple[str, Any]] = await agent.ainvoke(**kwargs, stream_mode=["updates", "values"])  # type: ignore # fmt: skip
         response_type, response = response_events[-1]
+        
         if response_type == "values":
             # Normal response, the agent completed successfully
             output = langchain_to_chat_message(response["messages"][-1])
         elif response_type == "updates" and "__interrupt__" in response:
             # The last thing to occur was an interrupt
             # Return the value of the first interrupt as an AIMessage
+            interrupt_value = response["__interrupt__"][0].value
             output = langchain_to_chat_message(
-                AIMessage(content=response["__interrupt__"][0].value)
+                AIMessage(content=interrupt_value if isinstance(interrupt_value, str) else str(interrupt_value))
             )
         else:
-            raise ValueError(f"Unexpected response type: {response_type}")
+            logger.error(f"Unexpected response type: {response_type}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected response type: {response_type}"
+            )
 
         output.run_id = str(run_id)
         return output
+    except HTTPException:
+        raise
+    except VitessServerError as e:
+        logger.error(f"Server error during invocation: {e}")
+        raise HTTPException(status_code=500, detail=e.message)
     except Exception as e:
-        logger.error(f"An exception occurred: {e}")
-        raise HTTPException(status_code=500, detail="Unexpected error")
+        logger.error(f"Unexpected error during invocation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Unexpected error during agent invocation")
 
 async def message_generator(
     user_input: StreamInput, agent_id: str = DEFAULT_AGENT
@@ -198,116 +201,56 @@ async def message_generator(
 
     This is the workhorse method for the /stream endpoint.
     """
-    agent: CompiledStateGraph = await get_agent(agent_id)
-    kwargs, run_id = await _handle_input(user_input, agent)
-
     try:
-        # Process streamed events from the graph and yield messages over the SSE stream.
+        agent: CompiledStateGraph = await get_agent(agent_id)
+    except AgentNotFoundError as e:
+        logger.error(f"Agent not found: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'content': f'Agent not found: {e.message}'})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+    
+    try:
+        kwargs, run_id = await InterruptHandler.prepare_input(
+            user_input.message,
+            agent,
+            thread_id=user_input.thread_id,
+            user_id=user_input.user_id
+        )
+    except (InterruptError, StateError) as e:
+        logger.error(f"Failed to prepare input: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'content': f'Failed to prepare input: {e.message}'})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+    except Exception as e:
+        logger.error(f"Unexpected error preparing input: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'content': 'Unexpected error preparing input'})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+    
+    try:
+        # Create stream event processor
+        processor = StreamEventProcessor(
+            agent,
+            kwargs["config"],
+            str(run_id),
+            user_input.message
+        )
+        
+        # Process streamed events from the graph and yield messages over the SSE stream
         async for stream_event in agent.astream(
             **kwargs, stream_mode=["updates", "messages", "custom"], subgraphs=True
         ):
-            if not isinstance(stream_event, tuple):
-                continue
-            # Handle different stream event structures based on subgraphs
-            if len(stream_event) == 3:
-                # With subgraphs=True: (node_path, stream_mode, event)
-                _, stream_mode, event = stream_event
-            else:
-                # Without subgraphs: (stream_mode, event)
-                stream_mode, event = stream_event
-            new_messages = []
-            if stream_mode == "updates":
-                for node, updates in event.items():
-                    # A simple approach to handle agent interrupts.
-                    # In a more sophisticated implementation, we could add
-                    # some structured ChatMessage type to return the interrupt value.
-                    if node == "__interrupt__":
-                        interrupt: Interrupt
-                        for interrupt in updates:
-                            new_messages.append(AIMessage(content=interrupt.value))
-                        continue
-                    updates = updates or {}
-                    update_messages = updates.get("messages", [])
-                    # special cases for using langgraph-supervisor library
-                    if "supervisor" in node or "sub-agent" in node:
-                        # the only tools that come from the actual agent are the handoff and handback tools
-                        if isinstance(update_messages[-1], ToolMessage):
-                            if "sub-agent" in node and len(update_messages) > 1:
-                                # If this is a sub-agent, we want to keep the last 2 messages - the handback tool, and it's result
-                                update_messages = update_messages[-2:]
-                            else:
-                                # If this is a supervisor, we want to keep the last message only - the handoff result. The tool comes from the 'agent' node.
-                                update_messages = [update_messages[-1]]
-                        else:
-                            update_messages = []
-                    new_messages.extend(update_messages)
-
-            if stream_mode == "custom":
-                new_messages = [event]
-
-            # LangGraph streaming may emit tuples: (field_name, field_value)
-            # e.g. ('content', <str>), ('tool_calls', [ToolCall,...]), ('additional_kwargs', {...}), etc.
-            # We accumulate only supported fields into `parts` and skip unsupported metadata.
-            # More info at: https://langchain-ai.github.io/langgraph/cloud/how-tos/stream_messages/
-            processed_messages = []
-            current_message: dict[str, Any] = {}
-            for message in new_messages:
-                if isinstance(message, tuple):
-                    key, value = message
-                    # Store parts in temporary dict
-                    current_message[key] = value
-                else:
-                    # Add complete message if we have one in progress
-                    if current_message:
-                        processed_messages.append(_create_ai_message(current_message))
-                        current_message = {}
-                    processed_messages.append(message)
-
-            # Add any remaining message parts
-            if current_message:
-                processed_messages.append(_create_ai_message(current_message))
-
-            for message in processed_messages:
-                try:
-                    chat_message = langchain_to_chat_message(message)
-                    chat_message.run_id = str(run_id)
-                except Exception as e:
-                    logger.error(f"Error parsing message: {e}")
-                    yield f"data: {json.dumps({'type': 'error', 'content': 'Unexpected error'})}\n\n"
-                    continue
-                # LangGraph re-sends the input message, which feels weird, so drop it
-                if chat_message.type == "human" and chat_message.content == user_input.message:
-                    continue
-                yield f"data: {json.dumps({'type': 'message', 'content': chat_message.model_dump()})}\n\n"
-
-            if stream_mode == "messages":
-                # if not user_input.stream_tokens:
-                #     continue
-                msg, metadata = event
-                if "skip_stream" in metadata.get("tags", []):
-                    continue
-                # For some reason, astream("messages") causes non-LLM nodes to send extra messages.
-                # Drop them.
-                if not isinstance(msg, AIMessageChunk):
-                    continue
-                content = remove_tool_calls(msg.content)
-                if content:
-                    # Empty content in the context of OpenAI usually means
-                    # that the model is asking for a tool to be invoked.
-                    # So we only print non-empty content.
-                    yield f"data: {json.dumps({'type': 'token', 'content': convert_message_content_to_string(content)})}\n\n"
+            async for sse_string in processor.process_event(stream_event):
+                yield sse_string
+        
+    except StreamingError as e:
+        logger.error(f"Streaming error: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'content': f'Streaming error: {e.message}'})}\n\n"
     except Exception as e:
-        logger.error(f"Error in message generator: {e}")
+        logger.error(f"Unexpected error in message generator: {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'content': 'Internal server error'})}\n\n"
     finally:
         yield "data: [DONE]\n\n"
-
-
-def _create_ai_message(parts: dict) -> AIMessage:
-    sig = inspect.signature(AIMessage)
-    valid_keys = set(sig.parameters)
-    filtered = {k: v for k, v in parts.items() if k in valid_keys}
-    return AIMessage(**filtered)
 
 
 def _sse_response_example() -> dict[int | str, Any]:

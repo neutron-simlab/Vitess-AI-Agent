@@ -7,8 +7,8 @@ Hello! 👋 I'm the Writeout Agent, your assistant for configuring neutron simul
 
 I can help you set up your output configuration in two ways:
 
-🚀 **Default Setup**: Use optimal default values for all parameters - you just need to specify where to save the output files
-⚙️ **Customize**: Configure specific parameters like output format, filtering limits, and neutron selection criteria
+1. **Default Setup**: Use optimal default values for all parameters - you just need to specify where to save the output files
+2. **Customize**: Configure specific parameters like output format, filtering limits, and neutron selection criteria
 
 To get started, please let me know which approach you'd prefer, or just tell me what you'd like to do!
 """

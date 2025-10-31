@@ -20,15 +20,13 @@ class SupervisorConfig(BaseModel):
     model: str = Field(default='gpt-4o-mini-2024-07-18')
     welcome_message: str = Field(
         default="""
-🤖 **Neutron Simulation Configuration System**
-
+        **Neutron Simulation Configuration System**\n
+\n
 Welcome! I'm your configurable Simulation Supervisor. I'll guide you through 
 setting up your neutron simulation with the registered modules.
 
 All modules are independent - you can configure them in any order and skip 
 optional ones if needed.
-
-Ready to begin? Type 'start' to begin the configuration process.
         """,
         description="Welcome message shown to users"
     )

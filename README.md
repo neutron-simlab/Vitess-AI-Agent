@@ -43,10 +43,10 @@
          │              ┌─────────┼─────────┐            │
          │              │         │         │            │
          ▼              ▼         ▼         ▼            ▼
-┌─────────────┐ ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐
-│ Simulation  │ │ ReadIn   │ │ Guide   │ │ Writeout │ │ Filter   │
-│ Execution   │ │ Agent    │ │ Agent   │ │ Agent    │ │ Agent    │
-└─────────────┘ └──────────┘ └─────────┘ └──────────┘ └──────────┘
+┌─────────────┐ ┌──────────┐ ┌─────────┐ ┌──────────┐
+│ Simulation  │ │ ReadIn   │ │ Guide   │ │ Writeout │
+│ Execution   │ │ Agent    │ │ Agent   │ │ Agent    │
+└─────────────┘ └──────────┘ └─────────┘ └──────────┘
 ```
 
 ## 🔧 Installation
@@ -127,29 +127,21 @@ async def stream_response():
 ### Basic Supervisor Usage
 ```python
 import asyncio
-from vitess_ai.agents.supervisor_agent import create_default_supervisor
+from vitess_ai.server_agents.server_supervisor import create_default_server_supervisor
 
 async def main():
-    supervisor = await create_default_supervisor()
-    result = await supervisor.run("simulation_001")
-    print(f"Status: {result['status']}")
-    print(f"CLI Command: {result.get('cli_command')}")
+    supervisor = await create_default_server_supervisor()
+    # Use the supervisor's graph directly
+    result = await supervisor.app.ainvoke(
+        {"messages": [{"role": "user", "content": "Configure neutron simulation"}]},
+        config={"configurable": {"thread_id": "simulation_001"}}
+    )
+    print(f"Result: {result}")
 
 asyncio.run(main())
 ```
 
-### Individual Agent Usage
-```python
-import asyncio
-from vitess_ai.agents.readin_module_agent import create_readin_agent
-
-async def main():
-    readin_agent = await create_readin_agent()
-    result = await readin_agent.run("Configure neutron beam", "thread_1")
-    print("ReadIn Parameters:", result)
-
-asyncio.run(main())
-```
+Note: The recommended way to use the system is through the FastAPI server (see API Server section above).
 
 ## ⚙️ Configuration
 
@@ -174,7 +166,6 @@ SERVER_PORT=8000
 - **ReadInAgent**: Configures neutron input parameters and initial conditions
 - **GuideAgent**: Handles neutron guide specifications and geometry
 - **WriteoutAgent**: Manages output settings and data formats
-- **FilterAgent**: Configures neutron filter parameters
 
 ## 🚀 Production Deployment
 

@@ -20,6 +20,10 @@ class UnifiedState(MessagesState):
     
     This state combines supervisor-level coordination with module-level
     execution details, enabling seamless state sharing during interrupts.
+    
+    Note: MessagesState is a pre-built TypedDict from LangGraph 1.x that
+    automatically handles message accumulation. Additional fields are
+    added using type annotations (compatible with LangGraph 1.x).
     """
     
     # Supervisor-level fields
@@ -32,6 +36,8 @@ class UnifiedState(MessagesState):
     cli_generation_ready: bool = False
     cli_command: Optional[str] = None
     simulation_finish: Optional[bool] = None
+    # Memory / context fields (e.g., running summary)
+    context: Dict[str, Any] = Field(default={})
     
     # Module-level fields (shared across all modules)
     current_module: Optional[str] = None
