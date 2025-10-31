@@ -1,23 +1,23 @@
 """
-ReadIn Module Agent Server - Server-optimized readin module agent
+ReadIn Module Agent - Readin module agent
 
 This agent implements the readin module functionality using the flat graph
-architecture for server mode, enabling unified state management and
+architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
 from typing import Type
-from vitess_ai.server_agents.base_module_agent_server import BaseModuleAgentServer
+from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
 from vitess_ai.prompts.readin_module import READIN_AGENT_WELCOME, READIN_AGENT_PROMPT
 from vitess_ai.schema.readin_module import InitialResponseReadIn
 
 
-class ReadInModuleAgentServer(BaseModuleAgentServer[InitialResponseReadIn]):
+class ReadInModuleAgent(BaseModuleAgent[InitialResponseReadIn]):
     """
-    Server-optimized readin module agent.
+    Readin module agent.
     
     This agent handles neutron input parameters and initial conditions
-    configuration using a flat graph architecture for server mode.
+    configuration using a flat graph architecture.
     """
     
     @property
@@ -111,3 +111,4 @@ readin module that will be used in the simulation execution.
 
 {next_message}"""
         return message
+

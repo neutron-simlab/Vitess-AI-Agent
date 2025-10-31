@@ -11,7 +11,7 @@ from pydantic import Field
 from langgraph.graph import MessagesState
 from vitess_ai.schema.base import FillingStage
 from vitess_ai.schema.supervisor import SupervisorStage
-from vitess_ai.agents.base_module_agent import ModuleResult
+from vitess_ai.server_agents.base_module_agent import ModuleResult
 
 
 class UnifiedState(MessagesState):

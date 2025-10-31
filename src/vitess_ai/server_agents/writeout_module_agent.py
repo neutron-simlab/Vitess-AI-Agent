@@ -1,14 +1,14 @@
 """
-Writeout Module Agent Server - Server-optimized writeout module agent
+Writeout Module Agent - Writeout module agent
 
 This agent implements the writeout module functionality using the flat graph
-architecture for server mode, enabling unified state management and
+architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
 from typing import Type
 from pydantic import BaseModel, Field
-from vitess_ai.server_agents.base_module_agent_server import BaseModuleAgentServer
+from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
 from vitess_ai.prompts.writeout_module import WRITEOUT_AGENT_WELCOME, WRITEOUT_AGENT_PROMPT
 from vitess_ai.schema.writeout_module import InitialResponseWriteout
 
@@ -18,12 +18,12 @@ class WriteoutInitialResponse(BaseModel):
     response: str = Field(description="Deprecated. Use InitialResponseWriteout.response")
 
 
-class WriteoutModuleAgentServer(BaseModuleAgentServer[InitialResponseWriteout]):
+class WriteoutModuleAgent(BaseModuleAgent[InitialResponseWriteout]):
     """
-    Server-optimized writeout module agent.
+    Writeout module agent.
     
     This agent handles output settings and data formats configuration
-    using a flat graph architecture for server mode.
+    using a flat graph architecture.
     """
     
     @property
@@ -117,3 +117,4 @@ writeout module that will be used in the simulation execution.
 
 {next_message}"""
         return message
+

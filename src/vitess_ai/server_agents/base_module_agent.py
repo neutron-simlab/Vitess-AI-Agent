@@ -1,14 +1,16 @@
 """
-Base Module Agent Server - Server-optimized base class for module agents
+Base Module Agent - Base class for module agents
 
-This class provides the foundation for server agents that use a flat graph
-architecture with unified state management. Unlike the regular BaseModuleAgent,
-this class is designed to work as individual nodes within a larger supervisor graph.
+This class provides the foundation for agents that use a flat graph
+architecture with unified state management. This class is designed
+to work as individual nodes within a larger supervisor graph.
 """
 
 import logging
-from typing import List, Type, TypeVar, Generic, Optional
+from typing import List, Type, TypeVar, Generic, Optional, Any, Dict
+from enum import Enum
 from abc import ABC, abstractmethod
+from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain.tools import BaseTool
 from langgraph.types import interrupt
@@ -19,9 +21,80 @@ from vitess_ai.schema.base import FillingStage
 R = TypeVar('R')  # For initial response types
 
 
-class BaseModuleAgentServer(ABC, Generic[R]):
+# =================
+# MODULE RESULT CLASSES
+# =================
+
+class ModuleStatus(str, Enum):
+    """Status of individual modules"""
+    COMPLETED = "completed"
+
+
+class ModuleResult(BaseModel):
+    """Result from a completed module agent"""
+    module_name: str
+    status: ModuleStatus
+    parameters: Optional[Dict[str, Any]] = None
+    cli_parameters: Optional[str] = None
+    error_message: Optional[str] = None
+    execution_time: Optional[float] = None
+    thread_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class ModuleMetadata(BaseModel):
+    """Definition of a registerable module"""
+    name: str = Field(..., description="Module name (e.g., 'readin')")
+    display_name: str = Field(..., description="Human-readable name (e.g., 'Read-in Parameters')")
+    description: str = Field(..., description="Module description")
+    agent_class: Type[Any] = Field(..., description="Agent class for this module (BaseModuleAgent)")
+    optional: bool = Field(default=False, description="Whether module can be skipped")
+    config_path: Optional[str] = Field(None, description="Path to MCP tools configuration")
+    order: int = Field(default=100, description="Execution order (1, 2, 3, etc.)")
+    
+    class Config:
+        arbitrary_types_allowed = True
+
+
+class ModuleBuilder:
+    """Simple helper to create module definitions"""
+    
+    @staticmethod
+    def create(
+        name: str,
+        display_name: str, 
+        description: str,
+        agent_class: Type[Any],
+        config_path: str = None,
+        optional: bool = False,
+        order: int = 100
+    ) -> ModuleMetadata:
+        """
+        Create a module definition - that's it!
+        
+        Args:
+            name: Short name like "readin", "guide"
+            display_name: Pretty name like "Read-in Parameters"  
+            description: What this module does
+            agent_class: Your agent class (inherits BaseModuleAgent)
+            config_path: Path to MCP tools (optional)
+            optional: Can user skip this? (default False)
+            order: Execution order - 1, 2, 3, etc. (default 100)
+        """
+        return ModuleMetadata(
+            name=name,
+            display_name=display_name,
+            description=description,
+            agent_class=agent_class,
+            config_path=config_path,
+            optional=optional,
+            order=order
+        )
+
+
+class BaseModuleAgent(ABC, Generic[R]):
     """
-    Abstract base class for server-optimized module agents.
+    Abstract base class for module agents.
     
     This class provides:
     - Flat graph node implementations (no subgraphs)
@@ -34,7 +107,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
     
     def __init__(self, provider: str, model: str, tools: List[BaseTool] = []):
         """
-        Initialize the base server agent
+        Initialize the base agent
         
         Args:
             provider: LLM provider (e.g., 'openai', 'anthropic')
@@ -50,7 +123,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         self._setup_logging()
         
         # Log initialization
-        self.logger.info(f"Initializing {self.name} server agent with model {model}")
+        self.logger.info(f"Initializing {self.name} agent with model {model}")
         if tools:
             self.logger.info(f"Loaded {len(tools)} MCP tools")
         
@@ -58,10 +131,10 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         self._setup_prompts()
         self._setup_llm()
         
-        self.logger.info(f"{self.name} server agent initialization completed")
+        self.logger.info(f"{self.name} agent initialization completed")
     
     def _setup_logging(self):
-        """Setup logging for the server agent"""
+        """Setup logging for the agent"""
         # Create logger specific to this agent instance
         logger_name = f"vitess_ai.server_agents.{self.module_name}"
         self.logger = logging.getLogger(logger_name)
@@ -158,8 +231,6 @@ class BaseModuleAgentServer(ABC, Generic[R]):
             return None
         
         try:
-            from vitess_ai.agents.base_module_agent import ModuleStatus
-            
             # Check if state has get_next_module method (UnifiedState has this)
             # Note: Can't use isinstance() because UnifiedState extends TypedDict
             if hasattr(state, 'get_next_module') and callable(getattr(state, 'get_next_module')):
@@ -423,8 +494,6 @@ class BaseModuleAgentServer(ABC, Generic[R]):
             self.logger.info(f"CLI parameters: {parsed_result.get('cli_parameters', 'None')}")
             
             # Create module result
-            from vitess_ai.agents.base_module_agent import ModuleResult, ModuleStatus
-            
             module_result = ModuleResult(
                 module_name=self.module_name,
                 status=ModuleStatus.COMPLETED,
@@ -475,8 +544,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         Create the base graph structure for this module.
         
         This method returns a dictionary containing the nodes and edges
-        that define the module's workflow. This is similar to the method
-        in BaseModuleAgent but adapted for server mode with UnifiedState.
+        that define the module's workflow.
         
         Returns:
             dict: Dictionary with 'nodes' and 'edges' keys
@@ -606,3 +674,4 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         else:
             self.logger.info('Continuing parameter configuration')
             return f'{self.module_name}_params_config'
+

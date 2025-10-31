@@ -11,7 +11,7 @@ from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import AIMessage
 from langgraph.graph.state import CompiledStateGraph
 
-from vitess_ai.server_agents.server_supervisor import create_default_server_supervisor, ServerSupervisorAgent
+from vitess_ai.server_agents.supervisor import create_default_supervisor, SupervisorAgent
 from vitess_ai.schema.server import (
     AgentInfo,
     ChatMessage,
@@ -62,10 +62,10 @@ _setup_service_logging()
 logger.info("Service logging initialized")
 
 # Simple in-memory agent registry
-# Key format: (agent_id, provider, model) -> tuple(ServerSupervisorAgent, CompiledStateGraph)
+# Key format: (agent_id, provider, model) -> tuple(SupervisorAgent, CompiledStateGraph)
 # Storing both supervisor instance and app allows us to restart the graph with new config
 DEFAULT_AGENT = "supervisor"
-_agent_registry: dict[tuple[str, str, str], tuple[ServerSupervisorAgent, CompiledStateGraph]] = {}
+_agent_registry: dict[tuple[str, str, str], tuple[SupervisorAgent, CompiledStateGraph]] = {}
 
 
 def get_all_agent_info() -> list[AgentInfo]:
@@ -124,14 +124,14 @@ async def get_agent(
     if registry_key not in _agent_registry:
         if agent_id == "supervisor":
             try:
-                logger.info(f"Creating new server supervisor agent with provider={provider}, model={model}")
-                # Create server supervisor agent asynchronously with specified provider/model
-                supervisor = await create_default_server_supervisor(
+                logger.info(f"Creating new supervisor agent with provider={provider}, model={model}")
+                # Create supervisor agent asynchronously with specified provider/model
+                supervisor = await create_default_supervisor(
                     provider=provider,
                     model=model
                 )
                 _agent_registry[registry_key] = (supervisor, supervisor.app)
-                logger.info("Server supervisor agent created and registered")
+                logger.info("Supervisor agent created and registered")
             except Exception as e:
                 logger.error(f"Failed to create supervisor agent: {e}")
                 raise AgentNotFoundError(

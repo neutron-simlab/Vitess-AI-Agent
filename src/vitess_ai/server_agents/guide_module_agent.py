@@ -1,14 +1,14 @@
 """
-Guide Module Agent Server - Server-optimized guide module agent
+Guide Module Agent - Guide module agent
 
 This agent implements the guide module functionality using the flat graph
-architecture for server mode, enabling unified state management and
+architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
 from typing import Type
 from pydantic import BaseModel, Field
-from vitess_ai.server_agents.base_module_agent_server import BaseModuleAgentServer
+from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
 from vitess_ai.prompts.guide_module import GUIDE_AGENT_WELCOME, GUIDE_AGENT_PROMPT
 from vitess_ai.schema.guide_module import InitialResponseGuide
 
@@ -18,12 +18,12 @@ class GuideInitialResponse(BaseModel):
     response: str = Field(description="Deprecated. Use InitialResponseGuide.response")
 
 
-class GuideModuleAgentServer(BaseModuleAgentServer[InitialResponseGuide]):
+class GuideModuleAgent(BaseModuleAgent[InitialResponseGuide]):
     """
-    Server-optimized guide module agent.
+    Guide module agent.
     
     This agent handles neutron guide specifications and geometry
-    configuration using a flat graph architecture for server mode.
+    configuration using a flat graph architecture.
     """
     
     @property
@@ -117,3 +117,4 @@ guide module that will be used in the simulation execution.
 
 {next_message}"""
         return message
+

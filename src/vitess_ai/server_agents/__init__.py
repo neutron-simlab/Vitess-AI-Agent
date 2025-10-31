@@ -13,19 +13,19 @@ Key features:
 """
 
 from .unified_state import UnifiedState
-from .base_module_agent_server import BaseModuleAgentServer
-from .server_supervisor import ServerSupervisorAgent
+from .base_module_agent import BaseModuleAgent
+from .supervisor import SupervisorAgent
 
-# Module-specific server agents
-from .readin_module_agent_server import ReadInModuleAgentServer
-from .guide_module_agent_server import GuideModuleAgentServer
-from .writeout_module_agent_server import WriteoutModuleAgentServer
+# Module-specific agents
+from .readin_module_agent import ReadInModuleAgent
+from .guide_module_agent import GuideModuleAgent
+from .writeout_module_agent import WriteoutModuleAgent
 
 __all__ = [
     "UnifiedState",
-    "BaseModuleAgentServer",
-    "ServerSupervisorAgent",
-    "ReadInModuleAgentServer",
-    "GuideModuleAgentServer", 
-    "WriteoutModuleAgentServer"
+    "BaseModuleAgent",
+    "SupervisorAgent",
+    "ReadInModuleAgent",
+    "GuideModuleAgent", 
+    "WriteoutModuleAgent"
 ]

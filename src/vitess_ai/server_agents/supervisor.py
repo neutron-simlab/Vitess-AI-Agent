@@ -1,5 +1,5 @@
 """
-Server Supervisor Agent - Flat graph architecture for server mode
+Supervisor Agent - Flat graph architecture
 
 This supervisor agent uses a flat graph architecture where all module nodes
 are added directly to the supervisor graph, enabling unified state management
@@ -21,27 +21,28 @@ from vitess_ai.schema.supervisor import (
     SupervisorStatus, ConfigurationExport
 )
 from vitess_ai.core.registry import ModuleRegistry
-from vitess_ai.agents.base_module_agent import (
+from vitess_ai.server_agents.base_module_agent import (
+    BaseModuleAgent,
     ModuleBuilder, 
-    ModuleStatus, ModuleMetadata, 
+    ModuleStatus, 
+    ModuleMetadata,
 )
-from vitess_ai.server_agents.base_module_agent_server import BaseModuleAgentServer
 from vitess_ai.server_agents.unified_state import UnifiedState
 from vitess_ai.core.config import global_config
 from vitess_ai.prompts.supervisor import get_simulation_execution_prompt, get_post_simulation_response_prompt
 
 
-class ServerSupervisorAgent:
+class SupervisorAgent:
     """
-    Server supervisor agent with flat graph architecture.
+    Supervisor agent with flat graph architecture.
     
     This agent creates a flat graph where all module nodes are added directly
     to the supervisor graph, enabling unified state management and centralized
-    interrupt handling for server mode.
+    interrupt handling.
     """
     
     def __init__(self, config: SupervisorConfig = None, simulation_tools_path: str = None):
-        """Initialize the server supervisor agent"""
+        """Initialize the supervisor agent"""
         self.config = config or self._create_default_config()
         self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
         # Create unbound LLM for post-simulation responses (no tools needed)
@@ -53,7 +54,7 @@ class ServerSupervisorAgent:
         self.simulation_tools = []
         
         # Runtime components
-        self.agent_instances: Dict[str, BaseModuleAgentServer] = {}
+        self.agent_instances: Dict[str, BaseModuleAgent] = {}
         self.graph: Optional[StateGraph] = None
         self.app = None
         self.memory = InMemorySaver()
@@ -62,7 +63,7 @@ class ServerSupervisorAgent:
         # Setup logging
         self.logger = logging.getLogger(__name__)
         self._setup_logging()
-        self.logger.info("Server supervisor agent initialized with logging enabled")
+        self.logger.info("Supervisor agent initialized with logging enabled")
     
     def _create_default_config(self) -> SupervisorConfig:
         """Create default supervisor configuration"""
@@ -163,13 +164,13 @@ class ServerSupervisorAgent:
     
     def add_readin_module(self, config_path: str = None) -> None:
         """Add the standard readin module"""
-        from vitess_ai.server_agents.readin_module_agent_server import ReadInModuleAgentServer
+        from vitess_ai.server_agents.readin_module_agent import ReadInModuleAgent
         
         module = ModuleBuilder.create(
             name="readin",
             display_name="Read-in Parameters",
             description="Configure neutron input parameters and initial conditions",
-            agent_class=ReadInModuleAgentServer,  # Use server agent class
+            agent_class=ReadInModuleAgent,  # Use agent class
             config_path=config_path or global_config.READIN_MCP_PATH,
             order=1
         )
@@ -177,13 +178,13 @@ class ServerSupervisorAgent:
     
     def add_guide_module(self, config_path: str = None) -> None:
         """Add the standard guide module"""  
-        from vitess_ai.server_agents.guide_module_agent_server import GuideModuleAgentServer
+        from vitess_ai.server_agents.guide_module_agent import GuideModuleAgent
         
         module = ModuleBuilder.create(
             name="guide",
             display_name="Guide Parameters", 
             description="Configure neutron guide specifications and geometry",
-            agent_class=GuideModuleAgentServer,  # Use server agent class
+            agent_class=GuideModuleAgent,  # Use agent class
             config_path=config_path or global_config.GUIDE_MCP_PATH,
             order=2
         )
@@ -191,13 +192,13 @@ class ServerSupervisorAgent:
     
     def add_writeout_module(self, config_path: str = None) -> None:
         """Add the standard writeout module"""
-        from vitess_ai.server_agents.writeout_module_agent_server import WriteoutModuleAgentServer
+        from vitess_ai.server_agents.writeout_module_agent import WriteoutModuleAgent
         
         module = ModuleBuilder.create(
             name="writeout",
             display_name="Writeout Parameters",
             description="Configure output settings and data formats", 
-            agent_class=WriteoutModuleAgentServer,  # Use server agent class
+            agent_class=WriteoutModuleAgent,  # Use agent class
             config_path=config_path or global_config.WRITEOUT_MCP_PATH,
             order=3
         )
@@ -208,7 +209,7 @@ class ServerSupervisorAgent:
         name: str,
         display_name: str,
         description: str,
-        agent_class: Type[BaseModuleAgentServer],  # Use server agent class
+        agent_class: Type[BaseModuleAgent],  # Use agent class
         order: int,
         config_path: str = None,
         optional: bool = False
@@ -235,7 +236,7 @@ class ServerSupervisorAgent:
     # AGENT INITIALIZATION
     # =================
     
-    async def _setup_agent_instance(self, module_name: str) -> BaseModuleAgentServer:
+    async def _setup_agent_instance(self, module_name: str) -> BaseModuleAgent:
         """Setup an agent instance for a module"""
         if module_name in self.agent_instances:
             return self.agent_instances[module_name]
@@ -281,19 +282,19 @@ class ServerSupervisorAgent:
             force_reinitialize: If True, reinitialize even if already initialized
         """
         if self.initialized and not force_reinitialize:
-            self.logger.info("Server supervisor already initialized")
+            self.logger.info("Supervisor already initialized")
             return
         
         # If forcing reinitialize, reset the initialized state and clear old components
         if force_reinitialize:
-            self.logger.info("Force reinitializing server supervisor...")
+            self.logger.info("Force reinitializing supervisor...")
             self.initialized = False
             # Clear agent instances to force recreation with new LLM config
             self.agent_instances.clear()
             self.graph = None
             self.app = None
         
-        self.logger.info("Initializing Server Supervisor...")
+        self.logger.info("Initializing Supervisor...")
         
         # Setup simulation tools first
         await self._setup_simulation_tools()
@@ -326,7 +327,7 @@ class ServerSupervisorAgent:
         self.app = self.graph.compile(checkpointer=self.memory)
         
         self.initialized = True
-        self.logger.info(f"Server supervisor initialized with {len(execution_order)} modules and simulation tools")
+        self.logger.info(f"Supervisor initialized with {len(execution_order)} modules and simulation tools")
     
     async def restart_with_new_config(self, provider: str = None, model: str = None, requested_modules: Optional[List[str]] = None, clear_state: bool = True):
         """Restart the supervisor graph with new provider/model configuration
@@ -449,7 +450,7 @@ class ServerSupervisorAgent:
     
     def _welcome_node(self, state: dict) -> dict:
         """Welcome node with dynamic module information"""
-        self.logger.info("Server supervisor welcome node triggered.")
+        self.logger.info("Supervisor welcome node triggered.")
         
         # Show available modules
         modules_info = []
@@ -965,7 +966,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         if not self.initialized:
             await self.initialize(requested_modules)
         
-        self.logger.info(f"Starting server configuration process with thread_id: {thread_id}")
+        self.logger.info(f"Starting configuration process with thread_id: {thread_id}")
         
         config = {"configurable": {"thread_id": thread_id}}
         
@@ -1099,7 +1100,7 @@ Configuration is complete. The simulation parameters are ready for execution.
             },
             metadata={
                 "thread_id": thread_id,
-                "supervisor_version": "3.0.0-server",
+                "supervisor_version": "3.0.0",
                 "execution_order": state.values.get('execution_order', []),
                 "completed_modules": status.completed_modules,
                 "total_modules": len(state.values.get('execution_order', [])),
@@ -1114,17 +1115,18 @@ Configuration is complete. The simulation parameters are ready for execution.
 # CONVENIENCE FACTORY FUNCTIONS
 # =================
 
-async def create_default_server_supervisor(
+async def create_default_supervisor(
         provider = global_config.DEFAULT_PROVIDER, 
         model: str = global_config.DEFAULT_MODEL,
         cli_tools_path: str = None
-        ) -> ServerSupervisorAgent:
-    """Create server supervisor with default modules and CLI generation"""
+        ) -> SupervisorAgent:
+    """Create supervisor with default modules and CLI generation"""
     config = SupervisorConfig(
         provider=provider, 
         model=model
     )
-    supervisor = ServerSupervisorAgent(config, simulation_tools_path=cli_tools_path)
+    supervisor = SupervisorAgent(config, simulation_tools_path=cli_tools_path)
     supervisor.add_default_modules()
     await supervisor.initialize()
     return supervisor
+
