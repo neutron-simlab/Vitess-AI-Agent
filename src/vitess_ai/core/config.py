@@ -30,12 +30,14 @@ class Config:
     # =============================================================================
     
     # Provider selection
-    DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "openai")
+    DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "blablador")
     FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER", "openai")
     
-    # OpenAI
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4o-mini")
-    MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4000"))
+    # Default model (uses provider-specific default if not set)
+    # For Blablador: alias-function-call, alias-code (only models with function calling support)
+    # For OpenAI: gpt-4o-mini, gpt-4o, etc.
+    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", os.getenv("BLABLADOR_DEFAULT_MODEL", "alias-function-call"))
+    MAX_TOKENS = int(os.getenv("MAX_TOKENS", "10000"))
     TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "60"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
     
@@ -77,8 +79,19 @@ class Config:
         """Validate that required environment variables are set"""
         errors = []
         
-        if not cls.OPENAI_API_KEY:
-            errors.append("OPENAI_API_KEY is required")
+        # Validate based on default provider
+        if cls.DEFAULT_PROVIDER.lower() == "blablador":
+            if not cls.BLABLADOR_API_KEY:
+                errors.append("BLABLADOR_API_KEY is required when using Blablador as default provider")
+            if not cls.BLABLADOR_BASE_URL:
+                errors.append("BLABLADOR_BASE_URL is required when using Blablador as default provider")
+        elif cls.DEFAULT_PROVIDER.lower() == "openai":
+            if not cls.OPENAI_API_KEY:
+                errors.append("OPENAI_API_KEY is required when using OpenAI as default provider")
+        else:
+            # For unknown providers, at least check for OpenAI as fallback
+            if not cls.OPENAI_API_KEY and not (cls.BLABLADOR_API_KEY and cls.BLABLADOR_BASE_URL):
+                errors.append("Either OPENAI_API_KEY or (BLABLADOR_API_KEY and BLABLADOR_BASE_URL) must be configured")
         
         if cls.LANGSMITH_TRACING and not cls.LANGSMITH_API_KEY:
             errors.append("LANGSMITH_API_KEY is required when LANGSMITH_TRACING is enabled")

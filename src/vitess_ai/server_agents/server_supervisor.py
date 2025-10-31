@@ -8,6 +8,7 @@ and centralized interrupt handling.
 
 import logging
 import json
+import time
 from typing import Dict, List, Any, Optional, Type
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, RemoveMessage, ToolMessage
 from vitess_ai.core.llms_providers import create_llm_with_fallback
@@ -272,11 +273,25 @@ class ServerSupervisorAgent:
         self.logger.info(f"Initialized agent for module: {module_name}")
         return agent
     
-    async def initialize(self, requested_modules: Optional[List[str]] = None):
-        """Initialize the supervisor with the requested modules"""
-        if self.initialized:
+    async def initialize(self, requested_modules: Optional[List[str]] = None, force_reinitialize: bool = False):
+        """Initialize the supervisor with the requested modules
+        
+        Args:
+            requested_modules: Optional list of module names to include
+            force_reinitialize: If True, reinitialize even if already initialized
+        """
+        if self.initialized and not force_reinitialize:
             self.logger.info("Server supervisor already initialized")
             return
+        
+        # If forcing reinitialize, reset the initialized state and clear old components
+        if force_reinitialize:
+            self.logger.info("Force reinitializing server supervisor...")
+            self.initialized = False
+            # Clear agent instances to force recreation with new LLM config
+            self.agent_instances.clear()
+            self.graph = None
+            self.app = None
         
         self.logger.info("Initializing Server Supervisor...")
         
@@ -312,6 +327,39 @@ class ServerSupervisorAgent:
         
         self.initialized = True
         self.logger.info(f"Server supervisor initialized with {len(execution_order)} modules and simulation tools")
+    
+    async def restart_with_new_config(self, provider: str = None, model: str = None, requested_modules: Optional[List[str]] = None, clear_state: bool = True):
+        """Restart the supervisor graph with new provider/model configuration
+        
+        Args:
+            provider: New provider to use (optional, uses current if not provided)
+            model: New model to use (optional, uses current if not provided)
+            requested_modules: Optional list of module names to include
+            clear_state: If True, clear all conversation state/memory (default: True)
+        """
+        self.logger.info(f"Restarting supervisor with new config: provider={provider}, model={model}, clear_state={clear_state}")
+        
+        # Update config if provided
+        if provider is not None:
+            self.config.provider = provider
+        if model is not None:
+            self.config.model = model
+        
+        # Update LLM instances with new config
+        self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
+        self.response_llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
+        
+        self.logger.info(f"Updated LLM instances: provider={self.config.provider}, model={self.config.model}")
+        
+        # Clear conversation state if requested (create new memory checkpointer)
+        if clear_state:
+            self.logger.info("Clearing conversation state/memory for fresh start")
+            self.memory = InMemorySaver()
+        
+        # Force reinitialize the graph with new LLM config
+        await self.initialize(requested_modules=requested_modules, force_reinitialize=True)
+        
+        self.logger.info("Supervisor graph restarted successfully with new configuration")
     
     # =================
     # FLAT GRAPH CREATION
@@ -474,7 +522,13 @@ All modules have been configured successfully:
         }
     
     def _run_simulation_node(self, state: dict) -> dict:
-        """Simulation execution node - runs simulation directly using module results"""
+        """Simulation execution node - runs simulation directly using module results
+        
+        This node includes timeout protection to prevent hanging with Blablador:
+        - Specifically catches timeout errors
+        - Provides informative error messages if timeout occurs
+        - Falls back gracefully if LLM invocation fails
+        """
         self.logger.info("Entering simulation execution phase")
         
         # Extract module results from state
@@ -485,15 +539,36 @@ All modules have been configured successfully:
         simulation_prompt = get_simulation_execution_prompt(module_results, execution_order)
         simulation_system_prompt = SystemMessage(content=simulation_prompt)
 
+        messages = [simulation_system_prompt]
+        timeout = getattr(self.llm, 'timeout', global_config.TIMEOUT_SECONDS)
+        msg_count = len(messages)
+        response = None
+        
         try:
-            messages = [simulation_system_prompt]
+            # Enhanced logging for LLM invocation
+            self.logger.info(f"Invoking LLM for simulation execution: {msg_count} messages, timeout={timeout}s, provider={self.config.provider}, model={self.config.model}")
+            start_time = time.time()
+            
             response = self.llm.invoke(messages)
-            self.logger.info("LLM response received successfully")
+            
+            duration = time.time() - start_time
+            self.logger.info(f"LLM invocation completed successfully in {duration:.2f}s")
+            
+        except TimeoutError as e:
+            duration = time.time() - start_time if 'start_time' in locals() else 0
+            self.logger.error(f"LLM invocation timed out after {duration:.2f}s (timeout={timeout}s): {e}")
+            error_message = AIMessage(content=f"Error during simulation execution: The LLM request timed out after {timeout} seconds. This may indicate network issues or the model is overloaded. Please try again.")
+            response = error_message
         except Exception as e:
-            self.logger.error(f"LLM invocation failed: {e}")
-            response = None
-            # Add error message if LLM fails
-            error_message = AIMessage(content=f"Error during simulation execution: {str(e)}")
+            duration = time.time() - start_time if 'start_time' in locals() else 0
+            error_type = type(e).__name__
+            # Check if it's a timeout-related error
+            if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
+                self.logger.error(f"LLM invocation timed out after {duration:.2f}s: {e}")
+                error_message = AIMessage(content=f"Error during simulation execution: The LLM request timed out after approximately {duration:.0f} seconds. This may indicate network issues or the model is overloaded. Please try again.")
+            else:
+                self.logger.error(f"LLM invocation failed after {duration:.2f}s ({error_type}): {e}", exc_info=True)
+                error_message = AIMessage(content=f"Error during simulation execution: {str(e)}")
             response = error_message
 
         # Update messages: Add system prompt and LLM response (start message already added in prepare node)
@@ -649,11 +724,24 @@ Configuration is complete. The simulation parameters are ready for execution.
         return f"{next_module}_welcome"
 
     def _summarize_node(self, state: dict) -> dict:
-        """Summarize recent conversation and prune older messages before next module."""
+        """Summarize recent conversation and prune older messages before next module.
+        
+        This node includes robust timeout handling and fallback mechanisms:
+        - If summarization times out or fails, it uses the existing running_summary
+        - Message history is limited to prevent overwhelming the LLM
+        - Timeout errors are specifically caught and logged
+        """
         self.logger.info("Summarizing conversation before next module")
         messages = state.get('messages', [])
         context = state.get('context', {}) or {}
         running_summary = context.get('running_summary', "")
+
+        # Limit message history to prevent timeout (keep last 10 messages max)
+        # This reduces the payload size and prevents Blablador from hanging
+        max_messages_for_summary = 10
+        if len(messages) > max_messages_for_summary:
+            self.logger.warning(f"Message history is large ({len(messages)} messages), limiting to last {max_messages_for_summary} for summarization")
+            messages = messages[-max_messages_for_summary:]
 
         # Build summarization prompt
         if running_summary:
@@ -664,14 +752,44 @@ Configuration is complete. The simulation parameters are ready for execution.
         else:
             summary_prompt = "Create a concise summary of the conversation above."
 
-        # Invoke the LLM to produce an updated summary
+        # Invoke the LLM to produce an updated summary with timeout protection
+        new_summary = running_summary  # Default to existing summary if anything fails
         try:
             prompt_msg = HumanMessage(content=summary_prompt)
             summarizer = self.llm.bind(max_tokens=128)
-            response = summarizer.invoke(messages + [prompt_msg])
+            llm_messages = messages + [prompt_msg]
+            
+            # Enhanced logging for LLM invocation
+            timeout = getattr(self.llm, 'timeout', global_config.TIMEOUT_SECONDS)
+            msg_count = len(llm_messages)
+            self.logger.info(f"Invoking LLM for summarization: {msg_count} messages, timeout={timeout}s, provider={self.config.provider}, model={self.config.model}")
+            start_time = time.time()
+            
+            response = summarizer.invoke(llm_messages)
+            
+            duration = time.time() - start_time
+            self.logger.info(f"Summarization LLM invocation completed successfully in {duration:.2f}s")
             new_summary = response.content if hasattr(response, 'content') else str(response)
+            
+            # Validate the summary was generated
+            if not new_summary or len(new_summary.strip()) == 0:
+                self.logger.warning("Generated summary is empty, using existing running_summary")
+                new_summary = running_summary
+                
+        except TimeoutError as e:
+            duration = time.time() - start_time if 'start_time' in locals() else 0
+            self.logger.error(f"Summarization LLM invocation timed out after {duration:.2f}s (timeout={timeout}s): {e}")
+            self.logger.warning(f"Using existing running_summary as fallback (length: {len(running_summary) if running_summary else 0} chars)")
+            new_summary = running_summary  # fallback to previous summary
         except Exception as e:
-            self.logger.error(f"Summarization failed: {e}")
+            duration = time.time() - start_time if 'start_time' in locals() else 0
+            error_type = type(e).__name__
+            # Check if it's a timeout-related error
+            if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
+                self.logger.error(f"Summarization LLM invocation timed out after {duration:.2f}s: {e}")
+            else:
+                self.logger.error(f"Summarization LLM invocation failed after {duration:.2f}s ({error_type}): {e}", exc_info=True)
+            self.logger.warning(f"Using existing running_summary as fallback (length: {len(running_summary) if running_summary else 0} chars)")
             new_summary = running_summary  # fallback to previous summary
 
         # Prune old messages: keep last 4
@@ -723,7 +841,13 @@ Configuration is complete. The simulation parameters are ready for execution.
         return 'supervisor_post_simulation_response'
     
     def _post_simulation_response_node(self, state: dict) -> dict:
-        """Post-simulation response node - generates AI response after tool execution"""
+        """Post-simulation response node - generates AI response after tool execution
+        
+        This node includes timeout protection to prevent hanging with Blablador:
+        - Specifically catches timeout errors
+        - Provides fallback messages if timeout occurs
+        - Uses existing tool results to generate appropriate responses
+        """
         self.logger.info("Generating AI response after simulation execution")
         
         # Extract tool result from the last message (should be a ToolMessage)
@@ -762,19 +886,49 @@ Configuration is complete. The simulation parameters are ready for execution.
         response_prompt = get_post_simulation_response_prompt(tool_result)
         system_message = SystemMessage(content=response_prompt)
         
+        # Prepare LLM invocation with timeout protection
+        recent_messages = messages[-5:] if len(messages) > 5 else messages
+        llm_messages = [system_message] + recent_messages
+        timeout = getattr(self.response_llm, 'timeout', global_config.TIMEOUT_SECONDS)
+        response = None
+        
         try:
             # Invoke unbound LLM (without tools) to generate response
             # Include recent conversation context (last few messages)
-            recent_messages = messages[-5:] if len(messages) > 5 else messages
-            response = self.response_llm.invoke([system_message] + recent_messages)
-            self.logger.info("AI response generated successfully")
-        except Exception as e:
-            self.logger.error(f"Failed to generate AI response: {e}")
-            # Fallback message if LLM fails
+            msg_count = len(llm_messages)
+            self.logger.info(f"Invoking LLM for post-simulation response: {msg_count} messages, timeout={timeout}s, provider={self.config.provider}, model={self.config.model}")
+            start_time = time.time()
+            
+            response = self.response_llm.invoke(llm_messages)
+            
+            duration = time.time() - start_time
+            self.logger.info(f"Post-simulation response LLM invocation completed successfully in {duration:.2f}s")
+            
+        except TimeoutError as e:
+            duration = time.time() - start_time if 'start_time' in locals() else 0
+            self.logger.error(f"Post-simulation response LLM invocation timed out after {duration:.2f}s (timeout={timeout}s): {e}")
+            # Fallback message if LLM times out
             if simulation_finish:
-                response = AIMessage(content="The simulation has been executed successfully! All configuration steps are complete and the simulation ran without errors.")
+                response = AIMessage(content="The simulation has been executed successfully! All configuration steps are complete and the simulation ran without errors. (Note: LLM response generation timed out, but simulation completed successfully.)")
             else:
-                response = AIMessage(content="The simulation execution has completed. Please check the tool results above for details.")
+                response = AIMessage(content="The simulation execution has completed. Please check the tool results above for details. (Note: LLM response generation timed out.)")
+        except Exception as e:
+            duration = time.time() - start_time if 'start_time' in locals() else 0
+            error_type = type(e).__name__
+            # Check if it's a timeout-related error
+            if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
+                self.logger.error(f"Post-simulation response LLM invocation timed out after {duration:.2f}s: {e}")
+                if simulation_finish:
+                    response = AIMessage(content="The simulation has been executed successfully! All configuration steps are complete and the simulation ran without errors. (Note: LLM response generation timed out, but simulation completed successfully.)")
+                else:
+                    response = AIMessage(content="The simulation execution has completed. Please check the tool results above for details. (Note: LLM response generation timed out.)")
+            else:
+                self.logger.error(f"Post-simulation response LLM invocation failed after {duration:.2f}s ({error_type}): {e}", exc_info=True)
+                # Fallback message if LLM fails
+                if simulation_finish:
+                    response = AIMessage(content="The simulation has been executed successfully! All configuration steps are complete and the simulation ran without errors.")
+                else:
+                    response = AIMessage(content="The simulation execution has completed. Please check the tool results above for details.")
         
         # Add AI response to messages
         updated_messages = messages + [response]

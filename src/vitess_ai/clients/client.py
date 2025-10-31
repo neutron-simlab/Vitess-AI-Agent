@@ -89,6 +89,7 @@ class AgentClient:
         self,
         message: str,
         model: str | None = None,
+        provider: str | None = None,
         thread_id: str | None = None,
         user_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
@@ -99,6 +100,7 @@ class AgentClient:
         Args:
             message (str): The message to send to the agent
             model (str, optional): LLM model to use for the agent
+            provider (str, optional): LLM provider to use (openai or blablador)
             thread_id (str, optional): Thread ID for continuing a conversation
             user_id (str, optional): User ID for continuing a conversation across multiple threads
             agent_config (dict[str, Any], optional): Additional configuration to pass through to the agent
@@ -113,6 +115,8 @@ class AgentClient:
             request.thread_id = thread_id
         if model:
             request.model = model  # type: ignore[assignment]
+        if provider:
+            request.provider = provider  # type: ignore[assignment]
         if agent_config:
             request.agent_config = agent_config
         if user_id:
@@ -135,6 +139,7 @@ class AgentClient:
         self,
         message: str,
         model: str | None = None,
+        provider: str | None = None,
         thread_id: str | None = None,
         user_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
@@ -145,6 +150,7 @@ class AgentClient:
         Args:
             message (str): The message to send to the agent
             model (str, optional): LLM model to use for the agent
+            provider (str, optional): LLM provider to use (openai or blablador)
             thread_id (str, optional): Thread ID for continuing a conversation
             user_id (str, optional): User ID for continuing a conversation across multiple threads
             agent_config (dict[str, Any], optional): Additional configuration to pass through to the agent
@@ -159,6 +165,8 @@ class AgentClient:
             request.thread_id = thread_id
         if model:
             request.model = model  # type: ignore[assignment]
+        if provider:
+            request.provider = provider  # type: ignore[assignment]
         if agent_config:
             request.agent_config = agent_config
         if user_id:
@@ -269,6 +277,7 @@ class AgentClient:
         self,
         message: str,
         model: str | None = None,
+        provider: str | None = None,
         thread_id: str | None = None,
         user_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
@@ -284,6 +293,7 @@ class AgentClient:
         Args:
             message (str): The message to send to the agent
             model (str, optional): LLM model to use for the agent
+            provider (str, optional): LLM provider to use (openai or blablador)
             thread_id (str, optional): Thread ID for continuing a conversation
             user_id (str, optional): User ID for continuing a conversation across multiple threads
             agent_config (dict[str, Any], optional): Additional configuration to pass through to the agent
@@ -302,6 +312,8 @@ class AgentClient:
             request.user_id = user_id
         if model:
             request.model = model  # type: ignore[assignment]
+        if provider:
+            request.provider = provider  # type: ignore[assignment]
         if agent_config:
             request.agent_config = agent_config
         try:
@@ -326,6 +338,7 @@ class AgentClient:
         self,
         message: str,
         model: str | None = None,
+        provider: str | None = None,
         thread_id: str | None = None,
         user_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
@@ -341,6 +354,7 @@ class AgentClient:
         Args:
             message (str): The message to send to the agent
             model (str, optional): LLM model to use for the agent
+            provider (str, optional): LLM provider to use (openai or blablador)
             thread_id (str, optional): Thread ID for continuing a conversation
             user_id (str, optional): User ID for continuing a conversation across multiple threads
             agent_config (dict[str, Any], optional): Additional configuration to pass through to the agent
@@ -357,6 +371,8 @@ class AgentClient:
             request.thread_id = thread_id
         if model:
             request.model = model  # type: ignore[assignment]
+        if provider:
+            request.provider = provider  # type: ignore[assignment]
         if agent_config:
             request.agent_config = agent_config
         if user_id:
@@ -493,6 +509,7 @@ class AgentClient:
         message: str,
         thread_id: str,
         model: str | None = None,
+        provider: str | None = None,
         user_id: str | None = None,
         stream_tokens: bool = True,
     ) -> Generator[ChatMessage | str | ModuleInterruptResponse | dict, None, None]:
@@ -503,6 +520,7 @@ class AgentClient:
             message (str): The user's response to the module interrupt
             thread_id (str): Thread ID of the conversation (shared by supervisor and modules)
             model (str, optional): LLM model to use for the agent
+            provider (str, optional): LLM provider to use (openai or blablador)
             user_id (str, optional): User ID for continuing a conversation across multiple threads
             stream_tokens (bool, optional): Stream tokens as they are generated
 
@@ -513,12 +531,14 @@ class AgentClient:
             raise AgentClientError("No agent selected. Use update_agent() to select an agent.")
         
         request = ModuleInterruptInput(
+            interrupt_message=message,
             message=message,
-            thread_id=thread_id,
-            stream_tokens=stream_tokens
+            thread_id=thread_id
         )
         if model:
             request.model = model  # type: ignore[assignment]
+        if provider:
+            request.provider = provider  # type: ignore[assignment]
         if user_id:
             request.user_id = user_id
         
@@ -545,6 +565,7 @@ class AgentClient:
         message: str,
         thread_id: str,
         model: str | None = None,
+        provider: str | None = None,
         user_id: str | None = None,
         stream_tokens: bool = True,
     ) -> AsyncGenerator[ChatMessage | str | ModuleInterruptResponse | dict, None]:
@@ -555,6 +576,7 @@ class AgentClient:
             message (str): The user's response to the module interrupt
             thread_id (str): Thread ID of the conversation (shared by supervisor and modules)
             model (str, optional): LLM model to use for the agent
+            provider (str, optional): LLM provider to use (openai or blablador)
             user_id (str, optional): User ID for continuing a conversation across multiple threads
             stream_tokens (bool, optional): Stream tokens as they are generated
 
@@ -565,12 +587,14 @@ class AgentClient:
             raise AgentClientError("No agent selected. Use update_agent() to select an agent.")
         
         request = ModuleInterruptInput(
+            interrupt_message=message,
             message=message,
-            thread_id=thread_id,
-            stream_tokens=stream_tokens
+            thread_id=thread_id
         )
         if model:
             request.model = model  # type: ignore[assignment]
+        if provider:
+            request.provider = provider  # type: ignore[assignment]
         if user_id:
             request.user_id = user_id
         
@@ -592,3 +616,44 @@ class AgentClient:
                             yield parsed
             except httpx.HTTPError as e:
                 raise AgentClientError(f"Error: {e}")
+    
+    def restart(
+        self,
+        model: str | None = None,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Restart the agent with new provider/model configuration.
+        
+        This method forces reinitialization of the agent graph with new LLM configuration,
+        similar to refreshing the web page but keeping the new provider/model.
+        
+        Args:
+            model (str, optional): New LLM model name to use
+            provider (str, optional): New LLM provider to use (openai or blablador)
+        
+        Returns:
+            dict: Dictionary with restart status and agent info
+        """
+        if not self.agent:
+            raise AgentClientError("No agent selected. Use update_agent() to select an agent.")
+        
+        # Build query parameters
+        params: dict[str, str] = {}
+        if model:
+            params["model"] = model
+        if provider:
+            params["provider"] = provider
+        
+        try:
+            response = httpx.post(
+                f"{self.base_url}/{self.agent}/restart",
+                params=params,
+                headers=self._headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise AgentClientError(f"Error restarting agent: {e}")
+        
+        return response.json()

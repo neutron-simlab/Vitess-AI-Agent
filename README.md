@@ -1,5 +1,9 @@
 # VITESS AI Agent
 
+<div align="center">
+  <img src="app/assets/logo.png" alt="VITESS AI Agent Logo" width="200"/>
+</div>
+
 **VITESS AI Agent** is part of **Jülich Neutron AI Agents (JüNA)**, an agentic AI system designed to assist researchers in accessing and utilizing JCNS's extensive knowledge base in neutron science. This specific agent focuses on [VITESS](https://vitess.fz-juelich.de), an open-source software package for simulating neutron scattering experiments.
 
 ## Key Features

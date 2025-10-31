@@ -22,12 +22,13 @@ class OpenAIModelName(StrEnum):
 
 
 class BlabladorModelName(StrEnum):
-    """Blablador model names (OpenAI-compatible API)"""
+    """Blablador model names (OpenAI-compatible API)
+    Only models that support function calling and structured output are included.
+    """
     
-    ALIAS_FAST = "alias-fast"
-    ALIAS_FAST_EXPERIMENTAL = "alias-fast-experimental"
-    ALIAS_PRO = "alias-pro"
-    ALIAS_PRO_EXPERIMENTAL = "alias-pro-experimental"
+    # Models with function calling and structured output support
+    ALIAS_FUNCTION_CALL = "alias-function-call"
+    ALIAS_CODE = "alias-code"
 
 
 # Type alias for all supported models
@@ -50,7 +51,7 @@ def get_default_model_for_provider(provider: Provider) -> str:
     """Get the default model for a specific provider"""
     defaults = {
         Provider.OPENAI: OpenAIModelName.GPT_4O_MINI.value,
-        Provider.BLABLADOR: BlabladorModelName.ALIAS_FAST.value,
+        Provider.BLABLADOR: BlabladorModelName.ALIAS_FUNCTION_CALL.value,
     }
     return defaults.get(provider, "")
 
