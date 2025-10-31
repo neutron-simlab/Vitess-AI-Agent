@@ -3,12 +3,43 @@ supervisor_mcp_tools.py - MCP Tools for Supervisor Agent CLI Generation
 FastMCP tools for converting collected module parameters to CLI commands
 """
 from fastmcp import FastMCP
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from vitess_ai.core.config import global_config
 import logging
+import json
 
 mcp = FastMCP("Supervisor CLI Generation Server")
 logger = logging.getLogger(__name__)
+
+def coerce_json_to_dict(value: Any) -> Optional[dict]:
+    """Coerce value to dict, parsing JSON strings if needed."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return None
+
+def coerce_json_to_list(value: Any) -> Optional[List[str]]:
+    """Coerce value to list, parsing JSON strings if needed."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return None
 
 # Module to executable mapping (configurable)
 MODULE_EXECUTABLES = {
@@ -109,16 +140,18 @@ def generate_cli_command(
    
 @mcp.tool()
 async def run_simulation(
-    module_results: Optional[dict] = None,
-    execution_order: Optional[List[str]] = None,
+    module_results: Optional[Any] = None,
+    execution_order: Optional[Any] = None,
     execute: bool = False
 ) -> Dict[str, Any]:
     """
     Generate and optionally execute simulation using CLI parameters from agent state.
     
     Args:
-        cli_parameters: Dictionary with module names as keys and their CLI params as values
+        module_results: Dictionary with module names as keys and their ModuleResult objects as values
+            (can be passed as dict or JSON string)
         execution_order: List of module names in execution order
+            (can be passed as list or JSON string)
         execute: Whether to actually run the command
         
     Returns:
@@ -140,7 +173,15 @@ async def run_simulation(
         return str(data)
     
     try:
-        cli_result = generate_cli_command(module_results or {}, execution_order or [])
+        # Parse inputs if they're JSON strings (common when LLM passes complex data)
+        # Use coercion functions that handle both dict/list and JSON strings
+        parsed_module_results = coerce_json_to_dict(module_results) or {}
+        parsed_execution_order = coerce_json_to_list(execution_order) or []
+        
+        logger.info(f"Parsed module_results: {len(parsed_module_results)} modules")
+        logger.info(f"Parsed execution_order: {parsed_execution_order}")
+        
+        cli_result = generate_cli_command(parsed_module_results, parsed_execution_order)
         if not cli_result.get('success', False):
             return cli_result  # Return error immediately
             
@@ -204,7 +245,6 @@ rm ${{L}}*
                 result.update({
                     "executed": True,
                     "exit_code": process.returncode,
-                    # "stdout": safe_decode(process.stdout),
                     "stderr": safe_decode(process.stderr),
                     "success": process.returncode == 0,
                     "script_path": script_path

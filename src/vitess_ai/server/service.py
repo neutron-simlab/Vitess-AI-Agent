@@ -4,15 +4,14 @@ import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
-from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, HTTPException, status
+from fastapi import APIRouter, FastAPI, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import AIMessage
 from langgraph.graph.state import CompiledStateGraph
 
-from vitess_ai.server_agents.server_supervisor import create_default_server_supervisor
+from vitess_ai.server_agents.server_supervisor import create_default_server_supervisor, ServerSupervisorAgent
 from vitess_ai.schema.server import (
     AgentInfo,
     ChatMessage,
@@ -20,6 +19,8 @@ from vitess_ai.schema.server import (
     UserInput,
     HealthStatus
 )
+from vitess_ai.core.config import global_config
+from vitess_ai.schema.llm_models import Provider, get_default_model_for_provider
 from vitess_ai.server.utils import langchain_to_chat_message
 from vitess_ai.server.errors import (
     AgentNotFoundError,
@@ -61,8 +62,10 @@ _setup_service_logging()
 logger.info("Service logging initialized")
 
 # Simple in-memory agent registry
+# Key format: (agent_id, provider, model) -> tuple(ServerSupervisorAgent, CompiledStateGraph)
+# Storing both supervisor instance and app allows us to restart the graph with new config
 DEFAULT_AGENT = "supervisor"
-_agent_registry: dict[str, CompiledStateGraph] = {}
+_agent_registry: dict[tuple[str, str, str], tuple[ServerSupervisorAgent, CompiledStateGraph]] = {}
 
 
 def get_all_agent_info() -> list[AgentInfo]:
@@ -81,33 +84,132 @@ def get_all_agent_info() -> list[AgentInfo]:
         )
     ]
 
-async def get_agent(agent_id: str) -> CompiledStateGraph:
-    """Get an agent by ID, creating it if it doesn't exist."""
-    logger.info(f"Getting agent: {agent_id}")
-    if agent_id not in _agent_registry:
+async def get_agent(
+    agent_id: str, 
+    provider: str | None = None, 
+    model: str | None = None
+) -> CompiledStateGraph:
+    """
+    Get an agent by ID, creating it if it doesn't exist.
+    
+    Args:
+        agent_id: Agent identifier (e.g., "supervisor")
+        provider: LLM provider (openai or blablador). Defaults to global_config.DEFAULT_PROVIDER
+        model: LLM model name. Defaults to provider's default model
+    
+    Returns:
+        CompiledStateGraph for the agent
+    """
+    # Determine provider (default to config default)
+    if provider is None:
+        provider = global_config.DEFAULT_PROVIDER
+    
+    # Determine model (default to provider's default)
+    if model is None:
+        try:
+            provider_enum = Provider(provider)
+            model = get_default_model_for_provider(provider_enum)
+        except ValueError:
+            # Invalid provider, fall back to config default
+            provider = global_config.DEFAULT_PROVIDER
+            model = global_config.DEFAULT_MODEL
+    
+    # Create composite key for registry
+    # Note: Different provider/model combinations create separate agents
+    # This allows the graph to regenerate with the new LLM automatically
+    registry_key = (agent_id, provider, model)
+    
+    logger.info(f"Getting agent: {agent_id} with provider={provider}, model={model}")
+    
+    if registry_key not in _agent_registry:
         if agent_id == "supervisor":
             try:
-                logger.info("Creating new server supervisor agent")
-                # Create server supervisor agent asynchronously
-                supervisor = await create_default_server_supervisor()
-                _agent_registry[agent_id] = supervisor.app
+                logger.info(f"Creating new server supervisor agent with provider={provider}, model={model}")
+                # Create server supervisor agent asynchronously with specified provider/model
+                supervisor = await create_default_server_supervisor(
+                    provider=provider,
+                    model=model
+                )
+                _agent_registry[registry_key] = (supervisor, supervisor.app)
                 logger.info("Server supervisor agent created and registered")
             except Exception as e:
                 logger.error(f"Failed to create supervisor agent: {e}")
                 raise AgentNotFoundError(
                     agent_id,
-                    details={"error": str(e), "agent_type": "supervisor"}
+                    details={"error": str(e), "agent_type": "supervisor", "provider": provider, "model": model}
                 )
         else:
             logger.error(f"Unknown agent requested: {agent_id}")
             raise AgentNotFoundError(
                 agent_id,
-                details={"available_agents": list(_agent_registry.keys())}
+                details={"available_agents": ["supervisor"]}
             )
     else:
-        logger.info(f"Using existing agent: {agent_id}")
+        logger.info(f"Using existing agent: {agent_id} with provider={provider}, model={model}")
     
-    return _agent_registry[agent_id]
+    # Return the CompiledStateGraph (app) from the registry
+    return _agent_registry[registry_key][1]
+
+
+async def restart_agent(
+    agent_id: str,
+    provider: str | None = None,
+    model: str | None = None
+) -> CompiledStateGraph:
+    """
+    Restart an agent with new provider/model configuration.
+    
+    This function forces reinitialization of the agent graph with new LLM configuration,
+    similar to refreshing the web page but keeping the new provider/model.
+    
+    Args:
+        agent_id: Agent identifier (e.g., "supervisor")
+        provider: New LLM provider (optional, uses current if not provided)
+        model: New LLM model name (optional, uses current if not provided)
+    
+    Returns:
+        CompiledStateGraph for the restarted agent
+    """
+    # Determine provider (default to config default)
+    if provider is None:
+        provider = global_config.DEFAULT_PROVIDER
+    
+    # Determine model (default to provider's default)
+    if model is None:
+        try:
+            provider_enum = Provider(provider)
+            model = get_default_model_for_provider(provider_enum)
+        except ValueError:
+            # Invalid provider, fall back to config default
+            provider = global_config.DEFAULT_PROVIDER
+            model = global_config.DEFAULT_MODEL
+    
+    registry_key = (agent_id, provider, model)
+    
+    logger.info(f"Restarting agent: {agent_id} with provider={provider}, model={model}")
+    
+    if agent_id == "supervisor":
+        # If agent exists, restart it with new config
+        if registry_key in _agent_registry:
+            supervisor, _ = _agent_registry[registry_key]
+            logger.info(f"Restarting existing supervisor with new config: provider={provider}, model={model}")
+            # Clear state to start fresh (clear_state=True by default)
+            await supervisor.restart_with_new_config(provider=provider, model=model, clear_state=True)
+            # Update the registry with the new app
+            _agent_registry[registry_key] = (supervisor, supervisor.app)
+            logger.info("Supervisor restarted successfully with cleared state")
+        else:
+            # Agent doesn't exist, create it
+            logger.info(f"Agent not found, creating new supervisor with provider={provider}, model={model}")
+            return await get_agent(agent_id, provider=provider, model=model)
+        
+        return _agent_registry[registry_key][1]
+    else:
+        logger.error(f"Unknown agent requested: {agent_id}")
+        raise AgentNotFoundError(
+            agent_id,
+            details={"available_agents": ["supervisor"]}
+        )
 
 
 @asynccontextmanager
@@ -134,14 +236,20 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
     Use thread_id to persist and continue a multi-turn conversation. run_id kwarg
     is also attached to messages for recording feedback.
     Use user_id to persist and continue a conversation across multiple threads.
+    Provider and model can be specified in the request to use different LLMs.
     """
     # NOTE: Currently this only returns the last message or interrupt.
     # In the case of an agent outputting multiple AIMessages (such as the background step
     # in interrupt-agent, or a tool step in research-assistant), it's omitted. Arguably,
     # you'd want to include it. You could update the API to return a list of ChatMessages
     # in that case.
+    
+    # Extract provider and model from request
+    provider = user_input.provider.value if user_input.provider else None
+    model = user_input.model
+    
     try:
-        agent: CompiledStateGraph = await get_agent(agent_id)
+        agent: CompiledStateGraph = await get_agent(agent_id, provider=provider, model=model)
     except AgentNotFoundError as e:
         logger.error(f"Agent not found: {e}")
         raise HTTPException(status_code=404, detail=e.message)
@@ -201,8 +309,12 @@ async def message_generator(
 
     This is the workhorse method for the /stream endpoint.
     """
+    # Extract provider and model from request
+    provider = user_input.provider.value if user_input.provider else None
+    model = user_input.model
+    
     try:
-        agent: CompiledStateGraph = await get_agent(agent_id)
+        agent: CompiledStateGraph = await get_agent(agent_id, provider=provider, model=model)
     except AgentNotFoundError as e:
         logger.error(f"Agent not found: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': f'Agent not found: {e.message}'})}\n\n"
@@ -286,6 +398,56 @@ async def stream(user_input: StreamInput, agent_id: str = DEFAULT_AGENT) -> Stre
         message_generator(user_input, agent_id),
         media_type="text/event-stream",
     )
+
+@router.post("/{agent_id}/restart")
+@router.post("/restart")
+async def restart(
+    agent_id: str = DEFAULT_AGENT,
+    provider: str | None = Query(None, description="New LLM provider (openai or blablador)"),
+    model: str | None = Query(None, description="New LLM model name"),
+) -> dict[str, Any]:
+    """
+    Restart an agent with new provider/model configuration.
+    
+    This endpoint forces reinitialization of the agent graph with new LLM configuration,
+    similar to refreshing the web page but keeping the new provider/model.
+    
+    Args:
+        agent_id: Agent identifier (e.g., "supervisor")
+        provider: New LLM provider (optional, uses current if not provided)
+        model: New LLM model name (optional, uses current if not provided)
+    
+    Returns:
+        Dictionary with restart status and agent info
+    """
+    try:
+        agent = await restart_agent(agent_id, provider=provider, model=model)
+        
+        # Determine the actual provider/model used
+        actual_provider = provider or global_config.DEFAULT_PROVIDER
+        if model is None:
+            try:
+                provider_enum = Provider(actual_provider)
+                actual_model = get_default_model_for_provider(provider_enum)
+            except ValueError:
+                actual_model = global_config.DEFAULT_MODEL
+        else:
+            actual_model = model
+        
+        return {
+            "status": "success",
+            "message": f"Agent {agent_id} restarted successfully",
+            "provider": actual_provider,
+            "model": actual_model,
+            "agent_id": agent_id
+        }
+    except AgentNotFoundError as e:
+        logger.error(f"Agent not found for restart: {e}")
+        raise HTTPException(status_code=404, detail=e.message)
+    except Exception as e:
+        logger.error(f"Failed to restart agent: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to restart agent: {str(e)}")
+
 
 @app.get("/health")
 async def health_check() -> HealthStatus:

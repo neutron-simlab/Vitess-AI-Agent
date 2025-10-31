@@ -55,14 +55,20 @@ class LLMFactory:
     
     @staticmethod
     def _create_blablador(model: str, temperature: float, **kwargs) -> ChatOpenAI:
-        """Create Blablador LLM (uses ChatOpenAI with custom base_url)"""
+        """Create Blablador LLM (uses ChatOpenAI with custom base_url)
+        
+        Note: timeout is properly configured here to prevent hanging.
+        The timeout value (default 60s from global_config.TIMEOUT_SECONDS) 
+        is passed to ChatOpenAI which will raise a timeout error if exceeded.
+        """
+        timeout = kwargs.get('timeout', global_config.TIMEOUT_SECONDS)
         return ChatOpenAI(
             api_key=global_config.BLABLADOR_API_KEY,
             base_url=global_config.BLABLADOR_BASE_URL,
             model=model,
             temperature=temperature,
             max_tokens=kwargs.get('max_tokens', global_config.MAX_TOKENS),
-            timeout=kwargs.get('timeout', global_config.TIMEOUT_SECONDS),
+            timeout=timeout,  # Timeout in seconds - prevents hanging on Blablador
             max_retries=kwargs.get('max_retries', global_config.MAX_RETRIES)
         )
 
@@ -274,35 +280,4 @@ def test_blablador_connection() -> bool:
         return False
 
 
-# =================
-# EXAMPLE USAGE
-# =================
-
-if __name__ == "__main__":
-    """Example usage of LLM providers"""
-    
-    # Test creating different LLMs
-    try:
-        print("\n🧪 Testing LLM creation...")
-        
-        # Test OpenAI if available
-        if validate_provider_config('openai'):
-            openai_llm = create_supervisor_llm(provider='openai')
-            print(f"✅ OpenAI supervisor LLM created")
-        
-        # Test Blablador if available  
-        if validate_provider_config('blablador'):
-            blablador_llm = create_module_agent_llm(provider='blablador', model='alias-fast-experimental')
-            print(f"✅ Blablador module LLM created")
-        
-        # Test fallback
-        fallback_llm = create_llm_with_fallback()
-        print(f"✅ Fallback LLM created")
-        
-    except Exception as e:
-        print(f"❌ Testing failed: {e}")
-    
-    # Test all providers
-    print("\n🔍 Testing Blablador connection...")
-    test_results = test_blablador_connection()
     

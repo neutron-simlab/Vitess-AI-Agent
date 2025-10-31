@@ -10,28 +10,19 @@ import httpx
 from uuid import uuid4
 from typing import Optional
 import sys
-import html
 import json
 from pathlib import Path
-import base64
 
 # Paths and assets
 _assets_dir = Path(__file__).parent / "assets"
 _logo_path = _assets_dir / "logo.png"
-_logo_data_uri = None
-if _logo_path.exists():
-    try:
-        _logo_data_uri = (
-            "data:image/png;base64," + base64.b64encode(_logo_path.read_bytes()).decode("utf-8")
-        )
-    except Exception:
-        _logo_data_uri = None
 
 # Add parent directory to path to import vitess_ai modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from vitess_ai.clients.client import AgentClient, AgentClientError
 from vitess_ai.schema.server import ChatMessage, ModuleInterruptResponse
+from vitess_ai.schema.llm_models import Provider, OpenAIModelName, BlabladorModelName
 
 
 # Module color mapping for visual differentiation
@@ -170,9 +161,6 @@ if "server_url" not in st.session_state:
 if "client" not in st.session_state:
     st.session_state.client = None
 
-if "streaming" not in st.session_state:
-    st.session_state.streaming = False
-
 if "current_interrupt" not in st.session_state:
     st.session_state.current_interrupt = None
 
@@ -181,6 +169,21 @@ if "server_connected" not in st.session_state:
 
 if "show_system_messages" not in st.session_state:
     st.session_state.show_system_messages = False
+
+if "selected_provider" not in st.session_state:
+    st.session_state.selected_provider = Provider.OPENAI.value
+
+if "selected_model" not in st.session_state:
+    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+
+if "provider_change_pending" not in st.session_state:
+    st.session_state.provider_change_pending = False
+
+if "pending_provider" not in st.session_state:
+    st.session_state.pending_provider = None
+
+if "pending_model" not in st.session_state:
+    st.session_state.pending_model = None
 
 
 def check_server_health(server_url: str) -> bool:
@@ -302,8 +305,6 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
             st.text(message.content)
 
 
-# Alias for backward compatibility
-display_message = render_message
 
 
 def _render_streaming_token(
@@ -457,6 +458,157 @@ with st.sidebar:
 
     st.divider()
 
+    # LLM Provider and Model Selection
+    st.subheader("LLM Configuration")
+    
+    # Show confirmation dialog if provider change is pending
+    if st.session_state.provider_change_pending and st.session_state.pending_provider:
+        st.warning(
+            f"⚠️ **Provider Change Pending**\n\n"
+            f"You selected **{st.session_state.pending_provider}** as the provider.\n\n"
+            f"This will regenerate the agent graph with the new LLM. "
+            f"Your current conversation will continue with the new model.\n\n"
+            f"**Model**: {st.session_state.pending_model or ('alias-function-call' if st.session_state.pending_provider == Provider.BLABLADOR.value else 'gpt-4o-mini')}"
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Confirm", use_container_width=True, type="primary"):
+                # Apply the provider change
+                st.session_state.selected_provider = st.session_state.pending_provider
+                if st.session_state.pending_model:
+                    st.session_state.selected_model = st.session_state.pending_model
+                elif st.session_state.pending_provider == Provider.BLABLADOR.value:
+                    st.session_state.selected_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+                else:
+                    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+                
+                # Clear pending state
+                st.session_state.provider_change_pending = False
+                st.session_state.pending_provider = None
+                st.session_state.pending_model = None
+                
+                # Restart the graph with new provider/model if server is connected
+                if st.session_state.server_connected and st.session_state.client:
+                    try:
+                        st.session_state.client.restart(
+                            provider=st.session_state.selected_provider,
+                            model=st.session_state.selected_model
+                        )
+                        # Clear conversation state for fresh start
+                        st.session_state.thread_id = str(uuid4())
+                        st.session_state.user_id = str(uuid4())
+                        st.session_state.messages = []
+                        st.session_state.current_interrupt = None
+                        st.session_state.welcome_initialized = False
+                        st.success(f"✅ Switched to **{st.session_state.selected_provider}** with model **{st.session_state.selected_model}**. Graph restarted and conversation cleared for fresh start!")
+                    except Exception as e:
+                        st.warning(f"⚠️ Provider/model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
+                else:
+                    st.success(f"✅ Switched to **{st.session_state.selected_provider}** with model **{st.session_state.selected_model}**. Graph will regenerate on next request.")
+                st.rerun()
+        
+        with col2:
+            if st.button("❌ Cancel", use_container_width=True):
+                # Cancel the change
+                st.session_state.provider_change_pending = False
+                st.session_state.pending_provider = None
+                st.session_state.pending_model = None
+                st.rerun()
+        
+        st.divider()
+        # Show current provider (not pending one) while confirmation is pending
+        st.info(f"**Current Provider**: {st.session_state.selected_provider}")
+    else:
+        # Provider selector (only show when not pending confirmation)
+        provider_options = [Provider.OPENAI.value, Provider.BLABLADOR.value]
+        selected_provider = st.radio(
+            "Provider",
+            options=provider_options,
+            index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 0,  # Default to OpenAI (index 0)
+            help="Select the LLM provider to use"
+        )
+        
+        # Handle provider change - require confirmation for Blablador
+        if selected_provider != st.session_state.selected_provider:
+            if selected_provider == Provider.BLABLADOR.value:
+                # For Blablador, require confirmation
+                st.session_state.provider_change_pending = True
+                st.session_state.pending_provider = selected_provider
+                st.session_state.pending_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+                st.rerun()
+            else:
+                # For OpenAI, apply immediately
+                st.session_state.selected_provider = selected_provider
+                st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+                
+                # Restart the graph with new provider/model if server is connected
+                if st.session_state.server_connected and st.session_state.client:
+                    try:
+                        st.session_state.client.restart(
+                            provider=st.session_state.selected_provider,
+                            model=st.session_state.selected_model
+                        )
+                        # Clear conversation state for fresh start
+                        st.session_state.thread_id = str(uuid4())
+                        st.session_state.user_id = str(uuid4())
+                        st.session_state.messages = []
+                        st.session_state.current_interrupt = None
+                        st.session_state.welcome_initialized = False
+                        st.info("✅ Switched to OpenAI. Graph restarted and conversation cleared for fresh start!")
+                    except Exception as e:
+                        st.warning(f"⚠️ Provider/model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
+                else:
+                    st.info("✅ Switched to OpenAI. Graph will regenerate on next request.")
+        
+        # Model selector based on provider
+        if st.session_state.selected_provider == Provider.OPENAI.value:
+            model_options = [model.value for model in OpenAIModelName]
+            # Ensure selected model is valid for current provider
+            if st.session_state.selected_model not in model_options:
+                st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+            selected_model = st.selectbox(
+                "Model",
+                options=model_options,
+                index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                help="Select the OpenAI model to use"
+            )
+        else:  # Blablador
+            model_options = [model.value for model in BlabladorModelName]
+            # Ensure selected model is valid for current provider, or auto-select alias-function-call
+            if st.session_state.selected_model not in model_options:
+                st.session_state.selected_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+            selected_model = st.selectbox(
+                "Model",
+                options=model_options,
+                index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                help="Select the Blablador model to use (defaults to alias-function-call)"
+            )
+        
+        # Update model if changed
+        if selected_model != st.session_state.selected_model:
+            st.session_state.selected_model = selected_model
+            
+            # Restart the graph with new model if server is connected
+            if st.session_state.server_connected and st.session_state.client:
+                try:
+                    st.session_state.client.restart(
+                        provider=st.session_state.selected_provider,
+                        model=st.session_state.selected_model
+                    )
+                    # Clear conversation state for fresh start
+                    st.session_state.thread_id = str(uuid4())
+                    st.session_state.user_id = str(uuid4())
+                    st.session_state.messages = []
+                    st.session_state.current_interrupt = None
+                    st.session_state.welcome_initialized = False
+                    st.info(f"✅ Model changed to **{selected_model}**. Graph restarted and conversation cleared for fresh start!")
+                except Exception as e:
+                    st.warning(f"⚠️ Model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
+            else:
+                st.info(f"ℹ️ Model changed to **{selected_model}**. Graph will regenerate with the new model on next request.")
+        
+        st.divider()
+
     # Thread Management
     st.subheader("Thread Management")
     st.text(f"Thread ID: {st.session_state.thread_id[:8]}...")
@@ -530,6 +682,8 @@ if (
                 message="Start",
                 thread_id=st.session_state.thread_id,
                 user_id=st.session_state.user_id,
+                provider=st.session_state.selected_provider,
+                model=st.session_state.selected_model,
                 stream_tokens=True,
             ):
                 if isinstance(chunk, ModuleInterruptResponse):
@@ -579,7 +733,7 @@ if (
 
 # Display chat history (filter out system messages unless debug mode is enabled)
 for message in st.session_state.messages:
-    display_message(message, show_system=st.session_state.show_system_messages)
+    render_message(message, show_system=st.session_state.show_system_messages)
 
 # Handle module interrupt
 if st.session_state.current_interrupt:
@@ -608,6 +762,8 @@ if st.session_state.current_interrupt:
                             message=interrupt_input,
                             thread_id=st.session_state.thread_id,
                             user_id=st.session_state.user_id,
+                            provider=st.session_state.selected_provider,
+                            model=st.session_state.selected_model,
                             stream_tokens=True
                         ):
                             if isinstance(chunk, ModuleInterruptResponse):
@@ -661,7 +817,7 @@ if not st.session_state.current_interrupt:
             # Add user message
             user_message = ChatMessage(type="human", content=prompt)
             st.session_state.messages.append(user_message)
-            display_message(user_message)
+            render_message(user_message)
 
             # Stream response
             with st.chat_message("assistant"):
@@ -675,6 +831,8 @@ if not st.session_state.current_interrupt:
                         message=prompt,
                         thread_id=st.session_state.thread_id,
                         user_id=st.session_state.user_id,
+                        provider=st.session_state.selected_provider,
+                        model=st.session_state.selected_model,
                         stream_tokens=True
                     ):
                         if isinstance(chunk, ModuleInterruptResponse):

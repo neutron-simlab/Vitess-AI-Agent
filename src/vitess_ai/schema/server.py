@@ -78,6 +78,16 @@ class UserInput(BaseModel):
         default=None,
         examples=["user_123"],
     )
+    provider: Optional[Provider] = Field(
+        description="LLM provider to use (openai or blablador).",
+        default=None,
+        examples=["openai", "blablador"],
+    )
+    model: Optional[str] = Field(
+        description="LLM model name to use (provider-specific).",
+        default=None,
+        examples=["gpt-4o-mini", "alias-function-call"],
+    )
 
 
 class StreamInput(UserInput):
@@ -154,39 +164,6 @@ class ChatMessage(BaseModel):
 
 
 # =================
-# STREAMING MODELS
-# =================
-
-class StreamMessage(BaseModel):
-    """A message in the streaming response."""
-    
-    type: str = Field(
-        description="Type of the stream message.",
-        examples=["token_supervisor", "token_module_readin", "interrupt", "module_interrupt", "error", "done"],
-    )
-    content: str = Field(
-        description="Content of the message.",
-        examples=["Hello", "Processing...", "Please provide input"],
-    )
-    metadata: Optional[Dict[str, Any]] = Field(
-        description="Additional metadata for the message.",
-        default=None,
-    )
-
-
-class StreamResponse(BaseModel):
-    """Response format for streaming endpoints."""
-    
-    message: StreamMessage = Field(
-        description="The stream message.",
-    )
-    timestamp: datetime = Field(
-        description="Timestamp when the message was generated.",
-        default_factory=datetime.now,
-    )
-
-
-# =================
 # INTERRUPT MODELS
 # =================
 
@@ -197,6 +174,10 @@ class ModuleInterruptInput(BaseModel):
         description="User's response to the module interrupt.",
         examples=["I want to use default settings", "Configure custom parameters"],
     )
+    message: str = Field(
+        description="User's response to the module interrupt (alias for interrupt_message).",
+        default="",
+    )
     thread_id: str = Field(
         description="Thread ID of the conversation (shared by supervisor and modules).",
         examples=["847c6285-8fc9-4560-a83f-4e6285809254"],
@@ -205,6 +186,16 @@ class ModuleInterruptInput(BaseModel):
         description="User ID to persist and continue a conversation across multiple threads.",
         default=None,
         examples=["user_123"],
+    )
+    provider: Optional[Provider] = Field(
+        description="LLM provider to use (openai or blablador).",
+        default=None,
+        examples=["openai", "blablador"],
+    )
+    model: Optional[str] = Field(
+        description="LLM model name to use (provider-specific).",
+        default=None,
+        examples=["gpt-4o-mini", "alias-function-call"],
     )
 
 
@@ -362,16 +353,6 @@ class Feedback(BaseModel):
         description="Additional feedback kwargs, passed to LangSmith.",
         default={},
         examples=[{"comment": "In-line human feedback"}],
-    )
-
-
-class FeedbackResponse(BaseModel):
-    """Response for feedback submission."""
-    
-    status: Literal["success"] = "success"
-    message: str = Field(
-        description="Response message.",
-        default="Feedback recorded successfully",
     )
 
 
