@@ -6,18 +6,19 @@ architecture for server mode, enabling unified state management and
 centralized interrupt handling.
 """
 
-from typing import Type, List
+from typing import Type
 from pydantic import BaseModel, Field
 from vitess_ai.server_agents.base_module_agent_server import BaseModuleAgentServer
 from vitess_ai.prompts.writeout_module import WRITEOUT_AGENT_WELCOME, WRITEOUT_AGENT_PROMPT
+from vitess_ai.schema.writeout_module import InitialResponseWriteout
 
 
 class WriteoutInitialResponse(BaseModel):
-    """Schema for parsing initial user response in writeout module"""
-    response: str = Field(description="User's configuration choice: 'Default Setup', 'Customize', or 'Custom'")
+    """Deprecated: Use InitialResponseWriteout from vitess_ai.schema.writeout_module instead."""
+    response: str = Field(description="Deprecated. Use InitialResponseWriteout.response")
 
 
-class WriteoutModuleAgentServer(BaseModuleAgentServer[WriteoutInitialResponse]):
+class WriteoutModuleAgentServer(BaseModuleAgentServer[InitialResponseWriteout]):
     """
     Server-optimized writeout module agent.
     
@@ -45,9 +46,9 @@ class WriteoutModuleAgentServer(BaseModuleAgentServer[WriteoutInitialResponse]):
         """System prompt for the writeout module"""
         return WRITEOUT_AGENT_PROMPT
     
-    def get_initial_response_schema(self) -> Type[WriteoutInitialResponse]:
+    def get_initial_response_schema(self) -> Type[InitialResponseWriteout]:
         """Return the schema for initial response parsing"""
-        return WriteoutInitialResponse
+        return InitialResponseWriteout
     
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
@@ -87,14 +88,32 @@ class WriteoutModuleAgentServer(BaseModuleAgentServer[WriteoutInitialResponse]):
         Let's start with the data output format configuration.
         """
     
-    def get_completion_message(self) -> str:
+    def get_completion_message(self, state: dict = None) -> str:
         """Message shown on successful completion"""
-        return """
-        ✅ Writeout Parameters configuration completed successfully!
+        # Get next module using base class helper
+        next_module_name = self._get_next_module_name(state)
         
-        Your output settings have been configured and validated. 
-        The system has generated the appropriate CLI parameters for the 
-        writeout module that will be used in the simulation execution.
+        # Map module names to display names
+        module_display_map = {
+            'readin': 'Read-in Parameters',
+            'guide': 'Guide Parameters',
+            'writeout': 'Writeout Parameters'
+        }
         
-        All modules have been configured. The simulation will now be executed.
-        """
+        if next_module_name:
+            next_module_display = module_display_map.get(
+                next_module_name, 
+                next_module_name.replace('_', ' ').title()
+            )
+            next_message = f"Next, we'll proceed to the {next_module_display.lower()} configuration."
+        else:
+            next_message = "All modules have been configured. The simulation will now be executed."
+        
+        message = f"""✅ Writeout Parameters configuration completed successfully!
+
+Your output settings have been configured and validated. 
+The system has generated the appropriate CLI parameters for the 
+writeout module that will be used in the simulation execution.
+
+{next_message}"""
+        return message

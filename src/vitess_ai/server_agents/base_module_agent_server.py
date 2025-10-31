@@ -7,14 +7,13 @@ this class is designed to work as individual nodes within a larger supervisor gr
 """
 
 import logging
-from typing import List, Type, TypeVar, Generic
+from typing import List, Type, TypeVar, Generic, Optional
 from abc import ABC, abstractmethod
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain.tools import BaseTool
 from langgraph.types import interrupt
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from vitess_ai.schema.base import FillingStage
-from vitess_ai.server_agents.unified_state import UnifiedState
 
 # Type variables for generic parameter types
 R = TypeVar('R')  # For initial response types
@@ -145,8 +144,73 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         and you can choose which ones to modify from the defaults.
         """
     
-    def get_completion_message(self) -> str:
-        """Message shown on successful completion - override if needed"""
+    def _get_next_module_name(self, state: dict = None) -> Optional[str]:
+        """
+        Helper method to determine the next module name from state.
+        
+        Args:
+            state: State dictionary or UnifiedState object
+            
+        Returns:
+            Next module name or None if no next module (should proceed to simulation)
+        """
+        if not state:
+            return None
+        
+        try:
+            from vitess_ai.agents.base_module_agent import ModuleStatus
+            
+            # Check if state has get_next_module method (UnifiedState has this)
+            # Note: Can't use isinstance() because UnifiedState extends TypedDict
+            if hasattr(state, 'get_next_module') and callable(getattr(state, 'get_next_module')):
+                next_module = state.get_next_module()
+                
+                # If it returns current module, get next one in order
+                if next_module == self.module_name:
+                    execution_order = state.execution_order if hasattr(state, 'execution_order') else []
+                    try:
+                        current_index = execution_order.index(self.module_name)
+                        if current_index < len(execution_order) - 1:
+                            return execution_order[current_index + 1]
+                    except (ValueError, IndexError):
+                        pass
+                return next_module
+            
+            # Handle dict state (or state that behaves like a dict)
+            if hasattr(state, 'get') or isinstance(state, dict):
+                execution_order = state.get('execution_order', [])
+                module_results = state.get('module_results', {})
+                
+                # Fallback: If execution_order is empty, use standard order
+                if not execution_order:
+                    standard_order = ['readin', 'guide', 'writeout']
+                    self.logger.warning(f"Execution order not in state, using fallback: {standard_order}")
+                    execution_order = standard_order
+                
+                # Get list of completed modules
+                completed = []
+                for name, result in module_results.items():
+                    status = getattr(result, 'status', None) if hasattr(result, 'status') else result.get('status') if isinstance(result, dict) else None
+                    if status == ModuleStatus.COMPLETED or status == 'completed':
+                        completed.append(name)
+                
+                # Find first module in execution order that isn't current and isn't completed
+                current_module = self.module_name
+                for module in execution_order:
+                    if module != current_module and module not in completed:
+                        return module
+                        
+        except Exception as e:
+            self.logger.error(f"Error in _get_next_module_name: {e}", exc_info=True)
+        
+        return None
+    
+    def get_completion_message(self, state: dict = None) -> str:
+        """Message shown on successful completion - override if needed
+        
+        Args:
+            state: Optional state dictionary to determine next module dynamically
+        """
         return f"\n{self.name} configuration completed successfully!"
     
     def parse_config_mode(self, response: R) -> str:
@@ -167,12 +231,9 @@ class BaseModuleAgentServer(ABC, Generic[R]):
     
     def _setup_prompts(self):
         """Setup prompts based on whether tools are available"""
-        if self.tools:
-            self.welcome_prompt = AIMessage(content=self.welcome_message)
-            self.sys_prompt = SystemMessage(content=self.system_prompt)
-        else:
-            self.welcome_prompt = SystemMessage(content=self.welcome_message)
-            self.sys_prompt = SystemMessage(content=self.system_prompt)
+        self.welcome_prompt = AIMessage(content=self.welcome_message)
+        self.sys_prompt = SystemMessage(content=self.system_prompt)
+        
     
     def _setup_llm(self):
         """Setup LLM with tools if available"""
@@ -184,22 +245,29 @@ class BaseModuleAgentServer(ABC, Generic[R]):
     # =================
     
     def welcome_node(self, state: dict) -> dict:
-        """Welcome node for the module - sets up initial interaction"""
+        """Welcome node for the module - emits welcome message only"""
         self.logger.info(f"Starting {self.name} welcome interaction")
         
         # Set current module in state
         state["current_module"] = self.module_name
         state["module_stage"] = FillingStage(stage='processing')
         
-        # Create welcome message
-        welcome_text = f"""
-{'='*60}
-📋 MODULE: {self.name.upper()}
-{'='*60}
-{self.welcome_message}
-        """
+        # Create welcome message without decorative header - Streamlit app handles styling
+        welcome_text = f"{self.welcome_message}"
+        welcome = AIMessage(content=welcome_text, additional_kwargs={"module_name": self.module_name})
         
-        # Add instruction for parsing user response
+        # Prepend the module system prompt so the LLM has correct context
+        return {
+            **state,
+            'messages': state.get('messages', []) + [self.sys_prompt, welcome],
+            'error_message': None
+        }
+
+    def welcome_interrupt_node(self, state: dict) -> dict:
+        """Interrupt node to collect initial choice and parse it"""
+        self.logger.info(f"Triggering interrupt for {self.name} initial choice")
+        
+        # Instruction for parsing user response
         instruction_message = SystemMessage(content=f"""
         Parse the user's response to determine their configuration choice.
         Valid options: {', '.join(self.get_valid_config_modes())}
@@ -208,11 +276,11 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         between the valid options (e.g., unrelated topics, ambiguous language)
         """)
         
-        # Trigger interrupt for user input
-        user_input = interrupt(f"\n{welcome_text}\n\nPlease choose whether you want to use DEFAULT or CUSTOM setting!\n")
+        # Trigger interrupt (welcome already in messages)
+        user_input = interrupt("Please choose: Default Setup or Customize")
         self.logger.info(f"User input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
         
-        messages = [self.welcome_prompt, instruction_message, HumanMessage(content=user_input)]
+        messages = state.get('messages', []) + [instruction_message, HumanMessage(content=user_input)]
         
         # Use structured output to parse response
         initial_response_schema = self.get_initial_response_schema()
@@ -228,7 +296,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         
         return {
             **state,
-            'messages': state.get('messages', []) + [self.sys_prompt] + messages,
+            'messages': messages,
             'config_mode': config_mode,
             'validation_status': None,
             'error_message': None
@@ -266,8 +334,6 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         """Parameters configuration node with tool support"""
         self.logger.info(f"Entering {self.name} parameters configuration")
         
-        # config_message = f"\n=== ENTERING PARAMETERS CONFIGURATION for {self.name} ==="
-        
         # Use LLM with tools for enhanced functionality
         try:
             response = self.llm.invoke(state['messages'])
@@ -303,7 +369,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
             }
         else:
             self.logger.info("No tool calls, getting user input")
-            user_input = interrupt(f"\nAssistant:\n{response.content}\nUser:\n")
+            user_input = interrupt(f"{response.content}\n")
             self.logger.info("Interrupt triggered for user input in parameters configuration")
             self.logger.info(f"User input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
             
@@ -345,7 +411,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         """Finalization node - processes final results"""
         self.logger.info(f"Entering {self.name} finalization")
         
-        final_message = f"\n=== HANDLING FINAL STEP for {self.name} ===\n{self.get_completion_message()}"
+        final_message = f"{self.get_completion_message(state)}"
         
         # Process the last message to extract results
         last_message = state['messages'][-1].content
@@ -372,9 +438,16 @@ class BaseModuleAgentServer(ABC, Generic[R]):
             updated_results = state.get('module_results', {}).copy()
             updated_results[self.module_name] = module_result
             
+            # Create completion message with module name in metadata for proper display
+            completion_ai_message = AIMessage(
+                content=final_message, 
+                additional_kwargs={"module_name": self.module_name}
+            )
+            
             return {
                 **state,
-                'messages': state.get('messages', []) + [AIMessage(content=final_message)],
+                'messages': state.get('messages', []) + [completion_ai_message],
+                'current_module': self.module_name,  # Set current_module in state for proper routing
                 'module_stage': FillingStage(stage='completed'),
                 'validation_status': validation_status,
                 'error_message': None,
@@ -413,6 +486,7 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         # Define all nodes for this module
         nodes = {
             f"{self.module_name}_welcome": self.welcome_node,
+            f"{self.module_name}_welcome_interrupt": self.welcome_interrupt_node,
             f"{self.module_name}_default_setup": self.default_setup_node,
             f"{self.module_name}_customize_setup": self.customize_setup_node,
             f"{self.module_name}_params_config": self.parameters_config_node,
@@ -426,10 +500,15 @@ class BaseModuleAgentServer(ABC, Generic[R]):
         # Define edges for this module
         edges = []
         
-        # Welcome routing
+        # Welcome routing: first go from welcome to interrupt node, then branch
+        edges.append({
+            'type': 'direct',
+            'source': f"{self.module_name}_welcome",
+            'target': f"{self.module_name}_welcome_interrupt"
+        })
         edges.append({
             'type': 'conditional',
-            'source': f"{self.module_name}_welcome",
+            'source': f"{self.module_name}_welcome_interrupt",
             'condition': self.route_after_welcome
         })
         

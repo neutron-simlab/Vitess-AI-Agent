@@ -78,7 +78,18 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.graph = self._create_base_graph()
         
         # Memory handling - all agents need checkpointers for proper state management
+        # Using InMemorySaver for development/testing (LangGraph 1.x compatible)
+        # For production, consider using SqliteSaver or PostgresSaver for persistence:
+        #   from langgraph.checkpoint.sqlite import SqliteSaver
+        #   self.memory = SqliteSaver.from_conn_string("checkpoints.db")
         self.memory = InMemorySaver()
+        # Compile with checkpointer for state persistence and interrupt handling
+        # Note: For enhanced interrupt control, consider using static interrupts:
+        #   self.app = self.graph.compile(
+        #       checkpointer=self.memory,
+        #       interrupt_before=["welcome"],  # Static interrupt before welcome
+        #       interrupt_after=["finalize"]   # Static interrupt after finalize
+        #   )
         self.app = self.graph.compile(checkpointer=self.memory)
         
         self.logger.info(f"{self.name} using isolated memory for serverless mode")
@@ -468,7 +479,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         """Standardized finalization node"""
         self.logger.info(f"Entering finalization for {self.name}")
         
-        final_message = f"\n=== HANDLING FINAL STEP for {self.name} ===\n{self.get_completion_message()}"
+        final_message = f"{self.get_completion_message()}"
         
         # In console mode, print directly; in server mode, return in messages
         if self.serverless_mode:
@@ -559,7 +570,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         It blocks on input() when interrupts occur, making it suitable for CLI testing.
         
         Use this when:
-        - Testing individual modules (e.g., guide_module_agent.py)
+        - Testing individual modules (e.g., guide_module_agent_server.py)
         - Developing new modules
         - Debugging module-specific issues
         - Running without a server (serverless mode)
@@ -771,10 +782,10 @@ Note: All agents run in serverless mode by default, each agent gets its own isol
 ```python
 if __name__ == "__main__":
     import asyncio
-    from vitess_ai.agents.guide_module_agent import GuideAgent
+    from vitess_ai.server_agents.guide_module_agent_server import GuideModuleAgentServer
     
     async def test_guide():
-        agent = GuideAgent(provider="openai", model="gpt-4")
+        agent = GuideModuleAgentServer(provider="openai", model="gpt-4")
         result = await agent.run_serverless("", "test_thread")
         print("Test result:", result)
     
@@ -785,10 +796,10 @@ if __name__ == "__main__":
 ```python
 if __name__ == "__main__":
     import asyncio
-    from vitess_ai.agents.readin_module_agent import ReadInAgent
+    from vitess_ai.server_agents.readin_module_agent_server import ReadInModuleAgentServer
     
     async def test_readin():
-        agent = ReadInAgent(provider="openai", model="gpt-4")
+        agent = ReadInModuleAgentServer(provider="openai", model="gpt-4")
         result = await agent.run_serverless("Configure readin parameters", "my_test_thread")
         print("Test result:", result)
     
@@ -799,11 +810,11 @@ if __name__ == "__main__":
 ```python
 if __name__ == "__main__":
     import asyncio
-    from vitess_ai.agents.writeout_module_agent import WriteoutAgent
+    from vitess_ai.server_agents.writeout_module_agent_server import WriteoutModuleAgentServer
     
     async def test_writeout():
         # Agent will automatically load MCP tools if config_path is set
-        agent = WriteoutAgent(provider="openai", model="gpt-4")
+        agent = WriteoutModuleAgentServer(provider="openai", model="gpt-4")
         result = await agent.run_serverless("", "test_thread")
         print("Test result:", result)
     

@@ -122,7 +122,7 @@ async def upload_file_gui(
                 "file_count": 0,
                 "existing_files": [],
                 "missing_files": [],
-                "vitess_sInputFileName": [None] * NF_MAX
+                "sInputFileName": [None] * NF_MAX
             }
         
         # Store the file list (replaces any previous files)
@@ -178,7 +178,7 @@ async def upload_file_gui(
             "existing_files": existing_files,
             "missing_files": missing_files,
             "file_details": file_details,
-            "vitess_sInputFileName": _current_files + [None] * (NF_MAX - len(_current_files))
+            "sInputFileName": _current_files + [None] * (NF_MAX - len(_current_files))
         }
     
     except Exception as e:
@@ -190,7 +190,7 @@ async def upload_file_gui(
             "existing_files": [],
             "missing_files": [],
             "file_details": [],
-            "vitess_sInputFileName": [None] * NF_MAX,
+            "sInputFileName": [None] * NF_MAX,
             "error": str(e)
         }
 
@@ -218,7 +218,7 @@ async def upload_instrument_file_gui() -> dict:
                 "directory": None,
                 "file_size": 0,
                 "exists": False,
-                "vitess_sInstrInfIn": None
+                "sInstrInfIn": None
             }
         
         # Store the instrument file (replaces any previous file)
@@ -255,7 +255,7 @@ async def upload_instrument_file_gui() -> dict:
                 "file_size": file_size,
                 "modified_date": mod_date,
                 "exists": True,
-                "vitess_sInstrInfIn": selected_file
+                "sInstrInfIn": selected_file
             }
         else:
             return {
@@ -266,7 +266,7 @@ async def upload_instrument_file_gui() -> dict:
                 "directory": os.path.dirname(selected_file),
                 "file_size": 0,
                 "exists": False,
-                "vitess_sInstrInfIn": None,
+                "sInstrInfIn": None,
                 "error": "File does not exist"
             }
         
@@ -279,7 +279,7 @@ async def upload_instrument_file_gui() -> dict:
             "directory": None,
             "file_size": 0,
             "exists": False,
-            "vitess_sInstrInfIn": None,
+            "sInstrInfIn": None,
             "error": str(e)
         }
 
@@ -306,7 +306,7 @@ async def file_status() -> dict:
             "file_details": [],
             "existing_files": [],
             "missing_files": [],
-            "vitess_sInputFileName": [None] * NF_MAX
+            "sInputFileName": [None] * NF_MAX
         }
     
     # Process file details
@@ -356,7 +356,7 @@ async def file_status() -> dict:
         "missing_files": missing_files,
         "existing_count": len(existing_files),
         "missing_count": len(missing_files),
-        "vitess_sInputFileName": _current_files + [None] * (NF_MAX - len(_current_files))
+        "sInputFileName": _current_files + [None] * (NF_MAX - len(_current_files))
     }
 
 @mcp.tool()
@@ -379,7 +379,7 @@ async def instrument_file_status() -> dict:
             "file_size": 0,
             "exists": False,
             "modified_date": None,
-            "vitess_sInstrInfIn": None
+            "sInstrInfIn": None
         }
     
     file_name = os.path.basename(_current_instrument_file)
@@ -410,7 +410,7 @@ async def instrument_file_status() -> dict:
             "file_size": file_size,
             "exists": True,
             "modified_date": mod_date,
-            "vitess_sInstrInfIn": _current_instrument_file
+            "sInstrInfIn": _current_instrument_file
         }
     else:
         return {
@@ -422,7 +422,7 @@ async def instrument_file_status() -> dict:
             "file_size": 0,
             "exists": False,
             "modified_date": None,
-            "vitess_sInstrInfIn": None,
+            "sInstrInfIn": None,
             "error": "File not found"
         }
 
@@ -447,7 +447,7 @@ async def get_files() -> dict[str, Any] | str:
     response = {
         "file_count": len(_current_files),
         "files": _current_files,
-        "vitess_sInputFileName": _current_files + [None] * (NF_MAX - len(_current_files))
+        "sInputFileName": _current_files + [None] * (NF_MAX - len(_current_files))
     }
 
     return response
@@ -471,7 +471,7 @@ async def get_instrument_file() -> dict[str, str] | str:
         "file_name": os.path.basename(_current_instrument_file),
         "directory": os.path.dirname(_current_instrument_file),
         "exists": os.path.exists(_current_instrument_file),
-        "vitess_sInstrInfIn": _current_instrument_file
+        "sInstrInfIn": _current_instrument_file
     }
     
     return response
@@ -534,7 +534,7 @@ async def clear_instrument_file() -> dict:
             "cleared_file": cleared_file,
             "cleared_file_name": file_name,
             "has_instrument_file": False,
-            "vitess_sInstrInfIn": None
+            "sInstrInfIn": None
         }
     else:
         return {
@@ -543,7 +543,7 @@ async def clear_instrument_file() -> dict:
             "cleared_file": None,
             "cleared_file_name": None,
             "has_instrument_file": False,
-            "vitess_sInstrInfIn": None
+            "sInstrInfIn": None
         }
 
 # ============================================================================
@@ -595,6 +595,53 @@ async def validate_readin_module(parameters: str) -> dict:
     """
     try:
         params = json.loads(parameters)
+
+        # Backfill sInputFileName from multiple possible sources if missing/empty
+        global _current_files
+        if not params.get("sInputFileName"):
+            candidate_files = None
+            # 1) Provided inline as 'files' from upload_file_gui response
+            if isinstance(params.get("files"), list) and params["files"]:
+                candidate_files = params["files"]
+            # 2) Provided inline as 'existing_files'
+            elif isinstance(params.get("existing_files"), list) and params["existing_files"]:
+                candidate_files = params["existing_files"]
+            # 3) Use persisted selection if same MCP process
+            elif _current_files:
+                candidate_files = _current_files
+
+            if candidate_files:
+                # Pad to NF_MAX with None
+                params["sInputFileName"] = candidate_files + [None] * (NF_MAX - len(candidate_files))
+            else:
+                return {
+                    "validation_status": False,
+                    "errors": "sInputFileName is required but not provided and no files selected.",
+                    "message": "Please select input files via upload_file_gui() or provide sInputFileName."
+                }
+
+        # Enforce Weight presence and matching length to non-None files
+        files_list = [p for p in params.get("sInputFileName", []) if p is not None]
+        weights_list = params.get("Weight", [])
+        if not isinstance(weights_list, list):
+            return {
+                "validation_status": False,
+                "errors": "Weight must be a list of numbers matching sInputFileName.",
+                "message": "Weight must be a list."
+            }
+        if len(files_list) == 0:
+            return {
+                "validation_status": False,
+                "errors": "At least one input file is required.",
+                "message": "Please select at least one input file."
+            }
+        if len(weights_list) != len(files_list):
+            return {
+                "validation_status": False,
+                "errors": f"Weight length ({len(weights_list)}) does not match sInputFileName count ({len(files_list)}).",
+                "message": "Provide a weight for each input file."
+            }
+
         validated = ReadInParameters(**params)
         validated = validated.model_dump()
         cli = readin_params_to_cli(validated) # function to parse the flag and value for Vitess CLI

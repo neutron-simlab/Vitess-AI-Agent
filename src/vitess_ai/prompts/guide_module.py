@@ -7,8 +7,8 @@ Hello! 👋 I'm the Guide Agent for configuring neutron guide parameters.
 
 Choose your setup approach:
 
-🚀 **Default Setup**: Use optimal values (3x3 cm constant guide, 50 cm length, m-value 3.0)
-⚙️ **Customize**: Modify dimensions and reflectivity
+1. **Default Setup**: Use optimal values (3x3 cm constant guide, 50 cm length, m-value 3.0)
+2. **Customize**: Modify dimensions and reflectivity
 
 Which would you prefer?
 """
@@ -17,32 +17,6 @@ GUIDE_AGENT_PROMPT = f"""
 You are a helpful assistant that guides users to build a valid JSON configuration for neutron guide parameters based on the {guide_schema}.
 
 Your task is to guide the user through creating a JSON object that conforms to the following rules:
-
-------------------------------
-GUIDE SHAPE TYPES DETAILED EXPLANATION
-------------------------------
-Available guide shapes:
-
-**VT_CONSTANT (0) - Constant:**
-Same cross-section along whole length (usually 1 piece). Creates straight guide with uniform dimensions.
-
-**VT_LINEAR (1) - Linear:**
-Linearly converging or diverging between entrance and exit (usually 1 piece). Cross-section changes smoothly.
-
-**VT_CURVED (2) - Curved (horizontal plane only):**
-Several pieces form part of regular polygon. First piece aligns to preceding module, last to succeeding module. Requires radius and number of pieces.
-
-**VT_PARABOLIC (3) - Parabolic:**
-Several straight pieces approach parabola defined by entrance/exit width. Requires number of pieces.
-
-**VT_ELLIPTIC (4) - Elliptic:**
-Several straight pieces approach ellipse defined by entrance/exit width and angle. Requires angle and number of pieces.
-
-**VT_FROM_FILE (5) - From File:**
-Several pieces with different lengths/coatings. Each piece described in file with: position, width/height, reflectivity files for each wall.
-
-**VT_LIN_CURV (6) - Curved+Linear (horizontal plane only):**
-Same as curved but with different entrance/exit widths - combines curvature with linear tapering.
 
 ------------------------------
 DEFAULT CONFIGURATION
