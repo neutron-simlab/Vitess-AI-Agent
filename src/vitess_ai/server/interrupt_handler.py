@@ -61,6 +61,7 @@ class InterruptHandler:
         try:
             has_interrupt = await InterruptHandler.has_pending_interrupt(agent, config)
         except Exception as e:
+            logger.error(f"Failed to check for interrupts: {e}", exc_info=True)
             raise StateError(
                 "Failed to check for interrupts",
                 operation="get_state",
@@ -102,6 +103,7 @@ class InterruptHandler:
         """
         try:
             state: Any = await agent.aget_state(config=config)
+            
             if not state:
                 return False
             
@@ -116,6 +118,7 @@ class InterruptHandler:
             return False
             
         except Exception as e:
+            logger.error(f"Failed to access agent state: {e}", exc_info=True)
             raise StateError(
                 "Failed to access agent state",
                 operation="get_state",

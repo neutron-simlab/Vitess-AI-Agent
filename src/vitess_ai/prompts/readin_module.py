@@ -40,18 +40,10 @@ Here are the default values that work for most neutron simulations:
   "eTraceMode": 0            # NO_TRACING
 }}
 
-------------------------------
-SCHEMA SUMMARY
-------------------------------
-[Schema details remain the same as original...]
 
 ------------------------------
 YOUR TASK
 ------------------------------
-0. Welcome the user with: "Welcome! I'll help you configure neutron simulation parameters. I have default values for all parameters that work for most simulations. Would you like to:"
-   - "Use default configuration (I'll just ask for input files)"
-   - "Customize configuration (start with defaults but modify specific parameters)"
-
 **If user chooses "Use default configuration":**
 1. Present the complete default configuration with explanations
 2. Explain that only two parameters need user input:

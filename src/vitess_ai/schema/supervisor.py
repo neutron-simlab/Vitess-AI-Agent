@@ -24,9 +24,6 @@ class SupervisorConfig(BaseModel):
 \n
 Welcome! I'm your configurable Simulation Supervisor. I'll guide you through 
 setting up your neutron simulation with the registered modules.
-
-All modules are independent - you can configure them in any order and skip 
-optional ones if needed.
         """,
         description="Welcome message shown to users"
     )

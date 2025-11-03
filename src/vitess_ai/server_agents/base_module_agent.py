@@ -330,7 +330,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         # Prepend the module system prompt so the LLM has correct context
         return {
             **state,
-            'messages': state.get('messages', []) + [self.sys_prompt, welcome],
+            'messages': state.get('messages', []) + [welcome],
             'error_message': None
         }
 
@@ -347,23 +347,55 @@ class BaseModuleAgent(ABC, Generic[R]):
         between the valid options (e.g., unrelated topics, ambiguous language)
         """)
         
-        # Trigger interrupt (welcome already in messages)
+        # Trigger interrupt and get user input
         user_input = interrupt("Please choose: Default Setup or Customize")
         self.logger.info(f"User input received: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
         
-        messages = state.get('messages', []) + [instruction_message, HumanMessage(content=user_input)]
+        # Find welcome message (first AI message with module_name metadata, or last AI message)
+        all_messages = state.get('messages', [])
+        welcome_msg = None
+        for msg in all_messages:
+            if hasattr(msg, 'type') and msg.type == 'ai':
+                if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == self.module_name:
+                    welcome_msg = msg
+                    break
         
-        # Use structured output to parse response
+        if not welcome_msg:
+            for msg in reversed(all_messages):
+                if hasattr(msg, 'type') and msg.type == 'ai':
+                    welcome_msg = msg
+                    break
+        
+        # Build minimal message set: welcome (if exists) + instruction + user input
+        messages = [instruction_message, HumanMessage(content=user_input)]
+        if welcome_msg:
+            messages.insert(0, welcome_msg)
+        
+        # Create structured LLM and parse user input
         initial_response_schema = self.get_initial_response_schema()
-        structured_llm = self.llm.with_structured_output(initial_response_schema)
-        
         try:
-            response = structured_llm.invoke(messages)
-            config_mode = self.parse_config_mode(response)
-            self.logger.info(f"Parsed configuration mode: {config_mode}")
+            structured_llm = self.llm.with_structured_output(initial_response_schema)
         except Exception as e:
-            self.logger.error(f"Failed to parse initial response: {e}")
-            config_mode = "Unknown"
+            self.logger.error(f"Failed to create structured LLM: {e}")
+            return {
+                **state,
+                'messages': messages,
+                'config_mode': "Unknown",
+                'validation_status': None,
+                'error_message': f"Failed to create structured LLM: {str(e)}"
+            }
+        
+        # Try to parse with full messages, fallback to minimal on error
+        try:
+            config_mode = self._parse_config_with_llm(structured_llm, messages)
+        except Exception as e:
+            self.logger.warning(f"Initial parse failed, retrying with minimal messages: {e}")
+            try:
+                minimal_messages = [instruction_message, HumanMessage(content=user_input)]
+                config_mode = self._parse_config_with_llm(structured_llm, minimal_messages)
+            except Exception as retry_error:
+                self.logger.error(f"Retry also failed: {retry_error}")
+                config_mode = "Default Setup"
         
         return {
             **state,
@@ -372,6 +404,42 @@ class BaseModuleAgent(ABC, Generic[R]):
             'validation_status': None,
             'error_message': None
         }
+    
+    def _parse_config_with_llm(self, structured_llm, messages):
+        """Parse config mode using structured LLM with timeout protection"""
+        import time
+        import threading
+        import queue
+        from vitess_ai.core.config import global_config
+        
+        timeout_seconds = getattr(self.llm, 'timeout', global_config.TIMEOUT_SECONDS)
+        result_queue = queue.Queue()
+        exception_queue = queue.Queue()
+        
+        def invoke_llm():
+            try:
+                result = structured_llm.invoke(messages)
+                result_queue.put(result)
+            except Exception as e:
+                exception_queue.put(e)
+        
+        invoke_thread = threading.Thread(target=invoke_llm, daemon=True)
+        invoke_thread.start()
+        invoke_thread.join(timeout=timeout_seconds + 10)
+        
+        if invoke_thread.is_alive():
+            raise TimeoutError(f"LLM invocation timed out after {timeout_seconds}s")
+        
+        if not exception_queue.empty():
+            raise exception_queue.get()
+        
+        if result_queue.empty():
+            raise RuntimeError("LLM invocation returned no result")
+        
+        response = result_queue.get()
+        config_mode = self.parse_config_mode(response)
+        self.logger.info(f"Parsed configuration mode: {config_mode}")
+        return config_mode
     
     def default_setup_node(self, state: dict) -> dict:
         """Default setup node"""
@@ -382,7 +450,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         
         return {
             **state,
-            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_default_message],
+            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_default_message, self.sys_prompt],
             'module_stage': FillingStage(stage='processing'),
             'error_message': None
         }
@@ -396,7 +464,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         
         return {
             **state,
-            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_customize_message],
+            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_customize_message, self.sys_prompt],
             'module_stage': FillingStage(stage='processing'),
             'error_message': None
         }
@@ -619,11 +687,11 @@ class BaseModuleAgent(ABC, Generic[R]):
     def route_after_welcome(self, state: dict) -> str:
         """Route after welcome based on config mode"""
         config_mode = state.get('config_mode', '')
-        self.logger.info(f"Routing after welcome with config_mode: {config_mode}")
         
+        # If config_mode is invalid or unknown, default to Default Setup
         if not self.validate_config_mode(config_mode):
-            self.logger.warning(f"Invalid config mode '{config_mode}', ending conversation")
-            return "error"
+            self.logger.warning(f"Invalid config mode '{config_mode}', defaulting to 'Default Setup'")
+            config_mode = 'Default Setup'
         
         # Map config modes to nodes
         if config_mode in ['Customize', 'Custom']:
@@ -633,8 +701,9 @@ class BaseModuleAgent(ABC, Generic[R]):
             self.logger.info("Routing to default setup")
             return f'{self.module_name}_default_setup'
         else:
-            self.logger.error(f"Unhandled config mode: {config_mode}")
-            return "error"
+            # Even if still invalid, default to Default Setup to keep graph running
+            self.logger.error(f"Unhandled config mode: {config_mode}, defaulting to Default Setup")
+            return f'{self.module_name}_default_setup'
     
     def route_after_tools(self, state: dict) -> str:
         """Route after tool execution"""
@@ -642,12 +711,16 @@ class BaseModuleAgent(ABC, Generic[R]):
             self.logger.warning("No tools available, routing to params_config")
             return f'{self.module_name}_params_config'
         
-        last_message = state['messages'][-1].content
-        self.logger.info("Processing tool execution results")
+        last_message = state['messages'][-1] if state.get('messages') else None
+        if not last_message:
+            self.logger.warning("No messages in state, routing to params_config")
+            return f'{self.module_name}_params_config'
+        
+        last_message_content = last_message.content if hasattr(last_message, 'content') else str(last_message)
         
         try:
             import json
-            parsed_message = json.loads(last_message)
+            parsed_message = json.loads(last_message_content)
             validation_status = parsed_message.get('validation_status', False)
             
             if validation_status:
@@ -663,15 +736,21 @@ class BaseModuleAgent(ABC, Generic[R]):
     
     def route_after_params_config(self, state: dict) -> str:
         """Route after parameters configuration based on tool calls"""
-        last_message = state['messages'][-1]
+        last_message = state['messages'][-1] if state.get('messages') else None
+        
+        if not last_message:
+            self.logger.warning("No messages in state, routing to params_config")
+            return f'{self.module_name}_params_config'
         
         # Check for tool calls only if tools are available
-        if (self.tools and 
-            hasattr(last_message, 'tool_calls') and 
-            last_message.tool_calls):
-            self.logger.info('Tool calls detected, routing to tools')
+        has_tool_calls = (self.tools and 
+                         hasattr(last_message, 'tool_calls') and 
+                         last_message.tool_calls)
+        
+        if has_tool_calls:
+            self.logger.info("Tool calls detected, routing to tools")
             return f'{self.module_name}_tools'
         else:
-            self.logger.info('Continuing parameter configuration')
+            self.logger.info("Continuing parameter configuration")
             return f'{self.module_name}_params_config'
 

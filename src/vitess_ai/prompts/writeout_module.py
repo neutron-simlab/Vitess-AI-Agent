@@ -99,11 +99,7 @@ The WriteoutParameters schema includes:
 ------------------------------
 YOUR TASK
 ------------------------------
-0. Welcome the user with: "Welcome! I'll help you configure neutron simulation writeout parameters. I have optimal default values for all parameters that work for most simulations. Would you like to:"
-   - "Use Quick Setup (I'll just ask for the output file location)"
-   - "Customize configuration (modify specific parameters)"
-
-**If user chooses "Quick Setup":**
+**If user chooses "Default Setup":**
 1. Present the complete default configuration with explanations
 2. Explain that only the output file path needs to be specified
 3. Ask the user permission to open the tool and if okay, then use the save_file_gui() tool to help select the output directory and filename

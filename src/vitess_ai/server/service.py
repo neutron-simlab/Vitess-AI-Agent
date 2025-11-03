@@ -334,7 +334,7 @@ async def message_generator(
         yield "data: [DONE]\n\n"
         return
     except Exception as e:
-        logger.error(f"Unexpected error preparing input: {e}", exc_info=True)
+        logger.error(f"Unexpected error preparing input: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': 'Unexpected error preparing input'})}\n\n"
         yield "data: [DONE]\n\n"
         return

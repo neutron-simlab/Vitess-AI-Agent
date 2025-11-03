@@ -699,15 +699,20 @@ Configuration is complete. The simulation parameters are ready for execution.
     def _route_module_finalize(self, state: UnifiedState, module_name: str) -> str:
         """Route from module finalize to next module or simulation"""
         execution_order = state.get('execution_order', [])
-        current_index = execution_order.index(module_name)
         
-        if current_index == len(execution_order) - 1:
-            # Last module completed - go to simulation preparation (which shows start message)
-            self.logger.info("All modules completed, routing to simulation preparation")
-            return "supervisor_prepare_simulation"
-        else:
-            # Summarize before proceeding to next module
-            return "supervisor_summarize"
+        try:
+            current_index = execution_order.index(module_name)
+            
+            if current_index == len(execution_order) - 1:
+                # Last module completed - go to simulation preparation
+                self.logger.info("All modules completed, routing to simulation preparation")
+                return "supervisor_prepare_simulation"
+            else:
+                # Summarize before proceeding to next module
+                return "supervisor_summarize"
+        except ValueError as e:
+            self.logger.error(f"Module {module_name} not found in execution order: {execution_order}")
+            return "supervisor_error_handler"
 
     def _route_after_summarize(self, state: dict) -> str:
         """After summarization, continue to the next module or simulation if none left"""
