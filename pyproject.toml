@@ -21,7 +21,6 @@ dependencies = [
     "pydantic[all]>=2.11.2,<3.0.0",
     "fastmcp>=2.9.2",
     "langchain-mcp-adapters>=0.1.7",
-    "pyqt6>=6.9.1",
 ]
 
 [build-system]

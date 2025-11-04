@@ -61,6 +61,7 @@ class InterruptHandler:
         try:
             has_interrupt = await InterruptHandler.has_pending_interrupt(agent, config)
         except Exception as e:
+            logger.error(f"Failed to check for interrupts: {e}", exc_info=True)
             raise StateError(
                 "Failed to check for interrupts",
                 operation="get_state",
@@ -72,8 +73,12 @@ class InterruptHandler:
             # User input is response to resume agent execution from interrupt
             input_data: Command | dict[str, Any] = Command(resume=user_input)
         else:
-            # Normal input - add as human message
-            input_data = {"messages": [HumanMessage(content=user_input)]}
+            # Normal input - add as human message and include thread_id/user_id in state
+            input_data = {
+                "messages": [HumanMessage(content=user_input)],
+                "thread_id": thread_id,
+                "user_id": user_id,
+            }
         
         kwargs = {
             "input": input_data,
@@ -102,6 +107,7 @@ class InterruptHandler:
         """
         try:
             state: Any = await agent.aget_state(config=config)
+            
             if not state:
                 return False
             
@@ -116,6 +122,7 @@ class InterruptHandler:
             return False
             
         except Exception as e:
+            logger.error(f"Failed to access agent state: {e}", exc_info=True)
             raise StateError(
                 "Failed to access agent state",
                 operation="get_state",

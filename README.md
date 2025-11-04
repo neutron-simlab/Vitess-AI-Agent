@@ -100,20 +100,6 @@ curl -X POST "http://localhost:8000/stream" \
   -d '{"message": "Start simulation", "thread_id": "sim_002", "stream_tokens": true}'
 ```
 
-**POST `/{agent_id}/module-interrupt`** - Respond to module interrupt
-```bash
-curl -X POST "http://localhost:8000/supervisor/module-interrupt" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "User response to interrupt", "thread_id": "sim_001", "stream_tokens": true}'
-```
-
-**POST `/history`** - Get chat history
-```bash
-curl -X POST "http://localhost:8000/history" \
-  -H "Content-Type: application/json" \
-  -d '{"thread_id": "sim_001"}'
-```
-
 **GET `/health`** - Health check
 ```bash
 curl -X GET "http://localhost:8000/health"
@@ -147,7 +133,7 @@ for chunk in client.stream(
     elif isinstance(chunk, dict) and chunk.get("type") == "token":
         print(chunk.get("content", ""), end='', flush=True)
 
-# Respond to module interrupt
+# Respond to module interrupt (uses regular stream endpoint)
 for chunk in client.respond_to_module_interrupt(
     message="Yes, proceed",
     thread_id="thread_123",
@@ -155,10 +141,6 @@ for chunk in client.respond_to_module_interrupt(
 ):
     # Process streaming chunks
     pass
-
-# Get chat history
-history = client.get_history(thread_id="thread_123")
-print(history.messages)
 ```
 
 ### Async Usage

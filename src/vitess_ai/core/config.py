@@ -63,9 +63,69 @@ class Config:
     # =============================================================================
     
     # Default Vitess environment variables (from your script)
+    # These can be updated at runtime via update_vitess_config()
     VITESS_MODULES_PATH = os.getenv("VITESS_MODULES_PATH", "/usr/local/vitess/bin")
     VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH", "/tmp/vitess_project")
     VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess_logs")
+    
+    @classmethod
+    def update_vitess_config(
+        cls,
+        modules_path: str | None = None,
+        project_path: str | None = None,
+        log_path: str | None = None
+    ) -> dict[str, str]:
+        """
+        Update Vitess environment configuration at runtime.
+        
+        Args:
+            modules_path: New path for Vitess modules (V)
+            project_path: New path for Vitess project (P)
+            log_path: New path for Vitess logs (L)
+            
+        Returns:
+            Dictionary with updated Vitess environment variables
+        """
+        if modules_path is not None:
+            cls.VITESS_MODULES_PATH = modules_path
+        if project_path is not None:
+            cls.VITESS_PROJECT_PATH = project_path
+        if log_path is not None:
+            cls.VITESS_LOG_PATH = log_path
+        
+        return cls.get_vitess_variables()
+    
+    @classmethod
+    def reset_vitess_config(cls) -> dict[str, str]:
+        """
+        Reset Vitess environment configuration to defaults from environment variables.
+        
+        Returns:
+            Dictionary with reset Vitess environment variables
+        """
+        cls.VITESS_MODULES_PATH = os.getenv("VITESS_MODULES_PATH", "/usr/local/vitess/bin")
+        cls.VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH", "/tmp/vitess_project")
+        cls.VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess_logs")
+        
+        return cls.get_vitess_variables()
+    
+    # =============================================================================
+    # FILE UPLOAD CONFIGURATION
+    # =============================================================================
+    
+    # Note: File storage structure is now organized by thread_id:
+    # - {VITESS_PROJECT_PATH}/{thread_id}/uploads/{module_type}/  - Input files
+    # - {VITESS_PROJECT_PATH}/{thread_id}/outputs/                 - Output files
+    # UPLOAD_DIR is no longer used as files are organized under thread_id directories
+    
+    # Maximum file size in bytes (default: 100MB)
+    MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", "104857600"))
+    
+    # Allowed file types/extensions
+    ALLOWED_FILE_EXTENSIONS = os.getenv(
+        "ALLOWED_FILE_EXTENSIONS", 
+        ".dat,.txt,.csv,.nxs,.h5,.inf,.out"
+    ).split(",")
     
     # =============================================================================
     # ENVIRONMENT
