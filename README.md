@@ -13,193 +13,78 @@
 - **Web Interface**: Streamlit-based chat interface with comprehensive configuration options
 - **Real-time Streaming**: Server-Sent Events (SSE) for live conversation streaming
 - **Multiple LLM Providers**: Support for OpenAI and Blablador (OpenAI-compatible API)
-- **Automated Configuration**: Guide users through neutron simulation parameters
-- **CLI Generation**: Automatic generation of VITESS command-line parameters
-- **Interrupt Handling**: Support for interactive agent interruptions and resumption
 - **File Management**: Upload and manage files for different VITESS modules
 - **Runtime Configuration**: Dynamic VITESS environment configuration
 
 ## Prerequisites
 
-### VITESS Software Installation
-**Critical Requirement**: You must have [VITESS](https://vitess.fz-juelich.de) installed on your system.
+**Critical Requirement**: You must have [VITESS](https://vitess.fz-juelich.de) installed on your system with the `vitess` command available in your PATH.
 
-- Install VITESS following the official documentation
-- Ensure `vitess` command is available in your system PATH
-
-### System Requirements
-- Python 3.13+
-- Compatible with Windows, macOS, and Linux
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        API Server Layer                        │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│  │   REST API      │  │   SSE Stream    │  │  Health Check   │ │
-│  │   /invoke       │  │   /stream       │  │   /health       │ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│  │  File Upload    │  │  File Download  │  │  Config Mgmt    │ │
-│  │  /files/upload  │  │  /files/{id}    │  │  /config/vitess │ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────┐    ┌──────────────────┐    ┌────────────────┐
-│  SupervisorAgent│────│  BaseModuleAgent │────│ Specialized    │
-│  (Orchestrator) │    │  (Abstract Base) │    │ Module Agents  │
-└─────────────────┘    └──────────────────┘    └────────────────┘
-         │                        │                       │
-         │              ┌─────────┼─────────┐            │
-         │              │         │         │            │
-         ▼              ▼         ▼         ▼            ▼
-┌─────────────┐ ┌──────────┐ ┌─────────┐ ┌──────────┐
-│ Simulation  │ │ ReadIn   │ │ Guide   │ │ Writeout │
-│ Execution   │ │ Agent    │ │ Agent   │ │ Agent    │
-└─────────────┘ └──────────┘ └─────────┘ └──────────┘
-```
+**System Requirements**: Python 3.13+, compatible with Windows, macOS, and Linux
 
 ## Installation
 
-### Using uv (Recommended)
 ```bash
+# Using uv (recommended)
 uv pip install .
-```
 
-### Using pip
-```bash
+# Using pip
 pip install .
 ```
 
-The project uses `pyproject.toml` for dependency management.
+## Quick Start
 
-## API Server
+### 1. Start the API Server
 
-### Starting the Server
 ```bash
 python main.py
 ```
+
 Server runs on `http://localhost:8000` with auto-reload and interactive docs at `/docs`.
 
-### API Endpoints
+### 2. Start the Streamlit Web Interface
 
-The API uses agent-specific endpoints. The default agent is `"supervisor"`. You can either specify the agent ID in the path or omit it to use the default.
-
-#### Agent Endpoints
-
-**POST `/{agent_id}/invoke`** or **POST `/invoke`** - Send message and get complete response
 ```bash
-# Using default supervisor agent
-curl -X POST "http://localhost:8000/invoke" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Configure a neutron simulation",
-    "thread_id": "sim_001",
-    "provider": "openai",
-    "model": "gpt-4o-mini"
-  }'
-
-# Using specific agent
-curl -X POST "http://localhost:8000/supervisor/invoke" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Configure a neutron simulation",
-    "thread_id": "sim_001",
-    "provider": "openai",
-    "model": "gpt-4o-mini"
-  }'
+streamlit run app/streamlit_app.py
 ```
 
-**POST `/{agent_id}/stream`** or **POST `/stream`** - Real-time streaming response
-```bash
-curl -X POST "http://localhost:8000/stream" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Start simulation",
-    "thread_id": "sim_002",
-    "stream_tokens": true,
-    "provider": "openai",
-    "model": "gpt-4o-mini"
-  }'
-```
+The app will be available at `http://localhost:8501`.
 
-**POST `/{agent_id}/restart`** or **POST `/restart`** - Restart agent with new configuration
-```bash
-curl -X POST "http://localhost:8000/restart" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "openai",
-    "model": "gpt-4o"
-  }'
-```
+## API Endpoints
 
-#### File Management Endpoints
+The default agent is `"supervisor"`. You can specify the agent ID in the path or omit it to use the default.
 
-**POST `/files/upload`** - Upload a file for a specific module
-```bash
-curl -X POST "http://localhost:8000/files/upload" \
-  -F "file=@simulation.inp" \
-  -F "thread_id=sim_001" \
-  -F "module_type=readin"
-```
+### Agent Endpoints
+- **POST `/{agent_id}/invoke`** or **POST `/invoke`** - Send message and get complete response
+- **POST `/{agent_id}/stream`** or **POST `/stream`** - Real-time streaming response
+- **POST `/{agent_id}/restart`** or **POST `/restart`** - Restart agent with new configuration
 
-**GET `/files/{file_id}`** - Get file information
-```bash
-curl "http://localhost:8000/files/{file_id}?thread_id=sim_001&module_type=readin"
-```
+### File Management
+- **POST `/files/upload`** - Upload a file for a specific module
+- **GET `/files/{file_id}`** - Get file information
+- **GET `/files/thread/{thread_id}`** - List all files for a thread
+- **DELETE `/files/{file_id}`** - Delete a file
+- **GET `/files/{file_id}/download`** - Download a file
 
-**GET `/files/thread/{thread_id}`** - List all files for a thread
-```bash
-curl "http://localhost:8000/files/thread/sim_001"
-```
+### Configuration
+- **GET `/config/vitess`** - Get current VITESS environment configuration
+- **PUT `/config/vitess`** - Update VITESS environment configuration
+- **POST `/config/vitess/reset`** - Reset VITESS configuration to defaults
 
-**DELETE `/files/{file_id}`** - Delete a file
-```bash
-curl -X DELETE "http://localhost:8000/files/{file_id}?thread_id=sim_001&module_type=readin"
-```
+### Health Check
+- **GET `/health`** - Health check
 
-**GET `/files/{file_id}/download`** - Download a file
-```bash
-curl "http://localhost:8000/files/{file_id}/download?thread_id=sim_001&module_type=readin" -o output.dat
-```
+See `/docs` for interactive API documentation with request/response schemas.
 
-#### Configuration Endpoints
-
-**GET `/config/vitess`** - Get current VITESS environment configuration
-```bash
-curl "http://localhost:8000/config/vitess"
-```
-
-**PUT `/config/vitess`** - Update VITESS environment configuration
-```bash
-curl -X PUT "http://localhost:8000/config/vitess?modules_path=/path/to/modules&project_path=/path/to/project&log_path=/path/to/logs"
-```
-
-**POST `/config/vitess/reset`** - Reset VITESS configuration to defaults
-```bash
-curl -X POST "http://localhost:8000/config/vitess/reset"
-```
-
-#### Health Check
-
-**GET `/health`** - Health check
-```bash
-curl -X GET "http://localhost:8000/health"
-```
-
-### Python Client Usage
-
-The recommended way to interact with the API is through the `AgentClient` class:
+## Python Client Usage
 
 ```python
 from vitess_ai.clients.client import AgentClient
 
-# Initialize client (defaults to supervisor agent)
+# Initialize client
 client = AgentClient(base_url="http://localhost:8000", agent="supervisor")
 
-# Simple invoke - get complete response
+# Simple invoke
 response = client.invoke(
     message="Configure neutron beam",
     thread_id="thread_123",
@@ -220,84 +105,11 @@ for chunk in client.stream(
         print(chunk.content, end='', flush=True)
     elif isinstance(chunk, dict) and chunk.get("type") == "token":
         print(chunk.get("content", ""), end='', flush=True)
-
-# Respond to module interrupt (uses regular stream endpoint)
-for chunk in client.respond_to_module_interrupt(
-    message="Yes, proceed",
-    thread_id="thread_123",
-    stream_tokens=True
-):
-    # Process streaming chunks
-    pass
-
-# Restart agent with new configuration
-client.restart(provider="openai", model="gpt-4o")
 ```
-
-### Async Usage
-
-```python
-import asyncio
-from vitess_ai.clients.client import AgentClient
-
-async def main():
-    client = AgentClient(base_url="http://localhost:8000", agent="supervisor")
-    
-    # Async invoke
-    response = await client.ainvoke(
-        message="Configure neutron simulation",
-        thread_id="thread_123",
-        provider="openai",
-        model="gpt-4o-mini"
-    )
-    print(response.content)
-    
-    # Async streaming
-    async for chunk in client.astream(
-        message="Run simulation",
-        thread_id="thread_123",
-        stream_tokens=True,
-        provider="openai",
-        model="gpt-4o-mini"
-    ):
-        # Process chunks
-        pass
-
-asyncio.run(main())
-```
-
-## Streamlit Web Interface
-
-The project includes a comprehensive Streamlit-based web interface for interactive conversations with the AI agent.
-
-### Starting the Streamlit App
-
-First, ensure the FastAPI server is running (see API Server section above), then:
-
-```bash
-streamlit run app/streamlit_app.py
-```
-
-The app will be available at `http://localhost:8501` (default Streamlit port).
-
-### Features
-
-- **Interactive Chat Interface**: Real-time conversation with the AI agent
-- **LLM Configuration**: Switch between OpenAI and Blablador providers with model selection
-- **Thread Management**: Create new threads or continue existing conversations
-- **Real-time Streaming**: See responses stream in real-time as they are generated
-- **Module Interrupts**: Handle interactive prompts from specialized module agents
-- **Server Configuration**: Configure and check server connection status
-- **VITESS Configuration**: Configure VITESS environment paths (V, P, L) at runtime
-- **File Management**: Upload, view, and delete files for different VITESS modules (readin, guide, instrument, writeout)
-- **Debug Mode**: Option to view system messages for debugging
-- **Auto-welcome**: Automatic welcome message when connecting to the server
-
-The Streamlit app connects to the FastAPI server running on `http://localhost:8000` by default. You can change the server URL in the sidebar configuration.
 
 ## Configuration
 
-Create `.env` file:
+Create a `.env` file:
 
 ```env
 # LLM Provider (openai or blablador)
@@ -312,10 +124,6 @@ BLABLADOR_API_KEY=your_blablador_key_here
 BLABLADOR_BASE_URL=https://your-blablador-endpoint.com
 BLABLADOR_DEFAULT_MODEL=alias-function-call
 
-# Server Configuration
-SERVER_HOST=0.0.0.0
-SERVER_PORT=8000
-
 # VITESS Environment Variables (optional, can be configured at runtime)
 VITESS_MODULES_PATH=/path/to/vitess/modules
 VITESS_PROJECT_PATH=/path/to/vitess/project
@@ -324,16 +132,9 @@ VITESS_LOG_PATH=/path/to/vitess/logs
 
 ### Supported LLM Providers
 
-#### OpenAI
-- **Models**: `gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo`
-- **Default**: `gpt-4o-mini`
-- **Required**: `OPENAI_API_KEY`
+**OpenAI**: Models `gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo` (default: `gpt-4o-mini`)
 
-#### Blablador
-- **Models**: `alias-function-call`, `alias-code`
-- **Default**: `alias-function-call`
-- **Required**: `BLABLADOR_API_KEY`, `BLABLADOR_BASE_URL`
-- **Note**: Blablador is an OpenAI-compatible API that requires function calling support
+**Blablador**: Models `alias-function-call`, `alias-code` (default: `alias-function-call`, requires `BLABLADOR_API_KEY` and `BLABLADOR_BASE_URL`)
 
 ## Available Agents
 
@@ -342,29 +143,15 @@ VITESS_LOG_PATH=/path/to/vitess/logs
 - **GuideAgent**: Handles neutron guide specifications and geometry
 - **WriteoutAgent**: Manages output settings and data formats
 
-## Direct Usage
+## Streamlit Features
 
-### Basic Supervisor Usage
-
-For direct usage without the API server:
-
-```python
-import asyncio
-from vitess_ai.server_agents.supervisor import create_default_server_supervisor
-
-async def main():
-    supervisor = await create_default_server_supervisor()
-    # Use the supervisor's graph directly
-    result = await supervisor.app.ainvoke(
-        {"messages": [{"role": "user", "content": "Configure neutron simulation"}]},
-        config={"configurable": {"thread_id": "simulation_001"}}
-    )
-    print(f"Result: {result}")
-
-asyncio.run(main())
-```
-
-Note: The recommended way to use the system is through the FastAPI server (see API Server section above).
+- Interactive chat interface with real-time streaming
+- LLM provider/model switching (OpenAI, Blablador)
+- Thread management and conversation history
+- Module interrupt handling
+- VITESS environment configuration (V, P, L paths)
+- File upload/management for different VITESS modules
+- Debug mode for system messages
 
 ## Production Deployment
 
@@ -390,55 +177,28 @@ CMD ["python", "main.py"]
 
 ```
 vitess-ai-agent/
-├── app/
-│   ├── streamlit_app.py      # Streamlit web interface entry point
-│   ├── sidebar.py            # Sidebar configuration UI
-│   ├── chat_interface.py     # Main chat interface
-│   ├── file_management.py    # File management utilities
-│   ├── ui_components.py      # UI components
-│   └── assets/
-│       └── logo.png
+├── app/                    # Streamlit web interface
 ├── src/vitess_ai/
-│   ├── clients/
-│   │   └── client.py         # API client library
-│   ├── server/
-│   │   ├── service.py        # FastAPI application
-│   │   ├── api_endpoints.py  # Agent endpoints
-│   │   ├── file_endpoints.py # File management endpoints
-│   │   ├── config_endpoints.py # Configuration endpoints
-│   │   ├── streaming.py     # SSE streaming implementation
-│   │   └── file_storage.py  # File storage service
-│   ├── server_agents/        # Server-optimized agents
-│   │   ├── supervisor.py    # Supervisor agent
-│   │   ├── readin_module_agent.py
-│   │   ├── guide_module_agent.py
-│   │   └── writeout_module_agent.py
-│   ├── mcp/                  # MCP validation tools
-│   │   ├── readin_module_tools.py
-│   │   ├── guide_module_tools.py
-│   │   └── writeout_module_tools.py
-│   ├── prompts/              # Agent prompts
-│   ├── schema/               # Pydantic schemas
-│   │   ├── server.py
-│   │   ├── llm_models.py
-│   │   └── ...
-│   └── core/                 # Core utilities
-│       ├── config.py         # Configuration management
-│       └── llms_providers.py # LLM provider management
-├── main.py                   # Server entry point
-├── pyproject.toml            # Project dependencies
-└── README.md
+│   ├── clients/            # API client library
+│   ├── server/             # FastAPI server and endpoints
+│   ├── server_agents/      # Server-optimized agents
+│   ├── mcp/                # MCP validation tools
+│   ├── prompts/            # Agent prompts
+│   ├── schema/             # Pydantic schemas
+│   └── core/               # Core utilities
+├── main.py                 # Server entry point
+└── pyproject.toml
 ```
 
 ## Contributing
 
 Areas for contribution:
-- **New Module Agents**: Add support for additional VITESS simulation modules
-- **API Enhancements**: Improve server performance and add new endpoints
-- **Client Libraries**: Develop client libraries for different languages
-- **Documentation**: Improve guides and examples
-- **Testing**: Add test coverage for agents and API endpoints
-- **LLM Providers**: Add support for additional LLM providers (Anthropic, Google, etc.)
+- New module agents for additional VITESS simulation modules
+- API enhancements and new endpoints
+- Client libraries for different languages
+- Documentation improvements
+- Test coverage for agents and API endpoints
+- Additional LLM provider support
 
 ## License
 
