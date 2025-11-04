@@ -473,9 +473,43 @@ class BaseModuleAgent(ABC, Generic[R]):
         """Parameters configuration node with tool support"""
         self.logger.info(f"Entering {self.name} parameters configuration")
         
+        # Get thread_id from state and inject it into the context
+        thread_id = state.get('thread_id')
+        user_id = state.get('user_id')
+        
+        # Prepare messages with thread_id context if available
+        messages = state['messages'].copy()
+        
+        # If thread_id is available, add it as a system message for context
+        if thread_id:
+            from langchain_core.messages import SystemMessage
+            thread_context = SystemMessage(content=f"CONTEXT: Current thread_id is {thread_id}. Always pass this thread_id parameter when calling tools that require file access (such as file_status, get_files, etc.).")
+            # Insert thread context before the system prompt
+            # Find the last system message and insert after it, or insert at the beginning
+            sys_msg_index = -1
+            for i, msg in enumerate(messages):
+                if isinstance(msg, SystemMessage):
+                    sys_msg_index = i
+            
+            if sys_msg_index >= 0:
+                messages.insert(sys_msg_index + 1, thread_context)
+            else:
+                messages.insert(0, thread_context)
+            
+            self.logger.info(f"Injected thread_id context into messages: thread_id={thread_id}")
+        else:
+            self.logger.warning(f"No thread_id found in state - tools may not work correctly")
+        
+        # Set environment variables for MCP tools if thread_id is available
+        if thread_id:
+            import os
+            os.environ["THREAD_ID"] = thread_id
+            os.environ["VITESS_THREAD_ID"] = thread_id
+            self.logger.info(f"Set environment variables: THREAD_ID={thread_id}, VITESS_THREAD_ID={thread_id}")
+        
         # Use LLM with tools for enhanced functionality
         try:
-            response = self.llm.invoke(state['messages'])
+            response = self.llm.invoke(messages)
             self.logger.info("LLM response received successfully")
         except Exception as e:
             self.logger.error(f"LLM invocation failed: {e}")

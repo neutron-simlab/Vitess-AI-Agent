@@ -6,14 +6,11 @@ from typing import Any
 import httpx
 
 from vitess_ai.schema.server import (
-    ChatHistory,
-    ChatHistoryInput,
     ChatMessage,
     Feedback,
     ServiceMetadata,
     StreamInput,
     UserInput,
-    ModuleInterruptInput,
     ModuleInterruptResponse,
 )
 
@@ -420,26 +417,6 @@ class AgentClient:
             except httpx.HTTPError as e:
                 raise AgentClientError(f"Error: {e}")
 
-    def get_history(self, thread_id: str) -> ChatHistory:
-        """
-        Get chat history.
-
-        Args:
-            thread_id (str, optional): Thread ID for identifying a conversation
-        """
-        request = ChatHistoryInput(thread_id=thread_id)
-        try:
-            response = httpx.post(
-                f"{self.base_url}/history",
-                json=request.model_dump(),
-                headers=self._headers,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as e:
-            raise AgentClientError(f"Error: {e}")
-
-        return ChatHistory.model_validate(response.json())
 
     def is_token_message(self, message: ChatMessage | str | ModuleInterruptResponse | dict) -> bool:
         """
@@ -515,6 +492,9 @@ class AgentClient:
     ) -> Generator[ChatMessage | str | ModuleInterruptResponse | dict, None, None]:
         """
         Respond to a module interrupt synchronously.
+        
+        This uses the regular stream endpoint, as interrupts are handled through
+        the normal streaming mechanism with Command(resume=...) messages.
 
         Args:
             message (str): The user's response to the module interrupt
@@ -527,38 +507,15 @@ class AgentClient:
         Returns:
             Generator[ChatMessage | str, None, None]: The response from the agent
         """
-        if not self.agent:
-            raise AgentClientError("No agent selected. Use update_agent() to select an agent.")
-        
-        request = ModuleInterruptInput(
-            interrupt_message=message,
+        # Use the regular stream endpoint - interrupts are handled through it
+        yield from self.stream(
             message=message,
-            thread_id=thread_id
+            thread_id=thread_id,
+            model=model,
+            provider=provider,
+            user_id=user_id,
+            stream_tokens=stream_tokens
         )
-        if model:
-            request.model = model  # type: ignore[assignment]
-        if provider:
-            request.provider = provider  # type: ignore[assignment]
-        if user_id:
-            request.user_id = user_id
-        
-        try:
-            with httpx.stream(
-                "POST",
-                f"{self.base_url}/{self.agent}/module-interrupt",
-                json=request.model_dump(),
-                headers=self._headers,
-                timeout=self.timeout,
-            ) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if line.strip():
-                        parsed = self._parse_stream_line(line)
-                        if parsed is None:
-                            break
-                        yield parsed
-        except httpx.HTTPError as e:
-            raise AgentClientError(f"Error: {e}")
 
     async def arespond_to_module_interrupt(
         self,
@@ -571,6 +528,9 @@ class AgentClient:
     ) -> AsyncGenerator[ChatMessage | str | ModuleInterruptResponse | dict, None]:
         """
         Respond to a module interrupt asynchronously.
+        
+        This uses the regular stream endpoint, as interrupts are handled through
+        the normal streaming mechanism with Command(resume=...) messages.
 
         Args:
             message (str): The user's response to the module interrupt
@@ -583,39 +543,16 @@ class AgentClient:
         Returns:
             AsyncGenerator[ChatMessage | str, None]: The response from the agent
         """
-        if not self.agent:
-            raise AgentClientError("No agent selected. Use update_agent() to select an agent.")
-        
-        request = ModuleInterruptInput(
-            interrupt_message=message,
+        # Use the regular stream endpoint - interrupts are handled through it
+        async for chunk in self.astream(
             message=message,
-            thread_id=thread_id
-        )
-        if model:
-            request.model = model  # type: ignore[assignment]
-        if provider:
-            request.provider = provider  # type: ignore[assignment]
-        if user_id:
-            request.user_id = user_id
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                async with client.stream(
-                    "POST",
-                    f"{self.base_url}/{self.agent}/module-interrupt",
-                    json=request.model_dump(),
-                    headers=self._headers,
-                    timeout=self.timeout,
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if line.strip():
-                            parsed = self._parse_stream_line(line)
-                            if parsed is None:
-                                break
-                            yield parsed
-            except httpx.HTTPError as e:
-                raise AgentClientError(f"Error: {e}")
+            thread_id=thread_id,
+            model=model,
+            provider=provider,
+            user_id=user_id,
+            stream_tokens=stream_tokens
+        ):
+            yield chunk
     
     def restart(
         self,

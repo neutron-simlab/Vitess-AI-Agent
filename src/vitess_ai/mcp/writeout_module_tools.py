@@ -16,7 +16,6 @@ from vitess_ai.schema.writeout_module import (
     VtOutputFlags
 )
 from vitess_ai.schema.base import get_field_flag
-from vitess_ai.gui.file_save import FileSaveManager
 
 
 # Initialize FastMCP server
@@ -24,75 +23,80 @@ mcp = FastMCP("Writeout MCP Server")
 
 # Global storage for current save path (single session)
 _current_save_path: str | None = None
+_thread_id: str | None = None
 
-# ============================================================================
-# GUI HELPER FUNCTIONS
-# ============================================================================
 
-async def launch_save_gui() -> str | None:
+def _try_load_save_path_from_storage() -> bool:
     """
-    Launch the GUI file save dialog and return selected file path.
-    Uses the standard PyQt6 app pattern.
+    Try to load save path from file storage service if available.
+    Returns True if save path was loaded, False otherwise.
     """
+    global _current_save_path, _thread_id
+    
+    # Try to get thread_id from environment variable
+    if not _thread_id:
+        _thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    
+    if not _thread_id:
+        return False
+    
     try:
-        # Import PyQt6 here to avoid issues if not available
-        from PyQt6.QtWidgets import QApplication
-        import sys
+        from vitess_ai.server.file_storage import get_file_storage_service
         
-        # Create QApplication if it doesn't exist
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
+        storage_service = get_file_storage_service()
+        files = storage_service.list_files(_thread_id, "writeout")
         
-        # Standard PyQt6 pattern
-        file_saver = FileSaveManager()
-        file_saver.show()
-        
-        # This blocks until the window is closed
-        app.exec()
-        
-        # Return the file path that was selected
-        return file_saver.save_file_path
-        
-    except ImportError as e:
-        print(f"GUI not available: {e}")
-        return None
-    except Exception as e:
-        print(f"Error launching save GUI: {e}")
-        return None
+        if files and len(files) > 0:
+            # Get the save path from file metadata (usually stored in file_path or metadata)
+            file_meta = files[0]
+            # Try to get path from metadata (might be stored in different fields)
+            save_path = file_meta.get("file_path") or file_meta.get("server_path") or file_meta.get("filename")
+            if save_path:
+                _current_save_path = save_path
+                return True
+    except Exception:
+        # If file storage is not available or fails, just continue without it
+        pass
+    
+    return False
 
 # ============================================================================
 # FILE SAVE TOOLS (Primary Operations)
 # ============================================================================
 
 @mcp.tool()
-async def save_file_gui(
-    title: str = "Save Neutron Simulation Output File",
-    default_name: str = "neutron_output.out",
-    file_filter: str = "output_files"
-) -> dict:
+async def save_file(save_path: str | None = None, thread_id: str | None = None) -> dict:
     """
-    Select save location and filename for neutron simulation output using GUI.
+    Select save location and filename for neutron simulation output using file path.
     Replaces any previously selected save path.
+    Automatically checks file storage if no save path is currently selected.
     
     Args:
-        title: Title for the save dialog (for future use)
-        default_name: Default filename to suggest
-        file_filter: Type of file filter (for future use)
-        
+        save_path: Path where simulation output should be saved (optional if already in storage)
+        thread_id: Optional thread ID to check for uploaded files in file storage
+    
     Returns:
         Dictionary with save path information and status
     """
-    global _current_save_path
+    global _current_save_path, _thread_id
+    
+    # If no save path provided and no path in memory, try loading from file storage
+    if not save_path and not _current_save_path:
+        # Use provided thread_id or try to get from environment
+        if thread_id:
+            _thread_id = thread_id
+        
+        if _try_load_save_path_from_storage():
+            # Save path loaded from storage, use it
+            save_path = _current_save_path
     
     try:
-        # Launch GUI and get save path
-        selected_path = await launch_save_gui()
-        
-        if not selected_path:
+        if not save_path:
+            # No save path provided - we need the user to provide a filename
+            # The LLM should have asked for the filename first
             return {
                 "success": False,
-                "message": "No save location was selected or GUI was cancelled.",
+                "message": "No save path provided. Please provide a full file path (directory + filename). The default directory is {root}/{thread_id}/outputs/, but you must specify the filename.",
                 "save_path": None,
                 "file_name": None,
                 "directory": None,
@@ -102,12 +106,12 @@ async def save_file_gui(
             }
         
         # Store the save path (replaces any previous path)
-        _current_save_path = selected_path
+        _current_save_path = save_path
         
         # Get path information
-        file_name = os.path.basename(selected_path)
-        directory = os.path.dirname(selected_path)
-        file_exists = os.path.exists(selected_path)
+        file_name = os.path.basename(_current_save_path)
+        directory = os.path.dirname(_current_save_path)
+        file_exists = os.path.exists(_current_save_path)
         
         # Check if directory exists and is writable
         dir_exists = os.path.exists(directory)
@@ -123,7 +127,7 @@ async def save_file_gui(
                 return {
                     "success": False,
                     "message": f"❌ Cannot create directory: {directory}\nError: {str(e)}",
-                    "save_path": selected_path,
+                    "save_path": _current_save_path,
                     "file_name": file_name,
                     "directory": directory,
                     "file_exists": file_exists,
@@ -160,19 +164,19 @@ async def save_file_gui(
         return {
             "success": True,
             "message": "\n".join(message_parts),
-            "save_path": selected_path,
+            "save_path": _current_save_path,
             "file_name": file_name,
             "directory": directory,
             "file_exists": file_exists,
             "can_write": can_write,
             "directory_created": dir_created,
-            "sOutFileName": selected_path  # Key field for WriteoutParameters
+            "sOutFileName": _current_save_path  # Key field for WriteoutParameters
         }
     
     except Exception as e:
         return {
             "success": False,
-            "message": f"❌ Error in save GUI: {str(e)}",
+            "message": f"❌ Error saving file path: {str(e)}",
             "save_path": None,
             "file_name": None,
             "directory": None,
@@ -187,26 +191,68 @@ async def save_file_gui(
 # ============================================================================
 
 @mcp.tool()
-async def save_path_status() -> dict:
+async def save_path_status(thread_id: str | None = None) -> dict:
     """
     Show current save path selection status.
+    Automatically checks file storage if no save path is currently selected.
+    
+    Args:
+        thread_id: Optional thread ID to check for uploaded files in file storage
         
     Returns:
         Dictionary with current save path status and information
     """
-    global _current_save_path
+    global _current_save_path, _thread_id
+    
+    # If no save path in memory, try loading from file storage
+    if not _current_save_path:
+        # Use provided thread_id or try to get from environment
+        if thread_id:
+            _thread_id = thread_id
+        
+        if _try_load_save_path_from_storage():
+            # Save path loaded from storage, continue with status check
+            pass
     
     if not _current_save_path:
-        return {
-            "has_save_path": False,
-            "message": "📂 No save location currently selected. Use save_file_gui() to select a location.",
-            "save_path": None,
-            "file_name": None,
-            "directory": None,
-            "file_exists": False,
-            "can_write": False,
-            "vitess_sOutFileName": None
-        }
+        # Get default directory: root/{thread_id}/outputs/
+        # NOTE: We only set the directory, NOT the filename. The LLM must ask the user for the filename.
+        from vitess_ai.core.config import global_config
+        from pathlib import Path
+        
+        # Get thread_id from parameter, global, or environment
+        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
+        if resolved_thread_id:
+            default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
+            _thread_id = resolved_thread_id
+            
+            # Ensure directory exists
+            default_directory.mkdir(parents=True, exist_ok=True)
+            
+            return {
+                "has_save_path": False,
+                "message": f"📂 Default output directory: {default_directory}/\n\nPlease provide a filename for the output file. The file will be saved to: {default_directory}/[your_filename].\n\nWhat would you like to name your output file? (e.g., neutron_output.out, results.dat, simulation_output.txt)",
+                "save_path": None,
+                "file_name": None,
+                "directory": str(default_directory),
+                "file_exists": False,
+                "can_write": True,  # Directory was just created
+                "vitess_sOutFileName": None,
+                "default_directory": str(default_directory),
+                "needs_filename": True
+            }
+        else:
+            return {
+                "has_save_path": False,
+                "message": "📂 No save location currently selected and no thread_id available to generate default directory. Please provide a thread_id.",
+                "save_path": None,
+                "file_name": None,
+                "directory": None,
+                "file_exists": False,
+                "can_write": False,
+                "vitess_sOutFileName": None
+            }
     
     file_name = os.path.basename(_current_save_path)
     directory = os.path.dirname(_current_save_path)
@@ -263,17 +309,53 @@ async def save_path_status() -> dict:
 # ============================================================================
 
 @mcp.tool()
-async def get_save_path() -> dict[str, Any] | str:
+async def get_save_path(thread_id: str | None = None) -> dict[str, Any] | str:
     """
     Get the current selected save path.
+    Automatically checks file storage if no save path is currently selected.
+    
+    Args:
+        thread_id: Optional thread ID to check for uploaded files in file storage
         
     Returns:
         Dictionary with save path information ready for Vitess WriteoutParameters
     """
-    global _current_save_path
+    global _current_save_path, _thread_id
+    
+    # If no save path in memory, try loading from file storage
+    if not _current_save_path:
+        # Use provided thread_id or try to get from environment
+        if thread_id:
+            _thread_id = thread_id
+        
+        if _try_load_save_path_from_storage():
+            # Save path loaded from storage, continue with retrieval
+            pass
     
     if not _current_save_path:
-        return "❌ No save location selected. Use save_file_gui() first to select a location."
+        # No save path set - we need the user to provide a filename
+        # Return information about the default directory
+        from vitess_ai.core.config import global_config
+        from pathlib import Path
+        
+        # Get thread_id from parameter, global, or environment
+        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
+        if resolved_thread_id:
+            default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
+            _thread_id = resolved_thread_id
+            
+            # Ensure directory exists
+            default_directory.mkdir(parents=True, exist_ok=True)
+            
+            return {
+                "error": "No save path selected",
+                "message": f"📂 Default output directory: {default_directory}/\n\nPlease provide a filename for the output file. The file will be saved to: {default_directory}/[your_filename].\n\nWhat would you like to name your output file? (e.g., neutron_output.out, results.dat, simulation_output.txt)",
+                "default_directory": str(default_directory),
+                "needs_filename": True
+            }
+        else:
+            return "❌ No save location selected and no thread_id available to generate default directory. Please provide a thread_id."
     
     # Create the response with path info
     response = {

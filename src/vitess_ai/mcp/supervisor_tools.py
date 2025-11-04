@@ -5,6 +5,7 @@ FastMCP tools for converting collected module parameters to CLI commands
 from fastmcp import FastMCP
 from typing import Any, Dict, List, Optional, Union
 from vitess_ai.core.config import global_config
+from datetime import datetime
 import logging
 import json
 
@@ -199,7 +200,6 @@ async def run_simulation(
             import subprocess
             import tempfile
             import os
-            from datetime import datetime
             
             # Create a temporary script file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
@@ -272,11 +272,21 @@ rm ${{L}}*
                     "message": f"Simulation execution failed: {e}"
                 })
             finally:
-                # Move script to VITESS_PROJECT_PATH for reference
+                # Move script to thread's outputs directory for reference
                 try:
                     import shutil
+                    thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
                     script_name = f"simulation_script_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sh"
-                    final_script_path = os.path.join(global_config.VITESS_PROJECT_PATH, script_name)
+                    
+                    if thread_id:
+                        # Save to thread's outputs directory
+                        outputs_dir = os.path.join(global_config.VITESS_PROJECT_PATH, thread_id, "outputs")
+                        os.makedirs(outputs_dir, exist_ok=True)
+                        final_script_path = os.path.join(outputs_dir, script_name)
+                    else:
+                        # Fallback to root project path
+                        final_script_path = os.path.join(global_config.VITESS_PROJECT_PATH, script_name)
+                    
                     shutil.move(script_path, final_script_path)
                     result["saved_script_path"] = final_script_path
                 except Exception as e:
@@ -294,6 +304,117 @@ rm ${{L}}*
             "error": str(e),
             "message": f"Failed to prepare simulation: {e}"
         }
+
+@mcp.tool()
+async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]:
+    """
+    Inspect the complete folder structure for a thread including uploads and outputs.
+    
+    Args:
+        thread_id: Optional thread ID to inspect. If not provided, will try to get from environment variables.
+        
+    Returns:
+        Dictionary with complete folder structure
+    """
+    import logging
+    from pathlib import Path
+    logger = logging.getLogger(__name__)
+    
+    # Get thread_id
+    if not thread_id:
+        thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    
+    if not thread_id:
+        return {
+            "success": False,
+            "message": "❌ No thread_id available. Cannot inspect thread folders.",
+            "thread_id": None,
+            "folder_structure": {}
+        }
+    
+    try:
+        from vitess_ai.core.config import global_config
+        from vitess_ai.server.file_storage import get_file_storage_service
+        
+        storage_service = get_file_storage_service()
+        root_path = Path(global_config.VITESS_PROJECT_PATH)
+        thread_path = root_path / thread_id
+        
+        folder_structure = {
+            "root_path": str(root_path),
+            "thread_id": thread_id,
+            "thread_path": str(thread_path),
+            "exists": thread_path.exists(),
+            "uploads": {},
+            "outputs": {}
+        }
+        
+        # Inspect uploads directory
+        uploads_path = thread_path / "uploads"
+        if uploads_path.exists():
+            folder_structure["uploads"]["path"] = str(uploads_path)
+            folder_structure["uploads"]["exists"] = True
+            folder_structure["uploads"]["modules"] = {}
+            
+            # Check each module type
+            for module_type in ["readin", "guide", "instrument", "writeout"]:
+                module_path = uploads_path / module_type
+                if module_path.exists():
+                    files = []
+                    for file_path in module_path.iterdir():
+                        if file_path.is_file():
+                            try:
+                                file_stat = file_path.stat()
+                                files.append({
+                                    "filename": file_path.name,
+                                    "file_size": file_stat.st_size,
+                                    "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+                                })
+                            except OSError:
+                                pass
+                    folder_structure["uploads"]["modules"][module_type] = {
+                        "path": str(module_path),
+                        "file_count": len(files),
+                        "files": files
+                    }
+        
+        # Inspect outputs directory
+        outputs_path = thread_path / "outputs"
+        if outputs_path.exists():
+            folder_structure["outputs"]["path"] = str(outputs_path)
+            folder_structure["outputs"]["exists"] = True
+            folder_structure["outputs"]["files"] = []
+            
+            for file_path in outputs_path.iterdir():
+                if file_path.is_file():
+                    try:
+                        file_stat = file_path.stat()
+                        folder_structure["outputs"]["files"].append({
+                            "filename": file_path.name,
+                            "file_size": file_stat.st_size,
+                            "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+                        })
+                    except OSError:
+                        pass
+            
+            folder_structure["outputs"]["file_count"] = len(folder_structure["outputs"]["files"])
+        
+        return {
+            "success": True,
+            "message": f"📁 Complete folder structure for thread {thread_id[:8]}...",
+            "thread_id": thread_id,
+            "folder_structure": folder_structure
+        }
+    except Exception as e:
+        logger.error(f"Error inspecting thread folders: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": f"❌ Error inspecting thread folders: {str(e)}",
+            "thread_id": thread_id,
+            "folder_structure": {},
+            "error": str(e)
+        }
+
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

@@ -2,12 +2,45 @@
 from fastmcp import FastMCP
 import json
 import os
-from vitess_ai.gui.file_upload_guide import GuideFileListManager
 from vitess_ai.schema.guide_module import GuideParameters
 from vitess_ai.schema.base import get_field_flag
 from typing import Any, Union
 
 mcp = FastMCP("Guide Parameter Validation Server")
+
+# Global storage for current file list (single session)
+_current_files: list[str] = []
+_thread_id: str | None = None
+
+
+def _try_load_files_from_storage() -> bool:
+    """
+    Try to load files from file storage service if available.
+    Returns True if files were loaded, False otherwise.
+    """
+    global _current_files, _thread_id
+    
+    # Try to get thread_id from environment variable
+    if not _thread_id:
+        _thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    
+    if not _thread_id:
+        return False
+    
+    try:
+        from vitess_ai.server.file_storage import get_file_storage_service
+        
+        storage_service = get_file_storage_service()
+        file_paths = storage_service.get_file_paths_for_module(_thread_id, "guide")
+        
+        if file_paths and len(file_paths) > 0:
+            _current_files = [file_paths[0]]  # Guide module only allows one file
+            return True
+    except Exception:
+        # If file storage is not available or fails, just continue without it
+        pass
+    
+    return False
 
 def guide_params_to_cli(params:dict) -> str:
     cli_params = list()
@@ -81,31 +114,36 @@ async def validate_guide_parameters(parameters: Union[str, dict[str, Any]]) -> d
 # ============================================================================
 
 @mcp.tool()
-async def upload_file_gui(
-    title: str = "Select Neutron Simulation Guide Input File",
-    file_filter: str = "neutron_guide_files"
-) -> dict:
+async def upload_file(file_path: str | None = None, thread_id: str | None = None) -> dict:
     """
-    Upload files for neutron simulation guide input using GUI file picker.
-    Replaces any previously selected files.
+    Upload a file for neutron simulation guide input using file path.
+    Replaces any previously selected file.
+    Automatically checks file storage if no file is currently selected.
     
     Args:
-        title: Title for the file picker dialog (for future use)
-        file_filter: Type of file filter (for future use)
-        
+        file_path: Path to the guide file (optional if file is already in storage)
+        thread_id: Optional thread ID to check for uploaded files in file storage
+    
     Returns:
         Dictionary with file information and status
     """
-    global _current_files
+    global _current_files, _thread_id
+    
+    # If no file provided and no file in memory, try loading from file storage
+    if not file_path and not _current_files:
+        # Use provided thread_id or try to get from environment
+        if thread_id:
+            _thread_id = thread_id
+        
+        if _try_load_files_from_storage():
+            # File loaded from storage, use it
+            file_path = _current_files[0] if _current_files else None
     
     try:
-        # Launch GUI and get file paths
-        selected_files = await launch_picker_gui()
-        
-        if not selected_files:
+        if not file_path:
             return {
                 "success": False,
-                "message": "No files were selected or GUI was cancelled.",
+                "message": "No file path provided.",
                 "files": [],
                 "file_count": 0,
                 "existing_files": [],
@@ -113,64 +151,55 @@ async def upload_file_gui(
             }
         
         # Store the file list (replaces any previous files)
-        _current_files = selected_files
+        _current_files = [file_path]
         
-        # Validate files exist and get info
-        existing_files = []
-        missing_files = []
-        file_details = []
-        
-        for file_path in selected_files:
-            if os.path.exists(file_path):
-                existing_files.append(file_path)
-                file_details.append({
+        # Validate file exists and get info
+        if os.path.exists(file_path):
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            
+            message_parts = []
+            message_parts.append(f"✅ Successfully selected guide file")
+            message_parts.append("")
+            message_parts.append(f"📄 {file_name} ({file_size:,} bytes)")
+            message_parts.append("")
+            message_parts.append("💾 File ready for simulation")
+            
+            return {
+                "success": True,
+                "message": "\n".join(message_parts),
+                "files": [file_path],
+                "file_count": 1,
+                "existing_files": [file_path],
+                "missing_files": [],
+                "file_details": [{
                     "path": file_path,
-                    "name": os.path.basename(file_path),
-                    "size": os.path.getsize(file_path),
+                    "name": file_name,
+                    "size": file_size,
                     "exists": True
-                })
-            else:
-                missing_files.append(file_path)
-                file_details.append({
+                }]
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"⚠️ Selected file does not exist: {file_path}",
+                "files": [file_path],
+                "file_count": 1,
+                "existing_files": [],
+                "missing_files": [file_path],
+                "file_details": [{
                     "path": file_path,
                     "name": os.path.basename(file_path),
                     "size": 0,
                     "exists": False
-                })
-        
-        # Create human-readable message
-        message_parts = []
-        message_parts.append(f"✅ Successfully selected {len(existing_files)} files")
-        message_parts.append("")
-        
-        for i, file_path in enumerate(existing_files, 1):
-            file_name = os.path.basename(file_path)
-            file_size = os.path.getsize(file_path)
-            message_parts.append(f"  {i}. {file_name} ({file_size:,} bytes)")
-        
-        if missing_files:
-            message_parts.append(f"\n⚠️  Warning: {len(missing_files)} files not found:")
-            for file_path in missing_files:
-                message_parts.append(f"  ❌ {os.path.basename(file_path)}")
-        
-        message_parts.append("\n💾 Files ready for simulation")
-        message_parts.append("📋 Use get_files() to retrieve the file list")
-        
-        # Return structured response
-        return {
-            "success": True,
-            "message": "\n".join(message_parts),
-            "files": selected_files,
-            "file_count": len(selected_files),
-            "existing_files": existing_files,
-            "missing_files": missing_files,
-            "file_details": file_details
-        }
+                }],
+                "error": "File does not exist"
+            }
     
     except Exception as e:
         return {
             "success": False,
-            "message": f"❌ Error in file GUI: {str(e)}",
+            "message": f"❌ Error uploading file: {str(e)}",
             "files": [],
             "file_count": 0,
             "existing_files": [],
@@ -179,38 +208,116 @@ async def upload_file_gui(
             "error": str(e)
         }
 
-# ============================================================================
-# GUI HELPER FUNCTIONS
-# ============================================================================
-
-async def launch_picker_gui() -> list[str]: # type: ignore
+@mcp.tool()
+async def file_status(thread_id: str | None = None) -> dict:
     """
-    Launch the GUI file picker and return selected file paths.
-    Uses the standard PyQt6 app pattern.
-    """
-    try:
-        # Import PyQt6 here to avoid issues if not available
-        from PyQt6.QtWidgets import QApplication
-        import sys
-        
-        # Create QApplication if it doesn't exist
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
-        
-        # Standard PyQt6 pattern
-        file_picker = GuideFileListManager()
-        file_picker.show()
-        
-        # This blocks until the window is closed
-        app.exec()
-        
-        # Return the file paths that were selected
-        return file_picker.file_paths
-        
-    except ImportError as e:
-        print(f"GUI not available: {e}")
-        return []
+    Show current guide file selection status.
+    Automatically checks file storage if no file is currently selected.
     
+    Args:
+        thread_id: Optional thread ID to check for uploaded files in file storage
+    
+    Returns:
+        Dictionary with current file status and information
+    """
+    global _current_files, _thread_id
+    
+    # If no file in memory, try loading from file storage
+    if not _current_files:
+        # Use provided thread_id or try to get from environment
+        if thread_id:
+            _thread_id = thread_id
+        
+        if _try_load_files_from_storage():
+            # File loaded from storage, continue with status check
+            pass
+    
+    if not _current_files:
+        return {
+            "has_file": False,
+            "message": "❌ No guide file selected. Use upload_file() first to select a file.",
+            "files": [],
+            "file_count": 0,
+            "existing_files": [],
+            "missing_files": []
+        }
+    
+    # Process file details
+    file_path = _current_files[0]
+    file_name = os.path.basename(file_path)
+    
+    if os.path.exists(file_path):
+        file_size = os.path.getsize(file_path)
+        return {
+            "has_file": True,
+            "message": f"📋 Current guide file: {file_name} ({file_size:,} bytes)",
+            "files": _current_files,
+            "file_count": 1,
+            "existing_files": _current_files,
+            "missing_files": [],
+            "file_details": [{
+                "path": file_path,
+                "name": file_name,
+                "size": file_size,
+                "exists": True
+            }]
+        }
+    else:
+        return {
+            "has_file": True,
+            "message": f"❌ Selected guide file not found: {file_name}",
+            "files": _current_files,
+            "file_count": 1,
+            "existing_files": [],
+            "missing_files": _current_files,
+            "file_details": [{
+                "path": file_path,
+                "name": file_name,
+                "size": 0,
+                "exists": False
+            }],
+            "error": "File not found"
+        }
+
+
+@mcp.tool()
+async def get_file(thread_id: str | None = None) -> dict[str, Any] | str:
+    """
+    Get the current selected guide file.
+    Automatically checks file storage if no file is currently selected.
+    
+    Args:
+        thread_id: Optional thread ID to check for uploaded files in file storage
+        
+    Returns:
+        Dictionary with file information ready for Vitess
+    """
+    global _current_files, _thread_id
+    
+    # If no file in memory, try loading from file storage
+    if not _current_files:
+        # Use provided thread_id or try to get from environment
+        if thread_id:
+            _thread_id = thread_id
+        
+        if _try_load_files_from_storage():
+            # File loaded from storage, continue with retrieval
+            pass
+    
+    if not _current_files:
+        return "❌ No guide file selected. Use upload_file() first to select a file."
+    
+    file_path = _current_files[0]
+    file_name = os.path.basename(file_path)
+    
+    return {
+        "file": file_path,
+        "file_name": file_name,
+        "file_count": 1,
+        "files": _current_files,
+        "exists": os.path.exists(file_path)
+    }
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

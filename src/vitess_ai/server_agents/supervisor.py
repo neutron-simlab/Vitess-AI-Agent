@@ -104,15 +104,22 @@ class SupervisorAgent:
         """Setup simulation execution MCP tools"""
         try:
             from langchain_mcp_adapters.client import MultiServerMCPClient
+            import os
+            
+            # Prepare environment variables for MCP subprocess
+            env = os.environ.copy()
+            
             client = MultiServerMCPClient({
                 "simulation_runner": {
                     "command": "python",
                     "args": [self.simulation_tools_path],
-                    "transport": "stdio"
+                    "transport": "stdio",
+                    "env": env  # Pass environment variables to subprocess
                 }
             })
             self.simulation_tools = await client.get_tools()
             self.logger.info(f"Loaded {len(self.simulation_tools)} simulation tools")
+            self.logger.debug(f"Simulation MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
             
             # Bind tools to LLM
             if self.simulation_tools:
@@ -250,15 +257,26 @@ class SupervisorAgent:
         if module_metadata.config_path:
             try:
                 from langchain_mcp_adapters.client import MultiServerMCPClient
+                import os
+                
+                # Prepare environment variables for MCP subprocess
+                # Include current environment plus THREAD_ID and VITESS_THREAD_ID if available
+                env = os.environ.copy()
+                # Note: thread_id will be set dynamically when tools are called via service.py
+                # The environment variables are passed at subprocess creation time
+                # We'll pass current env vars, and service.py will update them before tool calls
+                
                 client = MultiServerMCPClient({
                     "validation": {
                         "command": "python",
                         "args": [module_metadata.config_path],
-                        "transport": "stdio"
+                        "transport": "stdio",
+                        "env": env  # Pass environment variables to subprocess
                     }
                 })
                 tools = await client.get_tools()
                 self.logger.info(f"Loaded {len(tools)} MCP tools for {module_name}")
+                self.logger.debug(f"MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
             except Exception as e:
                 self.logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
         
@@ -452,6 +470,20 @@ class SupervisorAgent:
         """Welcome node with dynamic module information"""
         self.logger.info("Supervisor welcome node triggered.")
         
+        # Get thread_id and user_id from state (set in initial input)
+        thread_id = state.get('thread_id')
+        user_id = state.get('user_id')
+        
+        # Set environment variables for MCP tools if thread_id is available
+        if thread_id:
+            import os
+            os.environ["THREAD_ID"] = thread_id
+            os.environ["VITESS_THREAD_ID"] = thread_id
+            self.logger.info(f"Using thread_id from state: {thread_id} and set environment variables")
+            self.logger.debug(f"Environment variables set: THREAD_ID={os.environ.get('THREAD_ID')}, VITESS_THREAD_ID={os.environ.get('VITESS_THREAD_ID')}")
+        else:
+            self.logger.warning("No thread_id found in state - MCP tools may not work correctly")
+        
         # Show available modules
         modules_info = []
         execution_order = self.registry.get_execution_order()
@@ -467,18 +499,17 @@ class SupervisorAgent:
         welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info) + "\n" + simulation_info 
         
         # Return welcome message in messages for streaming
-        # user_message = state.get('messages', [])[0] if state.get('messages') else HumanMessage(content="Start")
+        # Preserve thread_id and user_id from state
         return {
             'messages': [
-                # user_message,
                 AIMessage(content=welcome_text)
             ],
             'current_stage': SupervisorStage.MODULE_EXECUTION,
             'execution_order': execution_order,
             'pending_modules': execution_order.copy(),
             'module_results': {},
-            'thread_id': state.get('thread_id', ""),
-            'user_id': state.get('user_id', ""),
+            'thread_id': thread_id or "",
+            'user_id': user_id or "",
             'cli_generation_ready': False,
             'error_message': None,
         }
@@ -762,7 +793,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         new_summary = running_summary  # Default to existing summary if anything fails
         try:
             prompt_msg = HumanMessage(content=summary_prompt)
-            summarizer = self.llm.bind(max_tokens=128)
+            summarizer = self.llm.bind(max_tokens=1024)
             llm_messages = messages + [prompt_msg]
             
             # Enhanced logging for LLM invocation

@@ -73,8 +73,12 @@ class InterruptHandler:
             # User input is response to resume agent execution from interrupt
             input_data: Command | dict[str, Any] = Command(resume=user_input)
         else:
-            # Normal input - add as human message
-            input_data = {"messages": [HumanMessage(content=user_input)]}
+            # Normal input - add as human message and include thread_id/user_id in state
+            input_data = {
+                "messages": [HumanMessage(content=user_input)],
+                "thread_id": thread_id,
+                "user_id": user_id,
+            }
         
         kwargs = {
             "input": input_data,

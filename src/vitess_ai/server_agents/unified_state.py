@@ -52,6 +52,7 @@ class UnifiedState(MessagesState):
     user_id: Optional[str] = None
     error_message: Optional[str] = None
     
+    
     def get_current_module_result(self) -> Optional[ModuleResult]:
         """Get the result for the current module if it exists."""
         if self.current_module and self.current_module in self.module_results:
