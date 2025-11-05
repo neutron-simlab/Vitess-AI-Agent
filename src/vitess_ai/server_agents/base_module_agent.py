@@ -16,30 +16,10 @@ from langchain.tools import BaseTool
 from langgraph.types import interrupt
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from vitess_ai.schema.base import FillingStage
+from vitess_ai.server_agents.unified_state import UnifiedState, ModuleResult, ModuleStatus
 
 # Type variables for generic parameter types
 R = TypeVar('R')  # For initial response types
-
-
-# =================
-# MODULE RESULT CLASSES
-# =================
-
-class ModuleStatus(str, Enum):
-    """Status of individual modules"""
-    COMPLETED = "completed"
-
-
-class ModuleResult(BaseModel):
-    """Result from a completed module agent"""
-    module_name: str
-    status: ModuleStatus
-    parameters: Optional[Dict[str, Any]] = None
-    cli_parameters: Optional[str] = None
-    error_message: Optional[str] = None
-    execution_time: Optional[float] = None
-    thread_id: Optional[str] = None
-    user_id: Optional[str] = None
 
 
 class ModuleMetadata(BaseModel):
@@ -315,26 +295,23 @@ class BaseModuleAgent(ABC, Generic[R]):
     # FLAT GRAPH NODE IMPLEMENTATIONS
     # =================
     
-    def welcome_node(self, state: dict) -> dict:
+    def welcome_node(self, state: UnifiedState) -> dict:
         """Welcome node for the module - emits welcome message only"""
         self.logger.info(f"Starting {self.name} welcome interaction")
-        
-        # Set current module in state
-        state["current_module"] = self.module_name
-        state["module_stage"] = FillingStage(stage='processing')
         
         # Create welcome message without decorative header - Streamlit app handles styling
         welcome_text = f"{self.welcome_message}"
         welcome = AIMessage(content=welcome_text, additional_kwargs={"module_name": self.module_name})
         
-        # Prepend the module system prompt so the LLM has correct context
+        # Return state updates without mutating input state (LangGraph best practice)
         return {
-            **state,
+            'current_module': self.module_name,
+            'module_stage': FillingStage(stage='processing'),
             'messages': state.get('messages', []) + [welcome],
             'error_message': None
         }
 
-    def welcome_interrupt_node(self, state: dict) -> dict:
+    def welcome_interrupt_node(self, state: UnifiedState) -> dict:
         """Interrupt node to collect initial choice and parse it"""
         self.logger.info(f"Triggering interrupt for {self.name} initial choice")
         
@@ -378,7 +355,6 @@ class BaseModuleAgent(ABC, Generic[R]):
         except Exception as e:
             self.logger.error(f"Failed to create structured LLM: {e}")
             return {
-                **state,
                 'messages': messages,
                 'config_mode': "Unknown",
                 'validation_status': None,
@@ -398,7 +374,6 @@ class BaseModuleAgent(ABC, Generic[R]):
                 config_mode = "Default Setup"
         
         return {
-            **state,
             'messages': messages,
             'config_mode': config_mode,
             'validation_status': None,
@@ -441,7 +416,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.logger.info(f"Parsed configuration mode: {config_mode}")
         return config_mode
     
-    def default_setup_node(self, state: dict) -> dict:
+    def default_setup_node(self, state: UnifiedState) -> dict:
         """Default setup node"""
         self.logger.info(f"Entering {self.name} default setup configuration")
         
@@ -449,13 +424,12 @@ class BaseModuleAgent(ABC, Generic[R]):
         sys_default_message = SystemMessage(content=self.get_default_setup_message())
         
         return {
-            **state,
             'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_default_message, self.sys_prompt],
             'module_stage': FillingStage(stage='processing'),
             'error_message': None
         }
     
-    def customize_setup_node(self, state: dict) -> dict:
+    def customize_setup_node(self, state: UnifiedState) -> dict:
         """Customize setup node"""
         self.logger.info(f"Entering {self.name} customized configuration")
         
@@ -463,13 +437,12 @@ class BaseModuleAgent(ABC, Generic[R]):
         sys_customize_message = SystemMessage(content=self.get_customize_setup_message())
         
         return {
-            **state,
             'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_customize_message, self.sys_prompt],
             'module_stage': FillingStage(stage='processing'),
             'error_message': None
         }
     
-    def parameters_config_node(self, state: dict) -> dict:
+    def parameters_config_node(self, state: UnifiedState) -> dict:
         """Parameters configuration node with tool support"""
         self.logger.info(f"Entering {self.name} parameters configuration")
         
@@ -518,7 +491,6 @@ class BaseModuleAgent(ABC, Generic[R]):
         if not response:
             self.logger.error("No response from LLM, returning error state")
             return {
-                **state,
                 'module_stage': FillingStage(stage='error'),
                 'validation_status': False,
                 'error_message': "Failed to get LLM response"
@@ -535,7 +507,6 @@ class BaseModuleAgent(ABC, Generic[R]):
         if has_tool_calls:
             self.logger.info("Routing to tools node")
             return {
-                **state,
                 'messages': updated_messages,
                 'module_stage': FillingStage(stage='processing'),
                 'error_message': None
@@ -550,13 +521,12 @@ class BaseModuleAgent(ABC, Generic[R]):
             self.logger.info(f"Final messages count after user input: {len(final_messages)}")
             
             return {
-                **state,
                 'messages': final_messages,
                 'module_stage': FillingStage(stage='processing'),
                 'error_message': None
             }
     
-    def tools_node(self, state: dict) -> dict:
+    def tools_node(self, state: UnifiedState) -> dict:
         """Tools execution node - handles MCP tool calls"""
         if not self.tools:
             self.logger.warning("No tools available, skipping tools node")
@@ -575,12 +545,11 @@ class BaseModuleAgent(ABC, Generic[R]):
         self.logger.info(f"Executing {len(last_message.tool_calls)} tool calls")
         
         return {
-            **state,
             'module_stage': FillingStage(stage='processing'),
             'error_message': None
         }
     
-    def finalize_node(self, state: dict) -> dict:
+    def finalize_node(self, state: UnifiedState) -> dict:
         """Finalization node - processes final results"""
         self.logger.info(f"Entering {self.name} finalization")
         
@@ -616,7 +585,6 @@ class BaseModuleAgent(ABC, Generic[R]):
             )
             
             return {
-                **state,
                 'messages': state.get('messages', []) + [completion_ai_message],
                 'current_module': self.module_name,  # Set current_module in state for proper routing
                 'module_stage': FillingStage(stage='completed'),
@@ -631,7 +599,6 @@ class BaseModuleAgent(ABC, Generic[R]):
             error_msg = f"Failed to parse final result: {str(e)}"
             self.logger.error(error_msg)
             return {
-                **state,
                 'module_stage': FillingStage(stage='error'),
                 'validation_status': False,
                 'error_message': error_msg
@@ -718,7 +685,7 @@ class BaseModuleAgent(ABC, Generic[R]):
     # ROUTING FUNCTIONS
     # =================
     
-    def route_after_welcome(self, state: dict) -> str:
+    def route_after_welcome(self, state: UnifiedState) -> str:
         """Route after welcome based on config mode"""
         config_mode = state.get('config_mode', '')
         
@@ -739,7 +706,7 @@ class BaseModuleAgent(ABC, Generic[R]):
             self.logger.error(f"Unhandled config mode: {config_mode}, defaulting to Default Setup")
             return f'{self.module_name}_default_setup'
     
-    def route_after_tools(self, state: dict) -> str:
+    def route_after_tools(self, state: UnifiedState) -> str:
         """Route after tool execution"""
         if not self.tools:
             self.logger.warning("No tools available, routing to params_config")
@@ -768,7 +735,7 @@ class BaseModuleAgent(ABC, Generic[R]):
             self.logger.error(f"Error parsing tool result: {str(e)}")
             return f'{self.module_name}_params_config'
     
-    def route_after_params_config(self, state: dict) -> str:
+    def route_after_params_config(self, state: UnifiedState) -> str:
         """Route after parameters configuration based on tool calls"""
         last_message = state['messages'][-1] if state.get('messages') else None
         

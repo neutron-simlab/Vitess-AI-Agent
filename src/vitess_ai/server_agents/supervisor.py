@@ -466,7 +466,7 @@ class SupervisorAgent:
     # SUPERVISOR NODE IMPLEMENTATIONS
     # =================
     
-    def _welcome_node(self, state: dict) -> dict:
+    def _welcome_node(self, state: UnifiedState) -> dict:
         """Welcome node with dynamic module information"""
         self.logger.info("Supervisor welcome node triggered.")
         
@@ -514,7 +514,7 @@ class SupervisorAgent:
             'error_message': None,
         }
     
-    def _prepare_simulation_node(self, state: dict) -> dict:
+    def _prepare_simulation_node(self, state: UnifiedState) -> dict:
         """Prepare simulation node - emits the 'starting simulation' message before execution"""
         self.logger.info("Preparing simulation execution - showing start message")
         
@@ -548,12 +548,11 @@ All modules have been configured successfully:
         start_ai_message = AIMessage(content=simulation_start_message)
         
         return {
-            **state,
             'messages': state.get('messages', []) + [start_ai_message],
             'current_module': 'supervisor'  # Mark as supervisor message for proper display
         }
     
-    def _run_simulation_node(self, state: dict) -> dict:
+    def _run_simulation_node(self, state: UnifiedState) -> dict:
         """Simulation execution node - runs simulation directly using module results
         
         This node includes timeout protection to prevent hanging with Blablador:
@@ -611,7 +610,7 @@ All modules have been configured successfully:
             'current_module': 'supervisor'  # Mark as supervisor message for proper display
         }
     
-    def _completion_node(self, state: dict) -> dict:
+    def _completion_node(self, state: UnifiedState) -> dict:
         """Enhanced completion node with CLI information and simulation execution summary"""
         
         # Generate summary
@@ -658,14 +657,13 @@ Configuration is complete. The simulation parameters are ready for execution.
         
         # Return completion message in messages for streaming
         return {
-            **state,
             'current_stage': SupervisorStage.COMPLETION,
             'error_message': None,
             'current_module': 'supervisor',  # Mark as supervisor message for proper display
             'messages': state.get('messages', []) + [AIMessage(content=completion_message)]
         }
     
-    def _error_handler_node(self, state: dict) -> dict:
+    def _error_handler_node(self, state: UnifiedState) -> dict:
         """Error handler node"""
         error_msg = state.get('error_message', 'Unknown error occurred')
         
@@ -684,7 +682,6 @@ Configuration is complete. The simulation parameters are ready for execution.
         
         # Return error message in messages for streaming
         return {
-            **state,
             'current_stage': SupervisorStage.ERROR,
             'messages': state.get('messages', []) + [AIMessage(content=error_message)]
         }
@@ -693,7 +690,7 @@ Configuration is complete. The simulation parameters are ready for execution.
     # ROUTING FUNCTIONS
     # =================
     
-    def _route_from_welcome(self, state: dict) -> str:
+    def _route_from_welcome(self, state: UnifiedState) -> str:
         """Route from welcome to first module or error"""
         if state.get('current_stage') == SupervisorStage.MODULE_EXECUTION:
             execution_order = state.get('execution_order', [])
@@ -745,7 +742,7 @@ Configuration is complete. The simulation parameters are ready for execution.
             self.logger.error(f"Module {module_name} not found in execution order: {execution_order}")
             return "supervisor_error_handler"
 
-    def _route_after_summarize(self, state: dict) -> str:
+    def _route_after_summarize(self, state: UnifiedState) -> str:
         """After summarization, continue to the next module or simulation if none left"""
         execution_order = state.get('execution_order', [])
         module_results = state.get('module_results', {})
@@ -760,7 +757,7 @@ Configuration is complete. The simulation parameters are ready for execution.
             return "supervisor_prepare_simulation"
         return f"{next_module}_welcome"
 
-    def _summarize_node(self, state: dict) -> dict:
+    def _summarize_node(self, state: UnifiedState) -> dict:
         """Summarize recent conversation and prune older messages before next module.
         
         This node includes robust timeout handling and fallback mechanisms:
@@ -855,7 +852,7 @@ Configuration is complete. The simulation parameters are ready for execution.
             update['messages'] = to_delete
         return update
     
-    def _route_from_simulation(self, state: dict) -> str:
+    def _route_from_simulation(self, state: UnifiedState) -> str:
         """Route from simulation execution based on tools availability"""
         last_message = state['messages'][-1]
         
@@ -871,13 +868,13 @@ Configuration is complete. The simulation parameters are ready for execution.
             self.logger.info("There is a problem with simulation tool calling, particularly with LLM can't understand the instruction.")
             return END
     
-    def _route_after_simulation_tools(self, state: dict) -> str:
+    def _route_after_simulation_tools(self, state: UnifiedState) -> str:
         """Route after simulation tools execution to post-simulation response node"""
         # Routing functions should not mutate state - just return next node
         self.logger.info("Routing to post-simulation response node")
         return 'supervisor_post_simulation_response'
     
-    def _post_simulation_response_node(self, state: dict) -> dict:
+    def _post_simulation_response_node(self, state: UnifiedState) -> dict:
         """Post-simulation response node - generates AI response after tool execution
         
         This node includes timeout protection to prevent hanging with Blablador:
@@ -971,7 +968,6 @@ Configuration is complete. The simulation parameters are ready for execution.
         updated_messages = messages + [response]
         
         return {
-            **state,
             'messages': updated_messages,
             'current_module': 'supervisor',  # Mark as supervisor message for proper display
             'simulation_finish': simulation_finish,
@@ -979,7 +975,7 @@ Configuration is complete. The simulation parameters are ready for execution.
             'simulation_results': execution_results if execution_results else state.get('simulation_results')
         }
     
-    def _route_after_post_simulation_response(self, state: dict) -> str:
+    def _route_after_post_simulation_response(self, state: UnifiedState) -> str:
         """Route after post-simulation response to completion"""
         validation_status = state.get('simulation_finish', False)
         
@@ -1025,6 +1021,8 @@ Configuration is complete. The simulation parameters are ready for execution.
             validation_status=None,
             parameters=None,
             cli_parameters="",
+            simulation_finish=None,
+            context={},
         )
         
         try:

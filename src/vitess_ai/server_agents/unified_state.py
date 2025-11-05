@@ -6,12 +6,35 @@ the supervisor and all module agents in server mode. This enables
 seamless state sharing and centralized interrupt handling.
 """
 
+from __future__ import annotations
+
 from typing import Dict, List, Any, Optional
-from pydantic import Field
+from enum import Enum
+from pydantic import BaseModel
 from langgraph.graph import MessagesState
 from vitess_ai.schema.base import FillingStage
 from vitess_ai.schema.supervisor import SupervisorStage
-from vitess_ai.server_agents.base_module_agent import ModuleResult
+
+
+# =================
+# MODULE RESULT CLASSES
+# =================
+
+class ModuleStatus(str, Enum):
+    """Status of individual modules"""
+    COMPLETED = "completed"
+
+
+class ModuleResult(BaseModel):
+    """Result from a completed module agent"""
+    module_name: str
+    status: ModuleStatus
+    parameters: Optional[Dict[str, Any]] = None
+    cli_parameters: Optional[str] = None
+    error_message: Optional[str] = None
+    execution_time: Optional[float] = None
+    thread_id: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 class UnifiedState(MessagesState):
@@ -24,33 +47,36 @@ class UnifiedState(MessagesState):
     Note: MessagesState is a pre-built TypedDict from LangGraph 1.x that
     automatically handles message accumulation. Additional fields are
     added using type annotations (compatible with LangGraph 1.x).
+    
+    Defaults should be provided when creating initial state, not in TypedDict
+    field definitions (TypedDict doesn't support Pydantic Field defaults).
     """
     
     # Supervisor-level fields
-    current_stage: SupervisorStage = SupervisorStage.WELCOME
-    module_results: Dict[str, ModuleResult] = Field(default={})
-    execution_order: List[str] = Field(default=[])
-    pending_modules: List[str] = Field(default=[])
-    current_agent_thread: str = ""
-    user_preferences: Dict[str, Any] = Field(default={})
-    cli_generation_ready: bool = False
-    cli_command: Optional[str] = None
-    simulation_finish: Optional[bool] = None
+    current_stage: SupervisorStage
+    module_results: Dict[str, ModuleResult]
+    execution_order: List[str]
+    pending_modules: List[str]
+    current_agent_thread: str
+    user_preferences: Dict[str, Any]
+    cli_generation_ready: bool
+    cli_command: Optional[str]
+    simulation_finish: Optional[bool]
     # Memory / context fields (e.g., running summary)
-    context: Dict[str, Any] = Field(default={})
+    context: Dict[str, Any]
     
     # Module-level fields (shared across all modules)
-    current_module: Optional[str] = None
-    module_stage: Optional[FillingStage] = None
-    config_mode: str = ""
-    validation_status: Optional[bool] = None
-    parameters: Any = None
-    cli_parameters: str = ""
+    current_module: Optional[str]
+    module_stage: Optional[FillingStage]
+    config_mode: str
+    validation_status: Optional[bool]
+    parameters: Any
+    cli_parameters: str
     
     # Common fields
-    thread_id: Optional[str] = None
-    user_id: Optional[str] = None
-    error_message: Optional[str] = None
+    thread_id: Optional[str]
+    user_id: Optional[str]
+    error_message: Optional[str]
     
     
     def get_current_module_result(self) -> Optional[ModuleResult]:
