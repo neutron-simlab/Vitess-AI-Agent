@@ -10,7 +10,7 @@ import logging
 import json
 import time
 from typing import Dict, List, Any, Optional, Type
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, RemoveMessage, ToolMessage
+from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import InMemorySaver
@@ -419,14 +419,18 @@ class SupervisorAgent:
                 lambda state, mn=module_name: self._route_module_welcome(state, mn)
             )
             
-            # Setup to params config
-            workflow.add_edge(f"{module_name}_default_setup", f"{module_name}_params_config")
-            workflow.add_edge(f"{module_name}_customize_setup", f"{module_name}_params_config")
+            # Setup to params config - separate paths for default and custom
+            workflow.add_edge(f"{module_name}_default_setup", f"{module_name}_default_params_config")
+            workflow.add_edge(f"{module_name}_customize_setup", f"{module_name}_custom_params_config")
             
-            # Params config routing
+            # Params config routing - separate for default and custom
             workflow.add_conditional_edges(
-                f"{module_name}_params_config",
-                lambda state, mn=module_name: self._route_module_params_config(state, mn)
+                f"{module_name}_default_params_config",
+                lambda state, mn=module_name: self._route_module_default_params_config(state, mn)
+            )
+            workflow.add_conditional_edges(
+                f"{module_name}_custom_params_config",
+                lambda state, mn=module_name: self._route_module_custom_params_config(state, mn)
             )
             
             # Tools routing if available
@@ -710,10 +714,15 @@ Configuration is complete. The simulation parameters are ready for execution.
         agent = self.agent_instances[module_name]
         return agent.route_after_welcome(state)
     
-    def _route_module_params_config(self, state: UnifiedState, module_name: str) -> str:
-        """Route from module params config based on tool calls"""
+    def _route_module_default_params_config(self, state: UnifiedState, module_name: str) -> str:
+        """Route from module default params config based on tool calls"""
         agent = self.agent_instances[module_name]
-        return agent.route_after_params_config(state)
+        return agent.route_after_default_params_config(state)
+    
+    def _route_module_custom_params_config(self, state: UnifiedState, module_name: str) -> str:
+        """Route from module custom params config based on tool calls"""
+        agent = self.agent_instances[module_name]
+        return agent.route_after_custom_params_config(state)
     
     def _route_module_tools(self, state: UnifiedState, module_name: str) -> str:
         """Route from module tools based on validation status"""

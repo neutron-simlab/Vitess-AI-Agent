@@ -8,7 +8,6 @@ to work as individual nodes within a larger supervisor graph.
 
 import logging
 from typing import List, Type, TypeVar, Generic, Optional, Any, Dict
-from enum import Enum
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -163,8 +162,14 @@ class BaseModuleAgent(ABC, Generic[R]):
     
     @property
     @abstractmethod
-    def system_prompt(self) -> str:
-        """System prompt for the module"""
+    def default_prompt(self) -> str:
+        """Default prompt for the module - used for default setup flow"""
+        pass
+    
+    @property
+    @abstractmethod
+    def custom_prompt(self) -> str:
+        """Custom prompt for the module - used for customize flow"""
         pass
     
     @abstractmethod
@@ -283,7 +288,8 @@ class BaseModuleAgent(ABC, Generic[R]):
     def _setup_prompts(self):
         """Setup prompts based on whether tools are available"""
         self.welcome_prompt = AIMessage(content=self.welcome_message)
-        self.sys_prompt = SystemMessage(content=self.system_prompt)
+        self.default_sys_prompt = SystemMessage(content=self.default_prompt)
+        self.custom_sys_prompt = SystemMessage(content=self.custom_prompt)
         
     
     def _setup_llm(self):
@@ -424,7 +430,7 @@ class BaseModuleAgent(ABC, Generic[R]):
         sys_default_message = SystemMessage(content=self.get_default_setup_message())
         
         return {
-            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_default_message, self.sys_prompt],
+            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_default_message, self.default_sys_prompt],
             'module_stage': FillingStage(stage='processing'),
             'error_message': None
         }
@@ -437,18 +443,23 @@ class BaseModuleAgent(ABC, Generic[R]):
         sys_customize_message = SystemMessage(content=self.get_customize_setup_message())
         
         return {
-            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_customize_message, self.sys_prompt],
+            'messages': state.get('messages', []) + [AIMessage(content=setup_message), sys_customize_message, self.custom_sys_prompt],
             'module_stage': FillingStage(stage='processing'),
             'error_message': None
         }
     
-    def parameters_config_node(self, state: UnifiedState) -> dict:
-        """Parameters configuration node with tool support"""
-        self.logger.info(f"Entering {self.name} parameters configuration")
+    def _params_config_node(self, state: UnifiedState, config_mode: str) -> dict:
+        """Unified parameters configuration node with tool support
+        
+        Args:
+            state: Current state
+            config_mode: Configuration mode ('Default Setup' or 'Customize'/'Custom')
+        """
+        mode_text = "default" if config_mode == 'Default Setup' else "custom"
+        self.logger.info(f"Entering {self.name} {mode_text} parameters configuration")
         
         # Get thread_id from state and inject it into the context
         thread_id = state.get('thread_id')
-        user_id = state.get('user_id')
         
         # Prepare messages with thread_id context if available
         messages = state['messages'].copy()
@@ -525,6 +536,15 @@ class BaseModuleAgent(ABC, Generic[R]):
                 'module_stage': FillingStage(stage='processing'),
                 'error_message': None
             }
+    
+    def default_params_config_node(self, state: UnifiedState) -> dict:
+        """Default parameters configuration node with tool support"""
+        return self._params_config_node(state, 'Default Setup')
+    
+    def custom_params_config_node(self, state: UnifiedState) -> dict:
+        """Custom parameters configuration node with tool support"""
+        config_mode = state.get('config_mode', 'Customize')
+        return self._params_config_node(state, config_mode)
     
     def tools_node(self, state: UnifiedState) -> dict:
         """Tools execution node - handles MCP tool calls"""
@@ -626,7 +646,8 @@ class BaseModuleAgent(ABC, Generic[R]):
             f"{self.module_name}_welcome_interrupt": self.welcome_interrupt_node,
             f"{self.module_name}_default_setup": self.default_setup_node,
             f"{self.module_name}_customize_setup": self.customize_setup_node,
-            f"{self.module_name}_params_config": self.parameters_config_node,
+            f"{self.module_name}_default_params_config": self.default_params_config_node,
+            f"{self.module_name}_custom_params_config": self.custom_params_config_node,
             f"{self.module_name}_finalize": self.finalize_node,
         }
         
@@ -649,23 +670,28 @@ class BaseModuleAgent(ABC, Generic[R]):
             'condition': self.route_after_welcome
         })
         
-        # Setup to params config
+        # Setup to params config - separate paths for default and custom
         edges.append({
             'type': 'direct',
             'source': f"{self.module_name}_default_setup",
-            'target': f"{self.module_name}_params_config"
+            'target': f"{self.module_name}_default_params_config"
         })
         edges.append({
             'type': 'direct',
             'source': f"{self.module_name}_customize_setup",
-            'target': f"{self.module_name}_params_config"
+            'target': f"{self.module_name}_custom_params_config"
         })
         
-        # Params config routing
+        # Params config routing - separate for default and custom
         edges.append({
             'type': 'conditional',
-            'source': f"{self.module_name}_params_config",
-            'condition': self.route_after_params_config
+            'source': f"{self.module_name}_default_params_config",
+            'condition': self.route_after_default_params_config
+        })
+        edges.append({
+            'type': 'conditional',
+            'source': f"{self.module_name}_custom_params_config",
+            'condition': self.route_after_custom_params_config
         })
         
         # Tools routing if available
@@ -707,15 +733,27 @@ class BaseModuleAgent(ABC, Generic[R]):
             return f'{self.module_name}_default_setup'
     
     def route_after_tools(self, state: UnifiedState) -> str:
-        """Route after tool execution"""
+        """Route after tool execution - routes back to correct params config based on config_mode"""
         if not self.tools:
-            self.logger.warning("No tools available, routing to params_config")
-            return f'{self.module_name}_params_config'
+            # Determine which params config node to route to based on config_mode
+            config_mode = state.get('config_mode', '')
+            if config_mode in ['Customize', 'Custom']:
+                self.logger.warning("No tools available, routing to custom_params_config")
+                return f'{self.module_name}_custom_params_config'
+            else:
+                self.logger.warning("No tools available, routing to default_params_config")
+                return f'{self.module_name}_default_params_config'
         
         last_message = state['messages'][-1] if state.get('messages') else None
         if not last_message:
-            self.logger.warning("No messages in state, routing to params_config")
-            return f'{self.module_name}_params_config'
+            # Determine which params config node to route to based on config_mode
+            config_mode = state.get('config_mode', '')
+            if config_mode in ['Customize', 'Custom']:
+                self.logger.warning("No messages in state, routing to custom_params_config")
+                return f'{self.module_name}_custom_params_config'
+            else:
+                self.logger.warning("No messages in state, routing to default_params_config")
+                return f'{self.module_name}_default_params_config'
         
         last_message_content = last_message.content if hasattr(last_message, 'content') else str(last_message)
         
@@ -728,20 +766,42 @@ class BaseModuleAgent(ABC, Generic[R]):
                 self.logger.info("Tool validation successful, routing to finalize")
                 return f'{self.module_name}_finalize'
             else:
-                self.logger.info("Tool validation failed, routing back to params_config")
-                return f'{self.module_name}_params_config'
+                # Route back to the correct params config node based on config_mode
+                config_mode = state.get('config_mode', '')
+                if config_mode in ['Customize', 'Custom']:
+                    self.logger.info("Tool validation failed, routing back to custom_params_config")
+                    return f'{self.module_name}_custom_params_config'
+                else:
+                    self.logger.info("Tool validation failed, routing back to default_params_config")
+                    return f'{self.module_name}_default_params_config'
                 
         except Exception as e:
             self.logger.error(f"Error parsing tool result: {str(e)}")
-            return f'{self.module_name}_params_config'
+            # Route back to the correct params config node based on config_mode
+            config_mode = state.get('config_mode', '')
+            if config_mode in ['Customize', 'Custom']:
+                return f'{self.module_name}_custom_params_config'
+            else:
+                return f'{self.module_name}_default_params_config'
     
-    def route_after_params_config(self, state: UnifiedState) -> str:
-        """Route after parameters configuration based on tool calls"""
+    def _route_after_params_config(self, state: UnifiedState, config_mode: str) -> str:
+        """Unified routing after parameters configuration based on tool calls
+        
+        Args:
+            state: Current state
+            config_mode: Configuration mode ('Default Setup' or 'Customize'/'Custom')
+        """
         last_message = state['messages'][-1] if state.get('messages') else None
         
+        # Determine which params config node to route back to based on config_mode
+        if config_mode == 'Default Setup':
+            params_config_node = f'{self.module_name}_default_params_config'
+        else:
+            params_config_node = f'{self.module_name}_custom_params_config'
+        
         if not last_message:
-            self.logger.warning("No messages in state, routing to params_config")
-            return f'{self.module_name}_params_config'
+            self.logger.warning(f"No messages in state, routing to {params_config_node}")
+            return params_config_node
         
         # Check for tool calls only if tools are available
         has_tool_calls = (self.tools and 
@@ -752,6 +812,16 @@ class BaseModuleAgent(ABC, Generic[R]):
             self.logger.info("Tool calls detected, routing to tools")
             return f'{self.module_name}_tools'
         else:
-            self.logger.info("Continuing parameter configuration")
-            return f'{self.module_name}_params_config'
+            mode_text = "default" if config_mode == 'Default Setup' else "custom"
+            self.logger.info(f"Continuing {mode_text} parameter configuration")
+            return params_config_node
+    
+    def route_after_default_params_config(self, state: UnifiedState) -> str:
+        """Route after default parameters configuration based on tool calls"""
+        return self._route_after_params_config(state, 'Default Setup')
+    
+    def route_after_custom_params_config(self, state: UnifiedState) -> str:
+        """Route after custom parameters configuration based on tool calls"""
+        config_mode = state.get('config_mode', 'Customize')
+        return self._route_after_params_config(state, config_mode)
 
