@@ -8,7 +8,7 @@ centralized interrupt handling.
 
 from typing import Type
 from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
-from vitess_ai.prompts.readin_module import READIN_AGENT_WELCOME, READIN_AGENT_PROMPT
+from vitess_ai.prompts.readin_module import READIN_AGENT_WELCOME, READIN_AGENT_DEFAULT_PROMPT, READIN_AGENT_CUSTOM_PROMPT
 from vitess_ai.schema.readin_module import InitialResponseReadIn
 
 
@@ -36,9 +36,14 @@ class ReadInModuleAgent(BaseModuleAgent[InitialResponseReadIn]):
         return READIN_AGENT_WELCOME
     
     @property
-    def system_prompt(self) -> str:
-        """System prompt for the readin module"""
-        return READIN_AGENT_PROMPT
+    def default_prompt(self) -> str:
+        """Default prompt for the readin module"""
+        return READIN_AGENT_DEFAULT_PROMPT
+    
+    @property
+    def custom_prompt(self) -> str:
+        """Custom prompt for the readin module"""
+        return READIN_AGENT_CUSTOM_PROMPT
     
     def get_initial_response_schema(self) -> Type[InitialResponseReadIn]:
         """Return the schema for initial response parsing"""

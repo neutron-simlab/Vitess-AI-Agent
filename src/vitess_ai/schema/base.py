@@ -64,10 +64,10 @@ class VtGdeShape(IntEnum):
 
 class FillingStage(BaseModel):
     """
-    This is the model to store the information about the parameters filling process, either it is processing, complete, or error.
+    This is the model to store the information about the parameters filling process, either it is processing, completed, or error.
     Always use this tool to structure your response to the user.
     """
-    stage: Literal["processing", "completed"]
+    stage: Literal["processing", "completed", "error"]
 
 
 def get_field_flag(model_class, field_name: str) -> str:

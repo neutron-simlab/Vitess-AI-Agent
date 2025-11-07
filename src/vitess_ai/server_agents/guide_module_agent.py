@@ -7,15 +7,9 @@ centralized interrupt handling.
 """
 
 from typing import Type
-from pydantic import BaseModel, Field
 from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
-from vitess_ai.prompts.guide_module import GUIDE_AGENT_WELCOME, GUIDE_AGENT_PROMPT
+from vitess_ai.prompts.guide_module import GUIDE_AGENT_WELCOME, GUIDE_AGENT_DEFAULT_PROMPT, GUIDE_AGENT_CUSTOM_PROMPT
 from vitess_ai.schema.guide_module import InitialResponseGuide
-
-
-class GuideInitialResponse(BaseModel):
-    """Deprecated: Use InitialResponseGuide from vitess_ai.schema.guide_module instead."""
-    response: str = Field(description="Deprecated. Use InitialResponseGuide.response")
 
 
 class GuideModuleAgent(BaseModuleAgent[InitialResponseGuide]):
@@ -42,9 +36,14 @@ class GuideModuleAgent(BaseModuleAgent[InitialResponseGuide]):
         return GUIDE_AGENT_WELCOME
     
     @property
-    def system_prompt(self) -> str:
-        """System prompt for the guide module"""
-        return GUIDE_AGENT_PROMPT
+    def default_prompt(self) -> str:
+        """Default prompt for the guide module"""
+        return GUIDE_AGENT_DEFAULT_PROMPT
+    
+    @property
+    def custom_prompt(self) -> str:
+        """Custom prompt for the guide module"""
+        return GUIDE_AGENT_CUSTOM_PROMPT
     
     def get_initial_response_schema(self) -> Type[InitialResponseGuide]:
         """Return the schema for initial response parsing"""

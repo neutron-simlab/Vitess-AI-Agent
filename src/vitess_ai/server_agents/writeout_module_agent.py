@@ -7,15 +7,9 @@ centralized interrupt handling.
 """
 
 from typing import Type
-from pydantic import BaseModel, Field
 from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
-from vitess_ai.prompts.writeout_module import WRITEOUT_AGENT_WELCOME, WRITEOUT_AGENT_PROMPT
+from vitess_ai.prompts.writeout_module import WRITEOUT_AGENT_WELCOME, WRITEOUT_AGENT_DEFAULT_PROMPT, WRITEOUT_AGENT_CUSTOM_PROMPT
 from vitess_ai.schema.writeout_module import InitialResponseWriteout
-
-
-class WriteoutInitialResponse(BaseModel):
-    """Deprecated: Use InitialResponseWriteout from vitess_ai.schema.writeout_module instead."""
-    response: str = Field(description="Deprecated. Use InitialResponseWriteout.response")
 
 
 class WriteoutModuleAgent(BaseModuleAgent[InitialResponseWriteout]):
@@ -42,9 +36,14 @@ class WriteoutModuleAgent(BaseModuleAgent[InitialResponseWriteout]):
         return WRITEOUT_AGENT_WELCOME
     
     @property
-    def system_prompt(self) -> str:
-        """System prompt for the writeout module"""
-        return WRITEOUT_AGENT_PROMPT
+    def default_prompt(self) -> str:
+        """Default prompt for the writeout module"""
+        return WRITEOUT_AGENT_DEFAULT_PROMPT
+    
+    @property
+    def custom_prompt(self) -> str:
+        """Custom prompt for the writeout module"""
+        return WRITEOUT_AGENT_CUSTOM_PROMPT
     
     def get_initial_response_schema(self) -> Type[InitialResponseWriteout]:
         """Return the schema for initial response parsing"""
