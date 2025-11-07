@@ -395,7 +395,6 @@ class SupervisorAgent:
         workflow.add_node("supervisor_post_simulation_response", self._post_simulation_response_node)
         workflow.add_node("supervisor_completion", self._completion_node)
         workflow.add_node("supervisor_error_handler", self._error_handler_node)
-        workflow.add_node("supervisor_summarize", self._summarize_node)
         
         # Add simulation tools node if available
         if self.simulation_tools:
@@ -453,9 +452,6 @@ class SupervisorAgent:
         if self.simulation_tools:
             workflow.add_conditional_edges("supervisor_simulation_tools", self._route_after_simulation_tools)
             workflow.add_conditional_edges("supervisor_post_simulation_response", self._route_after_post_simulation_response)
-        
-        # After summarization, route to the next module's welcome
-        workflow.add_conditional_edges("supervisor_summarize", self._route_after_summarize)
 
         workflow.add_edge("supervisor_completion", END)
         workflow.add_edge("supervisor_error_handler", END)
@@ -727,6 +723,7 @@ Configuration is complete. The simulation parameters are ready for execution.
     def _route_module_finalize(self, state: UnifiedState, module_name: str) -> str:
         """Route from module finalize to next module or simulation"""
         execution_order = state.get('execution_order', [])
+        module_results = state.get('module_results', {})
         
         try:
             current_index = execution_order.index(module_name)
@@ -736,121 +733,21 @@ Configuration is complete. The simulation parameters are ready for execution.
                 self.logger.info("All modules completed, routing to simulation preparation")
                 return "supervisor_prepare_simulation"
             else:
-                # Summarize before proceeding to next module
-                return "supervisor_summarize"
+                # Route directly to next module (bypassing summarize)
+                completed = [name for name, res in module_results.items() if getattr(res, 'status', None) == ModuleStatus.COMPLETED]
+                # Find first module not completed
+                next_module = None
+                for mn in execution_order:
+                    if mn not in completed:
+                        next_module = mn
+                        break
+                if next_module is None:
+                    return "supervisor_prepare_simulation"
+                self.logger.info(f"Routing directly to next module: {next_module}")
+                return f"{next_module}_welcome"
         except ValueError as e:
             self.logger.error(f"Module {module_name} not found in execution order: {execution_order}")
             return "supervisor_error_handler"
-
-    def _route_after_summarize(self, state: UnifiedState) -> str:
-        """After summarization, continue to the next module or simulation if none left"""
-        execution_order = state.get('execution_order', [])
-        module_results = state.get('module_results', {})
-        completed = [name for name, res in module_results.items() if getattr(res, 'status', None) == ModuleStatus.COMPLETED]
-        # Find first module not completed
-        next_module = None
-        for mn in execution_order:
-            if mn not in completed:
-                next_module = mn
-                break
-        if next_module is None:
-            return "supervisor_prepare_simulation"
-        return f"{next_module}_welcome"
-
-    def _summarize_node(self, state: UnifiedState) -> dict:
-        """Summarize recent conversation and prune older messages before next module.
-        
-        This node includes robust timeout handling and fallback mechanisms:
-        - If summarization times out or fails, it uses the existing running_summary
-        - Message history is limited to prevent overwhelming the LLM
-        - Timeout errors are specifically caught and logged
-        """
-        self.logger.info("Summarizing conversation before next module")
-        messages = state.get('messages', [])
-        context = state.get('context', {}) or {}
-        running_summary = context.get('running_summary', "")
-
-        # Limit message history to prevent timeout (keep last 10 messages max)
-        # This reduces the payload size and prevents Blablador from hanging
-        max_messages_for_summary = 10
-        if len(messages) > max_messages_for_summary:
-            self.logger.warning(f"Message history is large ({len(messages)} messages), limiting to last {max_messages_for_summary} for summarization")
-            messages = messages[-max_messages_for_summary:]
-
-        # Build summarization prompt
-        if running_summary:
-            summary_prompt = (
-                f"This is a summary of the conversation to date: {running_summary}\n\n"
-                "Extend the summary by taking into account the new messages above."
-            )
-        else:
-            summary_prompt = "Create a concise summary of the conversation above."
-
-        # Invoke the LLM to produce an updated summary with timeout protection
-        new_summary = running_summary  # Default to existing summary if anything fails
-        try:
-            prompt_msg = HumanMessage(content=summary_prompt)
-            summarizer = self.llm.bind(max_tokens=1024)
-            llm_messages = messages + [prompt_msg]
-            
-            # Enhanced logging for LLM invocation
-            timeout = getattr(self.llm, 'timeout', global_config.TIMEOUT_SECONDS)
-            msg_count = len(llm_messages)
-            self.logger.info(f"Invoking LLM for summarization: {msg_count} messages, timeout={timeout}s, provider={self.config.provider}, model={self.config.model}")
-            start_time = time.time()
-            
-            response = summarizer.invoke(llm_messages)
-            
-            duration = time.time() - start_time
-            self.logger.info(f"Summarization LLM invocation completed successfully in {duration:.2f}s")
-            new_summary = response.content if hasattr(response, 'content') else str(response)
-            
-            # Validate the summary was generated
-            if not new_summary or len(new_summary.strip()) == 0:
-                self.logger.warning("Generated summary is empty, using existing running_summary")
-                new_summary = running_summary
-                
-        except TimeoutError as e:
-            duration = time.time() - start_time if 'start_time' in locals() else 0
-            self.logger.error(f"Summarization LLM invocation timed out after {duration:.2f}s (timeout={timeout}s): {e}")
-            self.logger.warning(f"Using existing running_summary as fallback (length: {len(running_summary) if running_summary else 0} chars)")
-            new_summary = running_summary  # fallback to previous summary
-        except Exception as e:
-            duration = time.time() - start_time if 'start_time' in locals() else 0
-            error_type = type(e).__name__
-            # Check if it's a timeout-related error
-            if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
-                self.logger.error(f"Summarization LLM invocation timed out after {duration:.2f}s: {e}")
-            else:
-                self.logger.error(f"Summarization LLM invocation failed after {duration:.2f}s ({error_type}): {e}", exc_info=True)
-            self.logger.warning(f"Using existing running_summary as fallback (length: {len(running_summary) if running_summary else 0} chars)")
-            new_summary = running_summary  # fallback to previous summary
-
-        # Prune old messages: keep last 4
-        to_delete = [RemoveMessage(id=m.id) for m in messages[:-4]] if len(messages) > 4 else []
-
-        # Ensure the kept window does not start with orphaned tool messages
-        kept_window = messages[-4:] if len(messages) > 4 else messages[:]
-        extra_delete = []
-        for m in kept_window:
-            # Stop dropping once we hit a non-tool message
-            if getattr(m, 'type', None) == 'tool':
-                extra_delete.append(RemoveMessage(id=m.id))
-            else:
-                break
-        if extra_delete:
-            to_delete.extend(extra_delete)
-
-        # Update context with new running_summary
-        new_context = dict(context)
-        new_context['running_summary'] = new_summary
-
-        update: Dict[str, Any] = {
-            'context': new_context
-        }
-        if to_delete:
-            update['messages'] = to_delete
-        return update
     
     def _route_from_simulation(self, state: UnifiedState) -> str:
         """Route from simulation execution based on tools availability"""

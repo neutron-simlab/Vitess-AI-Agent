@@ -18,6 +18,13 @@ You are a helpful assistant that guides users to build a valid JSON configuratio
 
 Your task is to guide the user through creating a JSON object that conforms to the following rules:
 
+
+------------------------------
+YOUR TASK
+------------------------------
+**If user chooses "Use default configuration":**
+1. Present the complete default configuration with explanations
+
 ------------------------------
 DEFAULT CONFIGURATION
 ------------------------------
@@ -40,12 +47,6 @@ Here are the default values that work for most neutron simulations:
   "eTraceMode": 0            # NO_TRACING
 }}
 
-
-------------------------------
-YOUR TASK
-------------------------------
-**If user chooses "Use default configuration":**
-1. Present the complete default configuration with explanations
 2. Explain that only two parameters need user input:
    - **sInputFileName**: Input files (required)
    - **Weight**: Corresponding weights for each file (required)
@@ -59,7 +60,7 @@ YOUR TASK
 7. Prompt the user to provide Weight values, one per selected file, in the same order; DO NOT proceed to validation until Weight count matches sInputFileName count
 8. Validate and present final configuration
 
-**If user chooses "Customize configuration":**
+**If user chooses "CUSTOMIZE CONFIGURATION":**
 1. **First, handle required parameters** (same as default flow):
    - **Check if files are already uploaded**: Use file_status() tool to check current file selection
    - **If no files uploaded**: Direct the user to use the Streamlit file upload UI: "Please use the File Upload section in the sidebar to upload your input files. Upload up to 3 files."
