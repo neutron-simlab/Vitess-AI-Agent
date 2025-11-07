@@ -24,13 +24,75 @@
 
 ## Installation
 
-```bash
-# Using uv (recommended)
-uv pip install .
+### Install uv (if not already installed)
 
-# Using pip
+If you don't have `uv` installed, install it first:
+
+**macOS/Linux:**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+After installation, restart your terminal or add `uv` to your PATH.
+
+### Install Project Dependencies
+
+**Using uv (recommended):**
+```bash
+uv sync
+```
+
+**Using pip:**
+```bash
 pip install .
 ```
+
+## Configuration
+
+### Setting Up Environment Variables
+
+Copy the `env.example` file to `.env` and fill in your actual values:
+
+**macOS/Linux:**
+```bash
+cp env.example .env
+```
+
+**Windows:**
+```powershell
+copy env.example .env
+```
+
+Then edit `.env` with your own configuration values. The `env.example` file contains comprehensive configuration options with detailed comments for each setting.
+
+### Configuration Categories
+
+The `env.example` file includes the following configuration sections:
+
+- **Core API Keys**: API keys for your chosen LLM provider (OpenAI or Blablador)
+- **LLM Provider Configuration**: Choose your provider (`openai` or `blablador`), models, and request settings
+- **Blablador Settings**: Blablador API configuration (required if using Blablador)
+- **LangSmith Settings**: Optional tracing and monitoring configuration
+- **MCP Tool Paths**: Paths to module-specific MCP tools
+- **VITESS Simulation Environment**: Paths for VITESS modules, project, and logging
+- **Environment Settings**: Development/production mode and logging levels
+
+For detailed information about each configuration option, see the `env.example` file which includes inline comments and setup instructions.
+
+### Supported LLM Providers
+
+You can choose to use either OpenAI or Blablador as your LLM provider. Configure your choice in the `.env` file by setting `DEFAULT_PROVIDER` to either `openai` or `blablador`.
+
+**OpenAI**: Models `gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo` (default: `gpt-4o-mini`)
+- Requires `OPENAI_API_KEY` in your `.env` file
+
+**Blablador**: Models `alias-function-call`, `alias-code` (default: `alias-function-call`)
+- Requires `BLABLADOR_API_KEY` and `BLABLADOR_BASE_URL` in your `.env` file
 
 ## Quick Start
 
@@ -106,35 +168,6 @@ for chunk in client.stream(
     elif isinstance(chunk, dict) and chunk.get("type") == "token":
         print(chunk.get("content", ""), end='', flush=True)
 ```
-
-## Configuration
-
-Create a `.env` file:
-
-```env
-# LLM Provider (openai or blablador)
-DEFAULT_PROVIDER=openai
-DEFAULT_MODEL=gpt-4o-mini
-
-# OpenAI API Configuration
-OPENAI_API_KEY=your_openai_key_here
-
-# Blablador API Configuration (OpenAI-compatible)
-BLABLADOR_API_KEY=your_blablador_key_here
-BLABLADOR_BASE_URL=https://your-blablador-endpoint.com
-BLABLADOR_DEFAULT_MODEL=alias-function-call
-
-# VITESS Environment Variables (optional, can be configured at runtime)
-VITESS_MODULES_PATH=/path/to/vitess/modules
-VITESS_PROJECT_PATH=/path/to/vitess/project
-VITESS_LOG_PATH=/path/to/vitess/logs
-```
-
-### Supported LLM Providers
-
-**OpenAI**: Models `gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo` (default: `gpt-4o-mini`)
-
-**Blablador**: Models `alias-function-call`, `alias-code` (default: `alias-function-call`, requires `BLABLADOR_API_KEY` and `BLABLADOR_BASE_URL`)
 
 ## Available Agents
 
