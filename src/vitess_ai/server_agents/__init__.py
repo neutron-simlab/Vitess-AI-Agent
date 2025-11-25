@@ -19,6 +19,8 @@ from .supervisor import SupervisorAgent
 # Module-specific agents
 from .readin_module_agent import ReadInModuleAgent
 from .guide_module_agent import GuideModuleAgent
+from .monitor1d_module_agent import Monitor1DModuleAgent
+from .monitor2d_module_agent import Monitor2DModuleAgent
 from .writeout_module_agent import WriteoutModuleAgent
 
 __all__ = [
@@ -26,6 +28,8 @@ __all__ = [
     "BaseModuleAgent",
     "SupervisorAgent",
     "ReadInModuleAgent",
-    "GuideModuleAgent", 
+    "GuideModuleAgent",
+    "Monitor1DModuleAgent",
+    "Monitor2DModuleAgent",
     "WriteoutModuleAgent"
 ]

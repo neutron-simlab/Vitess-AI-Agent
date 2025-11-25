@@ -211,6 +211,34 @@ class SupervisorAgent:
         )
         self.register_module(module)
     
+    def add_monitor1d_module(self, config_path: str = None) -> None:
+        """Add the Monitor1D module"""
+        from vitess_ai.server_agents.monitor1d_module_agent import Monitor1DModuleAgent
+        
+        module = ModuleBuilder.create(
+            name="monitor1d",
+            display_name="Monitor1D Parameters",
+            description="Configure 1D monitor parameters for neutron detection",
+            agent_class=Monitor1DModuleAgent,  # Use agent class
+            config_path=config_path or global_config.MONITOR_MCP_PATH,
+            order=4
+        )
+        self.register_module(module)
+    
+    def add_monitor2d_module(self, config_path: str = None) -> None:
+        """Add the Monitor2D module"""
+        from vitess_ai.server_agents.monitor2d_module_agent import Monitor2DModuleAgent
+        
+        module = ModuleBuilder.create(
+            name="monitor2d",
+            display_name="Monitor2D Parameters",
+            description="Configure 2D monitor parameters for neutron detection",
+            agent_class=Monitor2DModuleAgent,  # Use agent class
+            config_path=config_path or global_config.MONITOR_MCP_PATH,
+            order=5
+        )
+        self.register_module(module)
+    
     def add_custom_module(
         self,
         name: str,
@@ -234,9 +262,11 @@ class SupervisorAgent:
         self.register_module(module)
     
     def add_default_modules(self) -> None:
-        """Add all default modules (readin, guide, writeout)"""
+        """Add all default modules (readin, guide, monitor1d, monitor2d, writeout)"""
         self.add_readin_module()
         self.add_guide_module()
+        self.add_monitor1d_module()
+        self.add_monitor2d_module()
         self.add_writeout_module()
     
     # =================

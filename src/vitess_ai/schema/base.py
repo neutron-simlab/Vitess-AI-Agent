@@ -62,6 +62,50 @@ class VtGdeShape(IntEnum):
     VT_FROM_FILE = 5
     VT_LIN_CURV = 6
 
+class VtMonPar(IntEnum):
+    """
+    Enumeration for monitor parameter types used by monitor1D and monitor2D modules.
+    """
+    NO_PAR = 0
+    POS_X = 17
+    POS_Y = 1
+    POS_Z = 2
+    DIV_Y = 3
+    DIV_Z = 4
+    LAMBDA = 5
+    ENERGY = 6
+    TIME = 7
+    K_Y = 8
+    K_Z = 9
+    POS_R = 10
+    POS_PHI = 11
+    POS_THETA = 18
+    DIR_PHI = 15
+    DIR_THETA = 16
+    COL_VERT = 12
+    COL_HOR = 13
+    COLOR = 14
+
+class VtFiltComb(IntEnum):
+    """
+    Enumeration for filter combination types.
+    """
+    NO_FCOMB = -1
+    OR_OR_OR = 0
+    AND_AND_AND = 1
+    AND_OR_AND = 2
+
+class VtFormat2D(IntEnum):
+    """
+    Enumeration for 2D output format types.
+    """
+    NO_2D_FORMAT = -1
+    MATRIX = 0
+    XYZ = 1
+    MATR_CMPT = 2
+    XYZ_CMPT = 3
+    MATR_INT = 4
+
 class FillingStage(BaseModel):
     """
     This is the model to store the information about the parameters filling process, either it is processing, completed, or error.

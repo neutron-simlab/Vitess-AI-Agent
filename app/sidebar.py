@@ -311,7 +311,9 @@ def render_sidebar() -> None:
                 # Module selection with dropdown menu
                 module_options = {
                     "readin": "Read-in Module",
-                    "guide": "Guide Module", 
+                    "guide": "Guide Module",
+                    "monitor1d": "Monitor1D Module",
+                    "monitor2d": "Monitor2D Module",
                     "instrument": "Instrument Module",
                     "writeout": "Writeout Module"
                 }
@@ -355,7 +357,7 @@ def render_sidebar() -> None:
                 st.markdown("**Summary of All Uploaded Files**")
                 total_files = sum(len(files) for files in st.session_state.uploaded_files.values())
                 if total_files > 0:
-                    summary_cols = st.columns(4)
+                    summary_cols = st.columns(6)
                     with summary_cols[0]:
                         readin_count = len(st.session_state.uploaded_files.get("readin", []))
                         st.metric("Read-in", readin_count, help="Number of read-in files")
@@ -363,9 +365,15 @@ def render_sidebar() -> None:
                         guide_count = len(st.session_state.uploaded_files.get("guide", []))
                         st.metric("Guide", guide_count, help="Number of guide files")
                     with summary_cols[2]:
+                        monitor1d_count = len(st.session_state.uploaded_files.get("monitor1d", []))
+                        st.metric("Monitor1D", monitor1d_count, help="Number of Monitor1D files")
+                    with summary_cols[3]:
+                        monitor2d_count = len(st.session_state.uploaded_files.get("monitor2d", []))
+                        st.metric("Monitor2D", monitor2d_count, help="Number of Monitor2D files")
+                    with summary_cols[4]:
                         instrument_count = len(st.session_state.uploaded_files.get("instrument", []))
                         st.metric("Instrument", instrument_count, help="Number of instrument files")
-                    with summary_cols[3]:
+                    with summary_cols[5]:
                         writeout_count = len(st.session_state.uploaded_files.get("writeout", []))
                         st.metric("Writeout", writeout_count, help="Number of writeout paths")
                 else:
@@ -461,6 +469,7 @@ def render_sidebar() -> None:
                 The system guides you through:
                 - Read-in parameters
                 - Guide configuration
+                - Monitor1D and Monitor2D parameters
                 - Writeout settings
                 - Simulation execution
                 """
@@ -788,6 +797,49 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
                             st.rerun()
         else:
             st.info("No file uploaded yet. Upload a file above.")
+    
+    elif selected_module == "monitor1d":
+        st.markdown("**Monitor1D Module**")
+        
+        if not is_module_active:
+            st.warning("Monitor1D module is not currently active. Configure parameters when the Monitor1D module is being configured.")
+        
+        st.info(
+            """
+            **Monitor1D Module Configuration**
+            
+            The Monitor1D module configures 1D monitor parameters for neutron detection.
+            No file uploads are required - parameters are configured through the chat interface.
+            
+            The module will guide you through:
+            - Parameter selection (x-axis parameter to monitor)
+            - Binning and range configuration
+            - Filter and weight settings
+            - Polarisation analysis options
+            """
+        )
+    
+    elif selected_module == "monitor2d":
+        st.markdown("**Monitor2D Module**")
+        
+        if not is_module_active:
+            st.warning("Monitor2D module is not currently active. Configure parameters when the Monitor2D module is being configured.")
+        
+        st.info(
+            """
+            **Monitor2D Module Configuration**
+            
+            The Monitor2D module configures 2D monitor parameters for neutron detection.
+            No file uploads are required - parameters are configured through the chat interface.
+            
+            The module will guide you through:
+            - Parameter selection (x-axis and y-axis parameters to monitor)
+            - Binning and range configuration
+            - Output format selection
+            - Filter and weight settings
+            - Polarisation analysis options
+            """
+        )
     
     elif selected_module == "writeout":
         st.markdown("**Writeout Save Path**")
