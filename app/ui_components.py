@@ -11,6 +11,12 @@ from typing import Dict, Any, Optional
 
 from vitess_ai.schema.server import ChatMessage
 
+try:
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+
 # Paths and assets
 _assets_dir = Path(__file__).parent / "assets"
 _logo_path = _assets_dir / "logo.png"
@@ -168,14 +174,70 @@ def render_module_badge(module_name: str, dynamic_modules: Optional[Dict[str, An
     return module_badge_html(module_info['name'])
 
 
-def render_content(content: any, color: str) -> None:
+def render_plotly_figure(plot_json: Dict[str, Any], title: str, expanded: bool = True) -> None:
+    """
+    Render a Plotly figure in an expandable section.
+    
+    Args:
+        plot_json: Plotly figure as JSON-serializable dict
+        title: Title for the expander
+        expanded: Whether the expander should be expanded by default
+    """
+    if not PLOTLY_AVAILABLE:
+        st.warning("Plotly is not available. Please install plotly to view interactive plots.")
+        return
+    
+    try:
+        # Reconstruct Plotly figure from JSON
+        fig = go.Figure(plot_json)
+        
+        # Render in expandable section
+        with st.expander(title, expanded=expanded):
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error rendering plot: {str(e)}")
+
+
+def render_content(content: any, color: str, custom_data: Optional[Dict[str, Any]] = None) -> None:
     """
     Render message content uniformly (JSON or markdown).
     
     Args:
         content: Message content (string, dict, list, or JSON string)
         color: Border color for styling
+        custom_data: Optional custom data that may contain plot information
     """
+    # Check for plot data in custom_data first
+    if custom_data:
+        plot_data = custom_data.get("plot_data", {})
+        if plot_data:
+            # Render plots in expandable sections
+            # Render Monitor1D plot if available
+            if "monitor1d" in plot_data:
+                plot_info = plot_data["monitor1d"]
+                plot_json = plot_info.get("plot_json")
+                if plot_json:
+                    render_plotly_figure(
+                        plot_json,
+                        f"📊 {plot_info.get('title', 'Monitor1D Results')}",
+                        expanded=True
+                    )
+                else:
+                    st.warning("Monitor1D plot data is missing plot_json")
+            
+            # Render Monitor2D plot if available
+            if "monitor2d" in plot_data:
+                plot_info = plot_data["monitor2d"]
+                plot_json = plot_info.get("plot_json")
+                if plot_json:
+                    render_plotly_figure(
+                        plot_json,
+                        f"📊 {plot_info.get('title', 'Monitor2D Results')}",
+                        expanded=True
+                    )
+                else:
+                    st.warning("Monitor2D plot data is missing plot_json")
+    
     # Try to render JSON nicely if possible
     if isinstance(content, (dict, list)):
         st.json(content)
@@ -282,7 +344,7 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
             
             # Render content uniformly
             if message.content:
-                render_content(message.content, color)
+                render_content(message.content, color, custom_data=message.custom_data)
     
     elif message.type == "tool":
         # Tool messages - unified rendering same as AI messages
@@ -300,7 +362,7 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
             
             # Render content uniformly
             if message.content:
-                render_content(message.content, color)
+                render_content(message.content, color, custom_data=message.custom_data)
     
     elif message.type == "system":
         # System messages - plain text display

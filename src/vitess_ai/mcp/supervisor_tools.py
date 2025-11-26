@@ -471,5 +471,143 @@ async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]
         }
 
 
+@mcp.tool()
+async def generate_monitor1d_plot(thread_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Generate an interactive Plotly plot from monitor1d.dat file.
+    
+    Args:
+        thread_id: Optional thread ID to locate the monitor1d.dat file.
+                   If not provided, will try to get from environment.
+    
+    Returns:
+        Dictionary with plot JSON and metadata, or error information
+    """
+    try:
+        # Get thread_id from parameter or environment
+        if not thread_id:
+            thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
+        if not thread_id:
+            return {
+                "success": False,
+                "error": "No thread_id provided and not available in environment",
+                "plot_json": None,
+            }
+        
+        # Construct file path
+        from pathlib import Path
+        monitor_file = Path(global_config.VITESS_PROJECT_PATH) / thread_id / "outputs" / "monitor1D.dat"
+        
+        if not monitor_file.exists():
+            return {
+                "success": False,
+                "error": f"Monitor1D file not found: {monitor_file}",
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+        
+        # Import and use the plotly reading function
+        from vitess_ai.plots.vitess_plot import read_mfile_plotly
+        
+        result = read_mfile_plotly(str(monitor_file))
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "plot_type": "monitor1d",
+                "plot_json": result["plot_json"],
+                "title": result.get("title", "Monitor1D Results"),
+                "xaxis": result.get("xaxis", "x"),
+                "yaxis": result.get("yaxis", "Intensity [n/s]"),
+                "file_path": str(monitor_file),
+                "message": f"✅ Successfully generated Monitor1D plot from {monitor_file.name}",
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "Unknown error generating plot"),
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+            
+    except Exception as e:
+        logger.error(f"Error generating Monitor1D plot: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": f"Error generating Monitor1D plot: {str(e)}",
+            "plot_json": None,
+        }
+
+
+@mcp.tool()
+async def generate_monitor2d_plot(thread_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Generate an interactive Plotly plot from monitor2d.dat file.
+    
+    Args:
+        thread_id: Optional thread ID to locate the monitor2d.dat file.
+                   If not provided, will try to get from environment.
+    
+    Returns:
+        Dictionary with plot JSON and metadata, or error information
+    """
+    try:
+        # Get thread_id from parameter or environment
+        if not thread_id:
+            thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
+        if not thread_id:
+            return {
+                "success": False,
+                "error": "No thread_id provided and not available in environment",
+                "plot_json": None,
+            }
+        
+        # Construct file path
+        from pathlib import Path
+        monitor_file = Path(global_config.VITESS_PROJECT_PATH) / thread_id / "outputs" / "monitor2D.dat"
+        
+        if not monitor_file.exists():
+            return {
+                "success": False,
+                "error": f"Monitor2D file not found: {monitor_file}",
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+        
+        # Import and use the plotly reading function
+        from vitess_ai.plots.vitess_plot import read_mfile_plotly
+        
+        result = read_mfile_plotly(str(monitor_file))
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "plot_type": "monitor2d",
+                "plot_json": result["plot_json"],
+                "title": result.get("title", "Monitor2D Results"),
+                "xaxis": result.get("xaxis", "x"),
+                "yaxis": result.get("yaxis", "y"),
+                "file_path": str(monitor_file),
+                "message": f"✅ Successfully generated Monitor2D plot from {monitor_file.name}",
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "Unknown error generating plot"),
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+            
+    except Exception as e:
+        logger.error(f"Error generating Monitor2D plot: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": f"Error generating Monitor2D plot: {str(e)}",
+            "plot_json": None,
+        }
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

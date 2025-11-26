@@ -263,11 +263,11 @@ class SupervisorAgent:
     
     def add_default_modules(self) -> None:
         """Add all default modules (readin, guide, writeout)"""
-        # self.add_readin_module()
-        # self.add_guide_module()
+        self.add_readin_module()
+        self.add_guide_module()
         self.add_monitor1d_module()  
         self.add_monitor2d_module()  
-        # self.add_writeout_module()
+        self.add_writeout_module()
     
     # =================
     # AGENT INITIALIZATION
@@ -423,6 +423,7 @@ class SupervisorAgent:
         workflow.add_node("supervisor_prepare_simulation", self._prepare_simulation_node)
         workflow.add_node("supervisor_run_simulation", self._run_simulation_node)
         workflow.add_node("supervisor_post_simulation_response", self._post_simulation_response_node)
+        workflow.add_node("supervisor_generate_plots", self._generate_plots_node)
         workflow.add_node("supervisor_completion", self._completion_node)
         workflow.add_node("supervisor_error_handler", self._error_handler_node)
         
@@ -486,6 +487,8 @@ class SupervisorAgent:
         if self.simulation_tools:
             workflow.add_conditional_edges("supervisor_simulation_tools", self._route_after_simulation_tools)
             workflow.add_conditional_edges("supervisor_post_simulation_response", self._route_after_post_simulation_response)
+        # Plot generation always routes to completion
+        workflow.add_edge("supervisor_generate_plots", "supervisor_completion")
 
         workflow.add_edge("supervisor_completion", END)
         workflow.add_edge("supervisor_error_handler", END)
@@ -912,15 +915,162 @@ Configuration is complete. The simulation parameters are ready for execution.
         }
     
     def _route_after_post_simulation_response(self, state: UnifiedState) -> str:
-        """Route after post-simulation response to completion"""
+        """Route after post-simulation response to plot generation"""
         validation_status = state.get('simulation_finish', False)
         
         if validation_status:
-            self.logger.info("Simulation executed successfully, routing to completion")
+            self.logger.info("Simulation executed successfully, routing to plot generation")
         else:
-            self.logger.info("Simulation execution completed with issues, routing to completion")
+            self.logger.info("Simulation execution completed with issues, routing to plot generation")
         
-        return 'supervisor_completion'
+        return 'supervisor_generate_plots'
+    
+    def _generate_plots_node(self, state: UnifiedState) -> dict:
+        """Generate plots from monitor files after simulation execution"""
+        self.logger.info("Entering plot generation phase")
+        
+        # Get thread_id from state
+        thread_id = state.get('thread_id')
+        if not thread_id:
+            self.logger.warning("No thread_id in state, skipping plot generation")
+            return {
+                'messages': state.get('messages', []),
+                'plot_data': {},
+            }
+        
+        # Check for monitor files and generate plots
+        plot_data = {}
+        plot_messages = []
+        
+        try:
+            from pathlib import Path
+            from vitess_ai.core.config import global_config
+            
+            # Extract file paths from module results in state
+            module_results = state.get('module_results', {})
+            outputs_dir = Path(global_config.VITESS_PROJECT_PATH) / thread_id / "outputs"
+            
+            def extract_file_path(module_name: str, default_filename: str) -> str:
+                """Extract file path from module results or use default."""
+                file_path = None
+                if module_name in module_results:
+                    module_result = module_results[module_name]
+                    if hasattr(module_result, 'parameters') and module_result.parameters:
+                        file_path = module_result.parameters.get('fMonitorFilename')
+                    elif isinstance(module_result, dict):
+                        params = module_result.get('parameters', {})
+                        if isinstance(params, dict):
+                            file_path = params.get('fMonitorFilename')
+                
+                # Fallback to default path if not found in state
+                if not file_path:
+                    return str(outputs_dir / default_filename)
+                
+                # Ensure it's a string and resolve relative paths
+                file_path = str(file_path)
+                if not Path(file_path).is_absolute():
+                    # If relative, assume it's relative to outputs directory
+                    return str(outputs_dir / file_path)
+                return file_path
+            
+            # Get Monitor1D file path from module results
+            monitor1d_file_path = extract_file_path('monitor1d', 'monitor1D.dat')
+            
+            monitor1d_file = Path(monitor1d_file_path)
+            if monitor1d_file.exists():
+                self.logger.info(f"Found Monitor1D file: {monitor1d_file}")
+                try:
+                    from vitess_ai.plots.vitess_plot import read_mfile_plotly
+                    result = read_mfile_plotly(str(monitor1d_file))
+                    if result.get("success"):
+                        plot_data["monitor1d"] = {
+                            "plot_json": result["plot_json"],
+                            "title": result.get("title", "Monitor1D Results"),
+                            "xaxis": result.get("xaxis", "x"),
+                            "yaxis": result.get("yaxis", "Intensity [n/s]"),
+                            "plot_type": "monitor1d",
+                        }
+                        plot_messages.append(f"✅ Generated interactive plot for Monitor1D data")
+                    else:
+                        self.logger.warning(f"Failed to generate Monitor1D plot: {result.get('error')}")
+                except Exception as e:
+                    self.logger.error(f"Error generating Monitor1D plot: {e}", exc_info=True)
+            else:
+                self.logger.info(f"Monitor1D file not found: {monitor1d_file}")
+            
+            # Get Monitor2D file path from module results
+            monitor2d_file_path = extract_file_path('monitor2d', 'monitor2D.dat')
+            
+            monitor2d_file = Path(monitor2d_file_path)
+            if monitor2d_file.exists():
+                self.logger.info(f"Found Monitor2D file: {monitor2d_file}")
+                try:
+                    from vitess_ai.plots.vitess_plot import read_mfile_plotly
+                    result = read_mfile_plotly(str(monitor2d_file))
+                    if result.get("success"):
+                        plot_data["monitor2d"] = {
+                            "plot_json": result["plot_json"],
+                            "title": result.get("title", "Monitor2D Results"),
+                            "xaxis": result.get("xaxis", "x"),
+                            "yaxis": result.get("yaxis", "y"),
+                            "plot_type": "monitor2d",
+                        }
+                        plot_messages.append(f"✅ Generated interactive plot for Monitor2D data")
+                    else:
+                        self.logger.warning(f"Failed to generate Monitor2D plot: {result.get('error')}")
+                except Exception as e:
+                    self.logger.error(f"Error generating Monitor2D plot: {e}", exc_info=True)
+            else:
+                self.logger.info(f"Monitor2D file not found: {monitor2d_file}")
+                self.logger.info(f"Monitor2D file path checked: {monitor2d_file_path}")
+                # Check if monitor2d module was even configured
+                if 'monitor2d' not in module_results:
+                    self.logger.info("Monitor2D module was not configured, so no plot expected")
+                else:
+                    self.logger.warning(f"Monitor2D module was configured but file not found at expected path: {monitor2d_file_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error in plot generation node: {e}", exc_info=True)
+            # Log plot_data for debugging
+            self.logger.info(f"Plot data generated so far: {list(plot_data.keys())}")
+        
+        # Create message with plot information
+        messages = state.get('messages', [])
+        
+        # Check if any monitor modules were configured
+        execution_order = state.get('execution_order', [])
+        has_monitor_modules = 'monitor1d' in execution_order or 'monitor2d' in execution_order
+        
+        if plot_data:
+            # Plots were successfully generated
+            plot_summary = "📊 **Visualization Results**\n\n" + "\n".join(plot_messages)
+            from langchain_core.messages import AIMessage
+            # Create message with plot_data in custom_data for UI rendering
+            plot_message = AIMessage(content=plot_summary)
+            # Store plot_data in message's additional_kwargs for custom_data extraction
+            # The streaming handler will convert this to ChatMessage with custom_data
+            plot_message.additional_kwargs = {"plot_data": plot_data}
+            messages.append(plot_message)
+            # Log what plots were generated for debugging
+            self.logger.info(f"Plot generation complete. Generated plots: {list(plot_data.keys())}")
+            self.logger.debug(f"Plot data structure: monitor1d={'monitor1d' in plot_data}, monitor2d={'monitor2d' in plot_data}")
+        elif has_monitor_modules:
+            # Monitor modules were configured but no plots were generated
+            # This could mean files weren't created or there was an error
+            self.logger.info("Monitor modules were configured but no plots were generated")
+            # Optionally add a message to inform the user (commented out to avoid noise)
+            # from langchain_core.messages import AIMessage
+            # no_plots_message = AIMessage(content="ℹ️ No visualization data available. Monitor files may not have been generated during simulation.")
+            # messages.append(no_plots_message)
+        else:
+            # No monitor modules were configured - this is expected, no action needed
+            self.logger.info("No monitor modules in execution order, skipping plot generation message")
+        
+        return {
+            'messages': messages,
+            'plot_data': plot_data,
+            'current_module': 'supervisor',
+        }
     
     # =================
     # PUBLIC API
