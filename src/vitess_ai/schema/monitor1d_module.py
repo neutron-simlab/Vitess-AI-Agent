@@ -16,7 +16,7 @@ class Monitor1DParameters(BaseModel):
     
     # Parameter configuration
     eParX: Annotated[VtMonPar, Field(
-        default=VtMonPar.NO_PAR,
+        default=VtMonPar.POS_Y,
         description=("-X [-] Parameter on x-axis. The intensity or polarisation is shown "
                     "as a function of this parameter. See parameter list for available options."),
         json_schema_extra={"flag": "-X"}
@@ -31,14 +31,14 @@ class Monitor1DParameters(BaseModel):
     
     # Range configuration
     xMin: Annotated[float, Field(
-        default=-1.0,
+        default=-2.0,
         description=("-w [var] Minimal x-value defining the parameter range to be monitored "
                     "on the 1st x-axis."),
         json_schema_extra={"flag": "-w"}
     )]
     
     xMax: Annotated[float, Field(
-        default=-1.0,
+        default=2.0,
         description=("-W [var] Maximal x-value defining the parameter range to be monitored "
                     "on the 1st x-axis."),
         json_schema_extra={"flag": "-W"}

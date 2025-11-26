@@ -594,3 +594,25 @@ class AgentClient:
             raise AgentClientError(f"Error restarting agent: {e}")
         
         return response.json()
+    
+    def get_modules_info(self) -> dict[str, Any]:
+        """
+        Get module information from the server.
+        
+        This fetches the list of registered modules from the supervisor,
+        including their names, display names, descriptions, and order.
+        
+        Returns:
+            dict: Dictionary with status and modules list
+        """
+        try:
+            response = httpx.get(
+                f"{self.base_url}/config/modules",
+                headers=self._headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise AgentClientError(f"Error getting modules info: {e}")
+        
+        return response.json()

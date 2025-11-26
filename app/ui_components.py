@@ -7,6 +7,7 @@ with consistent styling across the application.
 import json
 import streamlit as st
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 from vitess_ai.schema.server import ChatMessage
 
@@ -14,7 +15,7 @@ from vitess_ai.schema.server import ChatMessage
 _assets_dir = Path(__file__).parent / "assets"
 _logo_path = _assets_dir / "logo.png"
 
-# Module color mapping for visual differentiation
+# Module color mapping for visual differentiation (fallback for when dynamic info unavailable)
 MODULE_COLORS = {
     "supervisor": "blue",      # Streamlit's primary blue
     "readin": "green",         # Success green
@@ -24,7 +25,7 @@ MODULE_COLORS = {
     "default": "blue"          # Fallback
 }
 
-# Module display names and icons
+# Module display names and icons (fallback for when dynamic info unavailable)
 MODULE_INFO = {
     "supervisor": {"name": "SUPERVISOR", "icon": ""},
     "readin": {"name": "READ-IN", "icon": ""},
@@ -33,6 +34,97 @@ MODULE_INFO = {
     "tool": {"name": "TOOL", "icon": "🔧"},
     "default": {"name": "AI", "icon": ""}
 }
+
+# Color palette for dynamic module assignment
+# These colors are assigned to modules based on their order when not in MODULE_COLORS
+COLOR_PALETTE = [
+    "blue", "green", "orange", "violet", "red", "purple", 
+    "pink", "yellow", "cyan", "teal", "indigo", "brown"
+]
+
+
+def get_module_info_from_server(server_url: str) -> Dict[str, Any]:
+    """
+    Fetch module information from the server and cache it in session state.
+    
+    Args:
+        server_url: Base URL of the server
+        
+    Returns:
+        Dictionary mapping module names to their info (name, display_name, order, etc.)
+    """
+    # Check if we have cached module info
+    if "module_info_cache" not in st.session_state:
+        st.session_state.module_info_cache = {}
+    
+    # Check if we have a cached timestamp and if it's recent (cache for 5 minutes)
+    cache_key = f"module_info_{server_url}"
+    if cache_key in st.session_state.module_info_cache:
+        cached_data = st.session_state.module_info_cache[cache_key]
+        # For simplicity, we'll refresh on each page load (Streamlit reruns)
+        # In production, you might want to add timestamp checking
+        pass
+    
+    # Try to fetch from server
+    try:
+        import httpx
+        response = httpx.get(
+            f"{server_url}/config/modules",
+            timeout=5.0
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("status") == "success":
+            modules = data.get("modules", [])
+            # Build module info dictionary
+            module_info_dict = {}
+            for module in modules:
+                module_name = module.get("name", "")
+                if module_name:
+                    module_info_dict[module_name] = {
+                        "name": module.get("display_name", module_name.upper()),
+                        "display_name": module.get("display_name", module_name),
+                        "order": module.get("order", 999),
+                        "description": module.get("description", ""),
+                        "icon": ""  # Icons can be added later if needed
+                    }
+            
+            # Cache the result
+            st.session_state.module_info_cache[cache_key] = module_info_dict
+            return module_info_dict
+    except Exception as e:
+        # If fetch fails, return empty dict (will use fallbacks)
+        pass
+    
+    # Return cached data if available, otherwise empty dict
+    return st.session_state.module_info_cache.get(cache_key, {})
+
+
+def get_module_color(module_name: str, dynamic_modules: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Get color for a module, using dynamic info if available, otherwise fallback.
+    
+    Args:
+        module_name: Module identifier
+        dynamic_modules: Optional dictionary of dynamic module info
+        
+    Returns:
+        Color string for the module
+    """
+    # First check hardcoded colors (for backward compatibility)
+    if module_name in MODULE_COLORS:
+        return MODULE_COLORS[module_name]
+    
+    # If we have dynamic modules, assign color based on order
+    if dynamic_modules and module_name in dynamic_modules:
+        module_order = dynamic_modules[module_name].get("order", 999)
+        # Use order to pick a color from palette (skip supervisor, tool, default)
+        color_index = (module_order - 1) % len(COLOR_PALETTE)
+        return COLOR_PALETTE[color_index]
+    
+    # Fallback to default
+    return MODULE_COLORS["default"]
 
 
 def render_header_with_logo() -> None:
@@ -55,16 +147,23 @@ def module_badge_html(module_display_name: str) -> str:
     return f'<strong>{module_display_name}</strong>'
 
 
-def render_module_badge(module_name: str) -> str:
+def render_module_badge(module_name: str, dynamic_modules: Optional[Dict[str, Any]] = None) -> str:
     """
     Get formatted module badge HTML.
     
     Args:
         module_name: Module identifier
+        dynamic_modules: Optional dictionary of dynamic module info from server
         
     Returns:
         Formatted badge HTML string
     """
+    # Try to get display name from dynamic modules first
+    if dynamic_modules and module_name in dynamic_modules:
+        display_name = dynamic_modules[module_name].get("name", module_name.upper())
+        return module_badge_html(display_name)
+    
+    # Fallback to hardcoded MODULE_INFO
     module_info = MODULE_INFO.get(module_name, MODULE_INFO["default"])
     return module_badge_html(module_info['name'])
 
@@ -141,10 +240,15 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
     if message.type == "system" and not show_system:
         return
     
+    # Get dynamic module info if available
+    dynamic_modules = None
+    if "server_url" in st.session_state:
+        dynamic_modules = get_module_info_from_server(st.session_state.server_url)
+    
     # Extract module information for color coding
     custom_data = message.custom_data or {}
     module_name = custom_data.get("module_name", "default")
-    color = MODULE_COLORS.get(module_name, MODULE_COLORS["default"])
+    color = get_module_color(module_name, dynamic_modules)
     
     # Render based on message type
     if message.type == "human":
@@ -155,7 +259,7 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
     elif message.type == "ai":
         # AI messages - unified rendering with badges and content
         with st.chat_message("assistant"):
-            badge_text = render_module_badge(module_name)
+            badge_text = render_module_badge(module_name, dynamic_modules)
             
             # Check if this is an MCP tool call
             is_mcp_call = (
@@ -183,7 +287,7 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
     elif message.type == "tool":
         # Tool messages - unified rendering same as AI messages
         with st.chat_message("assistant"):
-            badge_text = render_module_badge(module_name)
+            badge_text = render_module_badge(module_name, dynamic_modules)
             
             # Check if this is an MCP tool result
             is_mcp_tool = (
@@ -217,8 +321,13 @@ def render_streaming_token(
         response_text: Accumulated response text so far
         message_placeholder: Streamlit placeholder for the message
     """
-    color = MODULE_COLORS.get(module_name, MODULE_COLORS["default"])
-    badge_text = render_module_badge(module_name)
+    # Get dynamic module info if available
+    dynamic_modules = None
+    if "server_url" in st.session_state:
+        dynamic_modules = get_module_info_from_server(st.session_state.server_url)
+    
+    color = get_module_color(module_name, dynamic_modules)
+    badge_text = render_module_badge(module_name, dynamic_modules)
     
     # Display badge and content with cursor
     message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)

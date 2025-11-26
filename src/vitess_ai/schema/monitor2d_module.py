@@ -16,14 +16,14 @@ class Monitor2DParameters(BaseModel):
     
     # Parameter configuration
     xParam: Annotated[VtMonPar, Field(
-        default=VtMonPar.NO_PAR,
+        default=VtMonPar.POS_Y,
         description=("-X [-] Parameter to be shown on the horizontal (x) axis. "
                     "See parameter list for available options."),
         json_schema_extra={"flag": "-X"}
     )]
     
     yParam: Annotated[VtMonPar, Field(
-        default=VtMonPar.NO_PAR,
+        default=VtMonPar.POS_Z,
         description=("-Y [-] Parameter to be shown on the vertical (y) axis. "
                     "See parameter list for available options."),
         json_schema_extra={"flag": "-Y"}
@@ -31,28 +31,28 @@ class Monitor2DParameters(BaseModel):
     
     # Range configuration
     xMin: Annotated[float, Field(
-        default=-1.0,
+        default=-2.0,
         description=("-w [var] Minimal x-value defining the parameter range to be monitored "
                     "on the horizontal axis."),
         json_schema_extra={"flag": "-w"}
     )]
     
     xMax: Annotated[float, Field(
-        default=-1.0,
+        default=2.0,
         description=("-W [var] Maximal x-value defining the parameter range to be monitored "
                     "on the horizontal axis."),
         json_schema_extra={"flag": "-W"}
     )]
     
     yMin: Annotated[float, Field(
-        default=-1.0,
+        default=-2.0,
         description=("-h [var] Minimal y-value defining the parameter range to be monitored "
                     "on the vertical axis."),
         json_schema_extra={"flag": "-h"}
     )]
     
     yMax: Annotated[float, Field(
-        default=-1.0,
+        default=2.0,
         description=("-H [var] Maximal y-value defining the parameter range to be monitored "
                     "on the vertical axis."),
         json_schema_extra={"flag": "-H"}
@@ -90,7 +90,7 @@ class Monitor2DParameters(BaseModel):
     
     # File format
     format: Annotated[VtFormat2D, Field(
-        default=VtFormat2D.NO_2D_FORMAT,
+        default=VtFormat2D.MATRIX,
         description=("-F [-] File format for output. Choose between 'matrix' style and the 'xyz' "
                     "representation (readable by gnuplot and other analysis software). "
                     "'compact' means a shorter header and fewer digits in the written float numbers. "

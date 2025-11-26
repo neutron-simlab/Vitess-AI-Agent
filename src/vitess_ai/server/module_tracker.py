@@ -23,8 +23,7 @@ class ModuleTracker:
     3. Supervisor node detection
     """
     
-    # Known module prefixes for extraction from node paths
-    KNOWN_MODULES = ['readin', 'guide', 'writeout']
+    # Supervisor keyword for filtering
     SUPERVISOR_KEYWORD = 'supervisor'
     
     @staticmethod
@@ -63,12 +62,18 @@ class ModuleTracker:
     @staticmethod
     def _extract_from_node_path(node_path: str) -> Optional[str]:
         """
-        Extract module name from node path.
+        Extract module name from node path dynamically.
+        
+        This method extracts the module name by splitting on underscore and taking
+        the first part, filtering out only the 'supervisor' keyword. This allows
+        any module name to be detected dynamically without hardcoded lists.
         
         Examples:
             "readin_welcome" -> "readin"
             "supervisor_welcome" -> "supervisor"
             "guide_params_config" -> "guide"
+            "monitor1d_welcome" -> "monitor1d"
+            "monitor2d_params_config" -> "monitor2d"
             
         Args:
             node_path: The node path string
@@ -83,9 +88,11 @@ class ModuleTracker:
         if ModuleTracker.SUPERVISOR_KEYWORD in node_path:
             return 'supervisor'
         
-        # Extract module from path parts
+        # Extract module from path parts - take first part as module name
+        # This works for any module name format (readin, guide, monitor1d, etc.)
         parts = node_path.split('_')
-        if parts and parts[0] in ModuleTracker.KNOWN_MODULES:
+        if parts and parts[0]:
+            # Return the first part as module name (works for any module)
             return parts[0]
         
         return None

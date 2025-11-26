@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from vitess_ai.core.config import global_config
 from vitess_ai.server.file_storage import get_file_storage_service
+from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_supervisor_instance
 
 logger = logging.getLogger(__name__)
 
@@ -113,4 +114,49 @@ async def reset_vitess_config() -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Error resetting Vitess config: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to reset Vitess config: {str(e)}")
+
+
+@router.get("/config/modules")
+async def get_modules_config(agent_id: str = DEFAULT_AGENT) -> dict[str, Any]:
+    """
+    Get module information from the supervisor agent.
+    
+    Returns module metadata including name, display_name, description, and order
+    for all registered modules. This allows the UI to dynamically display
+    module names and colors.
+    
+    Args:
+        agent_id: Agent identifier (defaults to "supervisor")
+    
+    Returns:
+        Dictionary with module information including:
+        - status: "success" or "error"
+        - modules: List of module info dictionaries with name, display_name, description, order
+    """
+    try:
+        # Try to get supervisor agent from registry
+        supervisor = get_supervisor_instance(agent_id)
+        
+        if supervisor is None:
+            # If no supervisor exists yet, we can't get module info
+            # Return empty list - UI will use fallback values
+            logger.warning(f"Supervisor agent '{agent_id}' not found in registry. Returning empty module list.")
+            return {
+                "status": "success",
+                "modules": [],
+                "message": "Supervisor not initialized yet. Module info will be available after first agent call."
+            }
+        
+        # Get module information from supervisor
+        modules_info = supervisor.list_modules()
+        
+        logger.info(f"Retrieved {len(modules_info)} modules from supervisor")
+        
+        return {
+            "status": "success",
+            "modules": modules_info
+        }
+    except Exception as e:
+        logger.error(f"Error getting module config: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get module config: {str(e)}")
 
