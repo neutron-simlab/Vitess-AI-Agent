@@ -147,3 +147,23 @@ async def restart_agent(
             details={"available_agents": ["supervisor"]}
         )
 
+
+def get_supervisor_instance(agent_id: str = DEFAULT_AGENT) -> SupervisorAgent | None:
+    """
+    Get the supervisor agent instance from the registry.
+    
+    This is useful for accessing supervisor methods like list_modules()
+    without needing to create a new agent.
+    
+    Args:
+        agent_id: Agent identifier (defaults to "supervisor")
+    
+    Returns:
+        SupervisorAgent instance if found, None otherwise
+    """
+    # Search through registry for any supervisor instance with matching agent_id
+    for (reg_agent_id, provider, model), (reg_supervisor, _) in _agent_registry.items():
+        if reg_agent_id == agent_id:
+            return reg_supervisor
+    return None
+

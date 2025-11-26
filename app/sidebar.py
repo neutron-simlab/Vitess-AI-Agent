@@ -17,7 +17,8 @@ from file_management import (
     upload_file_to_server,
     delete_file_from_server,
     load_uploaded_files,
-    get_active_module_from_messages
+    get_active_module_from_messages,
+    save_path_metadata_to_server
 )
 
 # Paths and assets
@@ -311,7 +312,9 @@ def render_sidebar() -> None:
                 # Module selection with dropdown menu
                 module_options = {
                     "readin": "Read-in Module",
-                    "guide": "Guide Module", 
+                    "guide": "Guide Module",
+                    "monitor1d": "Monitor1D Module",
+                    "monitor2d": "Monitor2D Module",
                     "instrument": "Instrument Module",
                     "writeout": "Writeout Module"
                 }
@@ -355,7 +358,7 @@ def render_sidebar() -> None:
                 st.markdown("**Summary of All Uploaded Files**")
                 total_files = sum(len(files) for files in st.session_state.uploaded_files.values())
                 if total_files > 0:
-                    summary_cols = st.columns(4)
+                    summary_cols = st.columns(6)
                     with summary_cols[0]:
                         readin_count = len(st.session_state.uploaded_files.get("readin", []))
                         st.metric("Read-in", readin_count, help="Number of read-in files")
@@ -363,9 +366,15 @@ def render_sidebar() -> None:
                         guide_count = len(st.session_state.uploaded_files.get("guide", []))
                         st.metric("Guide", guide_count, help="Number of guide files")
                     with summary_cols[2]:
+                        monitor1d_count = len(st.session_state.uploaded_files.get("monitor1d", []))
+                        st.metric("Monitor1D", monitor1d_count, help="Number of Monitor1D files")
+                    with summary_cols[3]:
+                        monitor2d_count = len(st.session_state.uploaded_files.get("monitor2d", []))
+                        st.metric("Monitor2D", monitor2d_count, help="Number of Monitor2D files")
+                    with summary_cols[4]:
                         instrument_count = len(st.session_state.uploaded_files.get("instrument", []))
                         st.metric("Instrument", instrument_count, help="Number of instrument files")
-                    with summary_cols[3]:
+                    with summary_cols[5]:
                         writeout_count = len(st.session_state.uploaded_files.get("writeout", []))
                         st.metric("Writeout", writeout_count, help="Number of writeout paths")
                 else:
@@ -461,6 +470,7 @@ def render_sidebar() -> None:
                 The system guides you through:
                 - Read-in parameters
                 - Guide configuration
+                - Monitor1D and Monitor2D parameters
                 - Writeout settings
                 - Simulation execution
                 """
@@ -789,6 +799,164 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
         else:
             st.info("No file uploaded yet. Upload a file above.")
     
+    elif selected_module == "monitor1d":
+        st.markdown("**Monitor1D Output File Path**")
+        
+        if not is_module_active:
+            st.warning("Monitor1D module is not currently active. Configure output file path when the Monitor1D module is being configured.")
+        
+        # Calculate default path: root/{thread_id}/outputs/monitor1D.dat
+        default_path = ""
+        if st.session_state.get("thread_id") and st.session_state.get("vitess_config"):
+            project_path = st.session_state.vitess_config.get("project_path", "/tmp/vitess_project")
+            thread_id = st.session_state.thread_id
+            default_path = f"{project_path}/{thread_id}/outputs/monitor1D.dat"
+        elif st.session_state.get("thread_id"):
+            # Fallback if vitess_config not loaded yet
+            thread_id = st.session_state.thread_id
+            default_path = f"/tmp/vitess_project/{thread_id}/outputs/monitor1D.dat"
+        
+        # Get current monitor1d path or use default
+        current_path = st.session_state.get("monitor1d_path", default_path)
+        
+        monitor1d_path = st.text_input(
+            "Monitor1D output file path",
+            value=current_path,
+            key="monitor1d_path_input",
+            help=f"Default location: {default_path} (automatically set if left empty). Enter a custom path if you want a different location.",
+            disabled=not is_module_active,
+            placeholder=default_path if default_path else "Enter monitor1D output file path..."
+        )
+        
+        # Show default path info
+        if default_path:
+            st.info(f"**Default location:** `{default_path}`\n\nThis path will be used automatically if you don't specify a custom location.")
+        
+        if monitor1d_path:
+            st.session_state.monitor1d_path = monitor1d_path
+            # Save to file storage as metadata
+            if st.button("Save Path", key="save_monitor1d_path", use_container_width=True, disabled=not is_module_active):
+                # Save path as metadata to server
+                result = save_path_metadata_to_server(
+                    monitor1d_path,
+                    st.session_state.thread_id,
+                    "monitor1d",
+                    st.session_state.server_url
+                )
+                if result and result.get("status") == "success":
+                    st.success(f"Monitor1D output path saved: {monitor1d_path}")
+                    # Reload files from server
+                    uploaded_files_by_module = load_uploaded_files(
+                        st.session_state.thread_id,
+                        st.session_state.server_url
+                    )
+                    st.session_state.uploaded_files = uploaded_files_by_module
+                    st.rerun()
+                else:
+                    st.error("Failed to save path. Please try again.")
+        
+        # Display saved monitor1d path
+        monitor1d_list = st.session_state.uploaded_files.get("monitor1d", [])
+        if monitor1d_list:
+            st.markdown("**Saved Monitor1D Output Path:**")
+            for file_meta in monitor1d_list:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.text(f"{file_meta.get('filename', file_meta.get('file_path', 'unknown'))}")
+                with col2:
+                    if st.button("Delete", key=f"delete_monitor1d_{file_meta.get('file_id')}"):
+                        if delete_file_from_server(
+                            file_meta.get("file_id"),
+                            st.session_state.thread_id,
+                            "monitor1d",
+                            st.session_state.server_url
+                        ):
+                            st.rerun()
+        else:
+            if default_path:
+                st.info(f"**Default path will be used:** `{default_path}`\n\nYou can enter a custom path above if needed.")
+            else:
+                st.info("No output path saved yet. Enter a path above and click 'Save Path'.")
+    
+    elif selected_module == "monitor2d":
+        st.markdown("**Monitor2D Output File Path**")
+        
+        if not is_module_active:
+            st.warning("Monitor2D module is not currently active. Configure output file path when the Monitor2D module is being configured.")
+        
+        # Calculate default path: root/{thread_id}/outputs/monitor2D.dat
+        default_path = ""
+        if st.session_state.get("thread_id") and st.session_state.get("vitess_config"):
+            project_path = st.session_state.vitess_config.get("project_path", "/tmp/vitess_project")
+            thread_id = st.session_state.thread_id
+            default_path = f"{project_path}/{thread_id}/outputs/monitor2D.dat"
+        elif st.session_state.get("thread_id"):
+            # Fallback if vitess_config not loaded yet
+            thread_id = st.session_state.thread_id
+            default_path = f"/tmp/vitess_project/{thread_id}/outputs/monitor2D.dat"
+        
+        # Get current monitor2d path or use default
+        current_path = st.session_state.get("monitor2d_path", default_path)
+        
+        monitor2d_path = st.text_input(
+            "Monitor2D output file path",
+            value=current_path,
+            key="monitor2d_path_input",
+            help=f"Default location: {default_path} (automatically set if left empty). Enter a custom path if you want a different location.",
+            disabled=not is_module_active,
+            placeholder=default_path if default_path else "Enter monitor2D output file path..."
+        )
+        
+        # Show default path info
+        if default_path:
+            st.info(f"**Default location:** `{default_path}`\n\nThis path will be used automatically if you don't specify a custom location.")
+        
+        if monitor2d_path:
+            st.session_state.monitor2d_path = monitor2d_path
+            # Save to file storage as metadata
+            if st.button("Save Path", key="save_monitor2d_path", use_container_width=True, disabled=not is_module_active):
+                # Save path as metadata to server
+                result = save_path_metadata_to_server(
+                    monitor2d_path,
+                    st.session_state.thread_id,
+                    "monitor2d",
+                    st.session_state.server_url
+                )
+                if result and result.get("status") == "success":
+                    st.success(f"Monitor2D output path saved: {monitor2d_path}")
+                    # Reload files from server
+                    uploaded_files_by_module = load_uploaded_files(
+                        st.session_state.thread_id,
+                        st.session_state.server_url
+                    )
+                    st.session_state.uploaded_files = uploaded_files_by_module
+                    st.rerun()
+                else:
+                    st.error("Failed to save path. Please try again.")
+        
+        # Display saved monitor2d path
+        monitor2d_list = st.session_state.uploaded_files.get("monitor2d", [])
+        if monitor2d_list:
+            st.markdown("**Saved Monitor2D Output Path:**")
+            for file_meta in monitor2d_list:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.text(f"{file_meta.get('filename', file_meta.get('file_path', 'unknown'))}")
+                with col2:
+                    if st.button("Delete", key=f"delete_monitor2d_{file_meta.get('file_id')}"):
+                        if delete_file_from_server(
+                            file_meta.get("file_id"),
+                            st.session_state.thread_id,
+                            "monitor2d",
+                            st.session_state.server_url
+                        ):
+                            st.rerun()
+        else:
+            if default_path:
+                st.info(f"**Default path will be used:** `{default_path}`\n\nYou can enter a custom path above if needed.")
+            else:
+                st.info("No output path saved yet. Enter a path above and click 'Save Path'.")
+    
     elif selected_module == "writeout":
         st.markdown("**Writeout Save Path**")
         
@@ -826,8 +994,24 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
             st.session_state.writeout_path = writeout_path
             # Save to file storage as metadata
             if st.button("Save Path", key="save_writeout_path", use_container_width=True, disabled=not is_module_active):
-                # Create a metadata entry for writeout path
-                st.info(f"Output path saved: {writeout_path}")
+                # Save path as metadata to server
+                result = save_path_metadata_to_server(
+                    writeout_path,
+                    st.session_state.thread_id,
+                    "writeout",
+                    st.session_state.server_url
+                )
+                if result and result.get("status") == "success":
+                    st.success(f"Output path saved: {writeout_path}")
+                    # Reload files from server
+                    uploaded_files_by_module = load_uploaded_files(
+                        st.session_state.thread_id,
+                        st.session_state.server_url
+                    )
+                    st.session_state.uploaded_files = uploaded_files_by_module
+                    st.rerun()
+                else:
+                    st.error("Failed to save path. Please try again.")
         
         # Display saved writeout path
         writeout_list = st.session_state.uploaded_files.get("writeout", [])

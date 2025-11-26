@@ -122,7 +122,7 @@ def get_active_module_from_messages(messages: List[ChatMessage]) -> Optional[str
         messages: List of chat messages
         
     Returns:
-        Active module name (readin, guide, instrument, writeout) or None
+        Active module name (readin, guide, instrument, monitor1d, monitor2d, writeout) or None
     """
     if not messages:
         return None
@@ -131,10 +131,54 @@ def get_active_module_from_messages(messages: List[ChatMessage]) -> Optional[str
     for message in reversed(messages):
         if message.type == "ai" and message.custom_data:
             module_name = message.custom_data.get("module_name")
-            if module_name and module_name in ["readin", "guide", "instrument", "writeout"]:
+            if module_name and module_name in ["readin", "guide", "instrument", "monitor1d", "monitor2d", "writeout"]:
                 # Check if it's not supervisor - supervisor means no specific module is active
                 if module_name != "supervisor" and module_name != "default":
                     return module_name
     
     return None
+
+
+def save_path_metadata_to_server(
+    file_path: str,
+    thread_id: str,
+    module_type: str,
+    server_url: str
+) -> Optional[Dict]:
+    """
+    Save a file path as metadata to the server for modules that use paths (writeout, monitor1d, monitor2d).
+    
+    This creates a small metadata file that can be retrieved by MCP tools.
+    
+    Args:
+        file_path: The file path to save
+        thread_id: Thread ID
+        module_type: Module type (writeout, monitor1d, monitor2d)
+        server_url: Server URL
+        
+    Returns:
+        Dictionary with file metadata or None if failed
+    """
+    try:
+        # Create a small metadata file with the path
+        metadata_content = file_path.encode('utf-8')
+        filename = f"{module_type}_path.txt"
+        
+        files = {"file": (filename, BytesIO(metadata_content), "text/plain")}
+        data = {
+            "thread_id": thread_id,
+            "module_type": module_type
+        }
+        
+        response = httpx.post(
+            f"{server_url}/files/upload",
+            files=files,
+            data=data,
+            timeout=30.0
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"Failed to save path metadata: {e}")
+        return None
 

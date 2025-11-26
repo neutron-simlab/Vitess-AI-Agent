@@ -25,6 +25,8 @@ class FileStorageService:
         "readin": "readin",
         "guide": "guide", 
         "instrument": "instrument",
+        "monitor1d": "monitor1d",
+        "monitor2d": "monitor2d",
         "writeout": "writeout"
     }
     

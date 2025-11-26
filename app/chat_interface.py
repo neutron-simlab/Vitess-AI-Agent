@@ -12,7 +12,8 @@ from ui_components import (
     render_message,
     render_module_badge,
     render_streaming_token,
-    MODULE_COLORS
+    get_module_color,
+    get_module_info_from_server
 )
 
 
@@ -157,8 +158,12 @@ def render_chat_interface() -> None:
             finally:
                 # Finalize message if we streamed tokens only
                 if response_text and not received_complete_message:
-                    color = MODULE_COLORS.get(current_streaming_module, MODULE_COLORS["default"])
-                    badge_text = render_module_badge(current_streaming_module)
+                    # Get dynamic module info if available
+                    dynamic_modules = None
+                    if st.session_state.server_connected and st.session_state.server_url:
+                        dynamic_modules = get_module_info_from_server(st.session_state.server_url)
+                    color = get_module_color(current_streaming_module, dynamic_modules)
+                    badge_text = render_module_badge(current_streaming_module, dynamic_modules)
                     message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                     message_placeholder.markdown(
                         f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
@@ -229,8 +234,12 @@ def render_chat_interface() -> None:
                             
                             # Finalize message if we streamed tokens only
                             if response_text and not received_complete_message:
-                                color = MODULE_COLORS.get(current_streaming_module, MODULE_COLORS["default"])
-                                badge_text = render_module_badge(current_streaming_module)
+                                # Get dynamic module info if available
+                                dynamic_modules = None
+                                if st.session_state.server_connected and st.session_state.server_url:
+                                    dynamic_modules = get_module_info_from_server(st.session_state.server_url)
+                                color = get_module_color(current_streaming_module, dynamic_modules)
+                                badge_text = render_module_badge(current_streaming_module, dynamic_modules)
                                 message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                                 message_placeholder.markdown(
                                     f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
@@ -299,9 +308,13 @@ def render_chat_interface() -> None:
                         # Finalize message display
                         # Only add accumulated token text if we didn't receive a complete ChatMessage
                         if response_text and not received_complete_message:
+                            # Get dynamic module info if available
+                            dynamic_modules = None
+                            if st.session_state.server_connected and st.session_state.server_url:
+                                dynamic_modules = get_module_info_from_server(st.session_state.server_url)
                             # Apply final color styling
-                            color = MODULE_COLORS.get(current_streaming_module, MODULE_COLORS["default"])
-                            badge_text = render_module_badge(current_streaming_module)
+                            color = get_module_color(current_streaming_module, dynamic_modules)
+                            badge_text = render_module_badge(current_streaming_module, dynamic_modules)
                             
                             # Display final message with color and badge
                             message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)

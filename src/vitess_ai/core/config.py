@@ -55,6 +55,7 @@ class Config:
     READIN_MCP_PATH = os.getenv("READIN_MCP_PATH", "src/vitess_ai/mcp/readin_module_tools.py")
     GUIDE_MCP_PATH = os.getenv("GUIDE_MCP_PATH", "src/vitess_ai/mcp/guide_module_tools.py")
     WRITEOUT_MCP_PATH = os.getenv("WRITEOUT_MCP_PATH", "src/vitess_ai/mcp/writeout_module_tools.py")
+    MONITOR_MCP_PATH = os.getenv("MONITOR_MCP_PATH", "src/vitess_ai/mcp/monitor_module_tools.py")
     # Supervisor CLI tools path
     SUPERVISOR_MCP_PATH = os.getenv("SUPERVISOR_MCP_PATH", "src/vitess_ai/mcp/supervisor_tools.py")
     
@@ -178,6 +179,8 @@ class Config:
             "readin": cls.READIN_MCP_PATH,
             "guide": cls.GUIDE_MCP_PATH,
             "writeout": cls.WRITEOUT_MCP_PATH,
+            "monitor1d": cls.MONITOR_MCP_PATH,
+            "monitor2d": cls.MONITOR_MCP_PATH,
             "supervisor": cls.SUPERVISOR_MCP_PATH
         }
         

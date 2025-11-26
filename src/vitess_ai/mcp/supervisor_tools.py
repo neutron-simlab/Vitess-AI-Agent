@@ -3,11 +3,13 @@ supervisor_mcp_tools.py - MCP Tools for Supervisor Agent CLI Generation
 FastMCP tools for converting collected module parameters to CLI commands
 """
 from fastmcp import FastMCP
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from vitess_ai.core.config import global_config
 from datetime import datetime
 import logging
 import json
+import os
+import re
 
 mcp = FastMCP("Supervisor CLI Generation Server")
 logger = logging.getLogger(__name__)
@@ -47,21 +49,23 @@ MODULE_EXECUTABLES = {
     "readin": "$V/read_in${SUFFIX}",
     "guide": "$V/guide_parallel${SUFFIX}",
     "writeout": "$V/writeout${SUFFIX}",
+    "monitor1d": "$V/monitor1D${SUFFIX}",
+    "monitor2d": "$V/monitor2D${SUFFIX}",
 }
 
-# Common parameters that appear in all modules
-COMMON_PARAMS = " ".join([
+# Common parameters that appear in all modules (base, without --P)
+COMMON_PARAMS_BASE = " ".join([
     "--Z1",
     "--U1.0e-25",
     "--G1", 
     "--T0",
     "--B10000",
-    f"--P$P",
 ])
 
 def generate_cli_command(
    module_results: Optional[dict] = None,
    execution_order: Optional[List[str]] = None,
+   thread_id: Optional[str] = None,
 ) -> Dict[str, Any]:
    """
    Generate CLI command from collected module results.
@@ -69,11 +73,42 @@ def generate_cli_command(
    Args:
        module_results: Dictionary with module names as keys and ModuleResult objects as values
        execution_order: List of module names in execution order
+       thread_id: Optional thread ID to include in project path. If not provided, will try to get from environment.
        
    Returns:
        Dictionary with CLI command and metadata
    """
    try:
+       # Get thread_id from environment if not provided
+       if not thread_id:
+           thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+       
+       # If still no thread_id, try to extract it from file paths in CLI parameters
+       if not thread_id and module_results:
+           # Look for UUID pattern in file paths (thread_id is typically a UUID)
+           # Pattern: {VITESS_PROJECT_PATH}/{thread_id}/uploads/... or .../outputs/...
+           uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+           project_path_escaped = re.escape(global_config.VITESS_PROJECT_PATH)
+           thread_id_pattern = rf'{project_path_escaped}/({uuid_pattern})/'
+           
+           for module_name, module_result in module_results.items():
+               cli_params = module_result.get('cli_parameters', '')
+               if cli_params:
+                   match = re.search(thread_id_pattern, cli_params)
+                   if match:
+                       thread_id = match.group(1)
+                       logger.info(f"Extracted thread_id from file paths: {thread_id}")
+                       break
+       
+       # Build project path with thread_id if available
+       if thread_id:
+           project_path = f"{global_config.VITESS_PROJECT_PATH}/{thread_id}"
+       else:
+           project_path = global_config.VITESS_PROJECT_PATH
+       
+       # Build COMMON_PARAMS with dynamic project path
+       common_params = f"{COMMON_PARAMS_BASE} --P{project_path}"
+       
        if module_results is None:
            module_results = {}
        if execution_order is None or not execution_order:
@@ -81,7 +116,7 @@ def generate_cli_command(
            execution_order = list(module_results.keys())
            logger.warning(f"No execution_order provided, using module order: {execution_order}")
            
-       cli_command = []
+       cli_command_lines = []
        
        for i, module in enumerate(execution_order, 1):  # Start from 1 for ordering
            # Get module result (could be dict or object)
@@ -97,6 +132,10 @@ def generate_cli_command(
                logger.warning(f"No CLI parameters found for module '{module}'")
                continue
 
+           # Check if module executable is defined
+           if module not in MODULE_EXECUTABLES:
+               logger.error(f"Module '{module}' not found in MODULE_EXECUTABLES. Available modules: {list(MODULE_EXECUTABLES.keys())}")
+               continue
            
            # Build module-specific ordering parameter
            module_order_param = f"--N{i} --L${{L}}0{i}"
@@ -104,27 +143,43 @@ def generate_cli_command(
            # Build module command parts
            cli_module = [
                MODULE_EXECUTABLES[module], 
-               COMMON_PARAMS,
+               common_params,
                module_order_param, 
                cli_params
            ]
            
-           # Add pipe separator except for last module
-           if module != execution_order[-1]:
-               cli_module.append("|")
-           
+           # Join module command parts with spaces
            cli_module_str = " ".join(cli_module)
-           cli_command.append(cli_module_str)
+           
+           # Add pipe and backslash continuation except for last module
+           if module != execution_order[-1]:
+               cli_module_str += " | \\"
+           
+           cli_command_lines.append(cli_module_str)
        
-       # Join all commands
-       final_command = " ".join(cli_command)
+       # Join all pipeline commands with newlines
+       pipeline_command = "\n".join(cli_command_lines)
+       
+       # Add post-processing commands on separate lines
+       post_processing_lines = [
+           f"rm -f {project_path}/result.txt",
+           f"cat ${{L}}?? >> {project_path}/result.txt",
+           f"echo {project_path}",
+           f"rm ${{L}}*"
+       ]
+       post_processing = "\n".join(post_processing_lines)
+       
+       # Combine pipeline and post-processing with blank line separator
+       final_command = pipeline_command + "\n\n" + post_processing
 
        return {
            "success": True,
            "cli_command": final_command,
            "modules_included": [m for m in execution_order],
-           "command_parts": len(cli_command),
-           "message": f"Generated CLI command for {len(cli_command)} modules",
+           "command_parts": len(cli_command_lines),
+           "message": f"Generated CLI command for {len(cli_command_lines)} modules",
+           "thread_id": thread_id,
+           "project_path": project_path,
            "debug_info": {
                "execution_order": execution_order,
                "module_results_keys": list(module_results.keys()),
@@ -174,6 +229,9 @@ async def run_simulation(
         return str(data)
     
     try:
+        # Get thread_id early for use in command generation and script template
+        thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
         # Parse inputs if they're JSON strings (common when LLM passes complex data)
         # Use coercion functions that handle both dict/list and JSON strings
         parsed_module_results = coerce_json_to_dict(module_results) or {}
@@ -181,10 +239,15 @@ async def run_simulation(
         
         logger.info(f"Parsed module_results: {len(parsed_module_results)} modules")
         logger.info(f"Parsed execution_order: {parsed_execution_order}")
+        logger.info(f"Initial thread_id: {thread_id}")
         
-        cli_result = generate_cli_command(parsed_module_results, parsed_execution_order)
+        cli_result = generate_cli_command(parsed_module_results, parsed_execution_order, thread_id=thread_id)
         if not cli_result.get('success', False):
             return cli_result  # Return error immediately
+        
+        # Use thread_id from cli_result (may have been extracted from file paths)
+        thread_id = cli_result.get('thread_id') or thread_id
+        logger.info(f"Final thread_id: {thread_id}")
             
         cli_command = cli_result['cli_command']  # Extract the actual command
         result = {
@@ -199,7 +262,12 @@ async def run_simulation(
         if execute:
             import subprocess
             import tempfile
-            import os
+            
+            # Build project path with thread_id for $P variable in script
+            if thread_id:
+                project_path_for_script = f"{global_config.VITESS_PROJECT_PATH}/{thread_id}"
+            else:
+                project_path_for_script = global_config.VITESS_PROJECT_PATH
             
             # Create a temporary script file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
@@ -214,18 +282,12 @@ unset L
 unset SUFFIX
 
 [ -z "$V" ] && V={global_config.VITESS_MODULES_PATH}
-[ -z "$P" ] && P={global_config.VITESS_PROJECT_PATH} 
+[ -z "$P" ] && P={project_path_for_script}
 [ -z "$L" ] && L={global_config.VITESS_LOG_PATH}
 [ -z "${{SUFFIX}}" ] && SUFFIX="_`uname -s`_`uname -m`"
 
-# Execute simulation pipeline
+# Execute simulation pipeline (includes post-processing)
 {cli_command}
-
-# Post-processing (following your script pattern)
-rm -f $P/result.txt
-cat ${{L}}?? >> $P/result.txt  
-echo $P
-rm ${{L}}*
 """
                 f.write(script_content)
                 script_path = f.name
@@ -272,17 +334,18 @@ rm ${{L}}*
                     "message": f"Simulation execution failed: {e}"
                 })
             finally:
-                # Move script to thread's outputs directory for reference
+                # Move script to $P (thread-specific project path) for reference
                 try:
                     import shutil
-                    thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+                    # Use thread_id from cli_result (may have been extracted from file paths)
+                    # thread_id is already available from earlier in the function
                     script_name = f"simulation_script_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sh"
                     
                     if thread_id:
-                        # Save to thread's outputs directory
-                        outputs_dir = os.path.join(global_config.VITESS_PROJECT_PATH, thread_id, "outputs")
-                        os.makedirs(outputs_dir, exist_ok=True)
-                        final_script_path = os.path.join(outputs_dir, script_name)
+                        # Save to $P (thread-specific project path)
+                        project_dir = os.path.join(global_config.VITESS_PROJECT_PATH, thread_id)
+                        os.makedirs(project_dir, exist_ok=True)
+                        final_script_path = os.path.join(project_dir, script_name)
                     else:
                         # Fallback to root project path
                         final_script_path = os.path.join(global_config.VITESS_PROJECT_PATH, script_name)
@@ -413,6 +476,144 @@ async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]
             "thread_id": thread_id,
             "folder_structure": {},
             "error": str(e)
+        }
+
+
+@mcp.tool()
+async def generate_monitor1d_plot(thread_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Generate an interactive Plotly plot from monitor1d.dat file.
+    
+    Args:
+        thread_id: Optional thread ID to locate the monitor1d.dat file.
+                   If not provided, will try to get from environment.
+    
+    Returns:
+        Dictionary with plot JSON and metadata, or error information
+    """
+    try:
+        # Get thread_id from parameter or environment
+        if not thread_id:
+            thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
+        if not thread_id:
+            return {
+                "success": False,
+                "error": "No thread_id provided and not available in environment",
+                "plot_json": None,
+            }
+        
+        # Construct file path
+        from pathlib import Path
+        monitor_file = Path(global_config.VITESS_PROJECT_PATH) / thread_id / "outputs" / "monitor1D.dat"
+        
+        if not monitor_file.exists():
+            return {
+                "success": False,
+                "error": f"Monitor1D file not found: {monitor_file}",
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+        
+        # Import and use the plotly reading function
+        from vitess_ai.plots.vitess_plot import read_mfile_plotly
+        
+        result = read_mfile_plotly(str(monitor_file))
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "plot_type": "monitor1d",
+                "plot_json": result["plot_json"],
+                "title": result.get("title", "Monitor1D Results"),
+                "xaxis": result.get("xaxis", "x"),
+                "yaxis": result.get("yaxis", "Intensity [n/s]"),
+                "file_path": str(monitor_file),
+                "message": f"✅ Successfully generated Monitor1D plot from {monitor_file.name}",
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "Unknown error generating plot"),
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+            
+    except Exception as e:
+        logger.error(f"Error generating Monitor1D plot: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": f"Error generating Monitor1D plot: {str(e)}",
+            "plot_json": None,
+        }
+
+
+@mcp.tool()
+async def generate_monitor2d_plot(thread_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Generate an interactive Plotly plot from monitor2d.dat file.
+    
+    Args:
+        thread_id: Optional thread ID to locate the monitor2d.dat file.
+                   If not provided, will try to get from environment.
+    
+    Returns:
+        Dictionary with plot JSON and metadata, or error information
+    """
+    try:
+        # Get thread_id from parameter or environment
+        if not thread_id:
+            thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
+        if not thread_id:
+            return {
+                "success": False,
+                "error": "No thread_id provided and not available in environment",
+                "plot_json": None,
+            }
+        
+        # Construct file path
+        from pathlib import Path
+        monitor_file = Path(global_config.VITESS_PROJECT_PATH) / thread_id / "outputs" / "monitor2D.dat"
+        
+        if not monitor_file.exists():
+            return {
+                "success": False,
+                "error": f"Monitor2D file not found: {monitor_file}",
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+        
+        # Import and use the plotly reading function
+        from vitess_ai.plots.vitess_plot import read_mfile_plotly
+        
+        result = read_mfile_plotly(str(monitor_file))
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "plot_type": "monitor2d",
+                "plot_json": result["plot_json"],
+                "title": result.get("title", "Monitor2D Results"),
+                "xaxis": result.get("xaxis", "x"),
+                "yaxis": result.get("yaxis", "y"),
+                "file_path": str(monitor_file),
+                "message": f"✅ Successfully generated Monitor2D plot from {monitor_file.name}",
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "Unknown error generating plot"),
+                "plot_json": None,
+                "file_path": str(monitor_file),
+            }
+            
+    except Exception as e:
+        logger.error(f"Error generating Monitor2D plot: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": f"Error generating Monitor2D plot: {str(e)}",
+            "plot_json": None,
         }
 
 

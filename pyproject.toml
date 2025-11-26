@@ -20,6 +20,9 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.7",
     "langchain-community>=0.4.1",
     "langgraph-api>=0.4.48",
+    "matplotlib>=3.10.7",
+    "numpy>=2.3.4",
+    "plotly>=6.5.0",
 ]
 
 [project.optional-dependencies]

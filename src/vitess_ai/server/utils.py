@@ -78,6 +78,9 @@ def langchain_to_chat_message(message: BaseMessage, module_name: str = None) -> 
                 metadata = message.additional_kwargs
                 if "module_name" in metadata and not module_name:
                     ai_message.custom_data["module_name"] = metadata["module_name"]
+                # Extract plot_data if present
+                if "plot_data" in metadata:
+                    ai_message.custom_data["plot_data"] = metadata["plot_data"]
             
             if message.tool_calls:
                 ai_message.tool_calls = message.tool_calls
