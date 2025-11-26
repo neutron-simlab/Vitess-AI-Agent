@@ -175,6 +175,7 @@ for chunk in client.stream(
 - **ReadInAgent**: Configures neutron input parameters and initial conditions
 - **GuideAgent**: Handles neutron guide specifications and geometry
 - **WriteoutAgent**: Manages output settings and data formats
+- **MonitorsAgent**: Generate plot of 1D and 2D data
 
 ## Streamlit Features
 
