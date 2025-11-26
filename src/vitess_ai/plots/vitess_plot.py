@@ -295,8 +295,10 @@ def plot2d_plotly(counts, xaxis, yaxis, by, bz, fname, cmap="Viridis"):
         y=bz,
         colorscale=cmap,
         colorbar=dict(
-            title="Counts",
-            titleside="right",
+            title=dict(
+                text="Counts",
+                side="right",
+            ),
         ),
         hovertemplate=f'<b>{xaxis}:</b> %{{x:.4f}}<br>' +
                       f'<b>{yaxis}:</b> %{{y:.4f}}<br>' +

@@ -116,7 +116,7 @@ def generate_cli_command(
            execution_order = list(module_results.keys())
            logger.warning(f"No execution_order provided, using module order: {execution_order}")
            
-       cli_command = []
+       cli_command_lines = []
        
        for i, module in enumerate(execution_order, 1):  # Start from 1 for ordering
            # Get module result (could be dict or object)
@@ -148,28 +148,36 @@ def generate_cli_command(
                cli_params
            ]
            
-           # Add pipe separator except for last module
-           if module != execution_order[-1]:
-               cli_module.append("|")
-           
+           # Join module command parts with spaces
            cli_module_str = " ".join(cli_module)
-           cli_command.append(cli_module_str)
+           
+           # Add pipe and backslash continuation except for last module
+           if module != execution_order[-1]:
+               cli_module_str += " | \\"
+           
+           cli_command_lines.append(cli_module_str)
        
-       # Join all pipeline commands
-       pipeline_command = " ".join(cli_command)
+       # Join all pipeline commands with newlines
+       pipeline_command = "\n".join(cli_command_lines)
        
-       # Add post-processing commands
-       post_processing = f" && rm -f {project_path}/result.txt && cat ${{L}}?? >> {project_path}/result.txt && echo {project_path} && rm ${{L}}*"
+       # Add post-processing commands on separate lines
+       post_processing_lines = [
+           f"rm -f {project_path}/result.txt",
+           f"cat ${{L}}?? >> {project_path}/result.txt",
+           f"echo {project_path}",
+           f"rm ${{L}}*"
+       ]
+       post_processing = "\n".join(post_processing_lines)
        
-       # Combine pipeline and post-processing
-       final_command = pipeline_command + post_processing
+       # Combine pipeline and post-processing with blank line separator
+       final_command = pipeline_command + "\n\n" + post_processing
 
        return {
            "success": True,
            "cli_command": final_command,
            "modules_included": [m for m in execution_order],
-           "command_parts": len(cli_command),
-           "message": f"Generated CLI command for {len(cli_command)} modules",
+           "command_parts": len(cli_command_lines),
+           "message": f"Generated CLI command for {len(cli_command_lines)} modules",
            "thread_id": thread_id,
            "project_path": project_path,
            "debug_info": {
