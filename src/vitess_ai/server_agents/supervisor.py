@@ -262,11 +262,11 @@ class SupervisorAgent:
         self.register_module(module)
     
     def add_default_modules(self) -> None:
-        """Add all default modules (readin, guide, monitor1d, monitor2d, writeout)"""
+        """Add all default modules (readin, guide, writeout)"""
         self.add_readin_module()
         self.add_guide_module()
-        self.add_monitor1d_module()
-        self.add_monitor2d_module()
+        # self.add_monitor1d_module()  # Deactivated
+        # self.add_monitor2d_module()  # Deactivated
         self.add_writeout_module()
     
     # =================

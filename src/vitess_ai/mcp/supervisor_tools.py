@@ -3,11 +3,13 @@ supervisor_mcp_tools.py - MCP Tools for Supervisor Agent CLI Generation
 FastMCP tools for converting collected module parameters to CLI commands
 """
 from fastmcp import FastMCP
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from vitess_ai.core.config import global_config
 from datetime import datetime
 import logging
 import json
+import os
+import re
 
 mcp = FastMCP("Supervisor CLI Generation Server")
 logger = logging.getLogger(__name__)
@@ -47,21 +49,23 @@ MODULE_EXECUTABLES = {
     "readin": "$V/read_in${SUFFIX}",
     "guide": "$V/guide_parallel${SUFFIX}",
     "writeout": "$V/writeout${SUFFIX}",
+    "monitor1d": "$V/monitor1D${SUFFIX}",
+    "monitor2d": "$V/monitor2D${SUFFIX}",
 }
 
-# Common parameters that appear in all modules
-COMMON_PARAMS = " ".join([
+# Common parameters that appear in all modules (base, without --P)
+COMMON_PARAMS_BASE = " ".join([
     "--Z1",
     "--U1.0e-25",
     "--G1", 
     "--T0",
     "--B10000",
-    f"--P$P",
 ])
 
 def generate_cli_command(
    module_results: Optional[dict] = None,
    execution_order: Optional[List[str]] = None,
+   thread_id: Optional[str] = None,
 ) -> Dict[str, Any]:
    """
    Generate CLI command from collected module results.
@@ -69,11 +73,42 @@ def generate_cli_command(
    Args:
        module_results: Dictionary with module names as keys and ModuleResult objects as values
        execution_order: List of module names in execution order
+       thread_id: Optional thread ID to include in project path. If not provided, will try to get from environment.
        
    Returns:
        Dictionary with CLI command and metadata
    """
    try:
+       # Get thread_id from environment if not provided
+       if not thread_id:
+           thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+       
+       # If still no thread_id, try to extract it from file paths in CLI parameters
+       if not thread_id and module_results:
+           # Look for UUID pattern in file paths (thread_id is typically a UUID)
+           # Pattern: {VITESS_PROJECT_PATH}/{thread_id}/uploads/... or .../outputs/...
+           uuid_pattern = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+           project_path_escaped = re.escape(global_config.VITESS_PROJECT_PATH)
+           thread_id_pattern = rf'{project_path_escaped}/({uuid_pattern})/'
+           
+           for module_name, module_result in module_results.items():
+               cli_params = module_result.get('cli_parameters', '')
+               if cli_params:
+                   match = re.search(thread_id_pattern, cli_params)
+                   if match:
+                       thread_id = match.group(1)
+                       logger.info(f"Extracted thread_id from file paths: {thread_id}")
+                       break
+       
+       # Build project path with thread_id if available
+       if thread_id:
+           project_path = f"{global_config.VITESS_PROJECT_PATH}/{thread_id}"
+       else:
+           project_path = global_config.VITESS_PROJECT_PATH
+       
+       # Build COMMON_PARAMS with dynamic project path
+       common_params = f"{COMMON_PARAMS_BASE} --P{project_path}"
+       
        if module_results is None:
            module_results = {}
        if execution_order is None or not execution_order:
@@ -97,6 +132,10 @@ def generate_cli_command(
                logger.warning(f"No CLI parameters found for module '{module}'")
                continue
 
+           # Check if module executable is defined
+           if module not in MODULE_EXECUTABLES:
+               logger.error(f"Module '{module}' not found in MODULE_EXECUTABLES. Available modules: {list(MODULE_EXECUTABLES.keys())}")
+               continue
            
            # Build module-specific ordering parameter
            module_order_param = f"--N{i} --L${{L}}0{i}"
@@ -104,7 +143,7 @@ def generate_cli_command(
            # Build module command parts
            cli_module = [
                MODULE_EXECUTABLES[module], 
-               COMMON_PARAMS,
+               common_params,
                module_order_param, 
                cli_params
            ]
@@ -116,8 +155,14 @@ def generate_cli_command(
            cli_module_str = " ".join(cli_module)
            cli_command.append(cli_module_str)
        
-       # Join all commands
-       final_command = " ".join(cli_command)
+       # Join all pipeline commands
+       pipeline_command = " ".join(cli_command)
+       
+       # Add post-processing commands
+       post_processing = f" && rm -f {project_path}/result.txt && cat ${{L}}?? >> {project_path}/result.txt && echo {project_path} && rm ${{L}}*"
+       
+       # Combine pipeline and post-processing
+       final_command = pipeline_command + post_processing
 
        return {
            "success": True,
@@ -125,6 +170,8 @@ def generate_cli_command(
            "modules_included": [m for m in execution_order],
            "command_parts": len(cli_command),
            "message": f"Generated CLI command for {len(cli_command)} modules",
+           "thread_id": thread_id,
+           "project_path": project_path,
            "debug_info": {
                "execution_order": execution_order,
                "module_results_keys": list(module_results.keys()),
@@ -174,6 +221,9 @@ async def run_simulation(
         return str(data)
     
     try:
+        # Get thread_id early for use in command generation and script template
+        thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        
         # Parse inputs if they're JSON strings (common when LLM passes complex data)
         # Use coercion functions that handle both dict/list and JSON strings
         parsed_module_results = coerce_json_to_dict(module_results) or {}
@@ -181,10 +231,15 @@ async def run_simulation(
         
         logger.info(f"Parsed module_results: {len(parsed_module_results)} modules")
         logger.info(f"Parsed execution_order: {parsed_execution_order}")
+        logger.info(f"Initial thread_id: {thread_id}")
         
-        cli_result = generate_cli_command(parsed_module_results, parsed_execution_order)
+        cli_result = generate_cli_command(parsed_module_results, parsed_execution_order, thread_id=thread_id)
         if not cli_result.get('success', False):
             return cli_result  # Return error immediately
+        
+        # Use thread_id from cli_result (may have been extracted from file paths)
+        thread_id = cli_result.get('thread_id') or thread_id
+        logger.info(f"Final thread_id: {thread_id}")
             
         cli_command = cli_result['cli_command']  # Extract the actual command
         result = {
@@ -199,7 +254,12 @@ async def run_simulation(
         if execute:
             import subprocess
             import tempfile
-            import os
+            
+            # Build project path with thread_id for $P variable in script
+            if thread_id:
+                project_path_for_script = f"{global_config.VITESS_PROJECT_PATH}/{thread_id}"
+            else:
+                project_path_for_script = global_config.VITESS_PROJECT_PATH
             
             # Create a temporary script file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
@@ -214,18 +274,12 @@ unset L
 unset SUFFIX
 
 [ -z "$V" ] && V={global_config.VITESS_MODULES_PATH}
-[ -z "$P" ] && P={global_config.VITESS_PROJECT_PATH} 
+[ -z "$P" ] && P={project_path_for_script}
 [ -z "$L" ] && L={global_config.VITESS_LOG_PATH}
 [ -z "${{SUFFIX}}" ] && SUFFIX="_`uname -s`_`uname -m`"
 
-# Execute simulation pipeline
+# Execute simulation pipeline (includes post-processing)
 {cli_command}
-
-# Post-processing (following your script pattern)
-rm -f $P/result.txt
-cat ${{L}}?? >> $P/result.txt  
-echo $P
-rm ${{L}}*
 """
                 f.write(script_content)
                 script_path = f.name
@@ -272,17 +326,18 @@ rm ${{L}}*
                     "message": f"Simulation execution failed: {e}"
                 })
             finally:
-                # Move script to thread's outputs directory for reference
+                # Move script to $P (thread-specific project path) for reference
                 try:
                     import shutil
-                    thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+                    # Use thread_id from cli_result (may have been extracted from file paths)
+                    # thread_id is already available from earlier in the function
                     script_name = f"simulation_script_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sh"
                     
                     if thread_id:
-                        # Save to thread's outputs directory
-                        outputs_dir = os.path.join(global_config.VITESS_PROJECT_PATH, thread_id, "outputs")
-                        os.makedirs(outputs_dir, exist_ok=True)
-                        final_script_path = os.path.join(outputs_dir, script_name)
+                        # Save to $P (thread-specific project path)
+                        project_dir = os.path.join(global_config.VITESS_PROJECT_PATH, thread_id)
+                        os.makedirs(project_dir, exist_ok=True)
+                        final_script_path = os.path.join(project_dir, script_name)
                     else:
                         # Fallback to root project path
                         final_script_path = os.path.join(global_config.VITESS_PROJECT_PATH, script_name)
