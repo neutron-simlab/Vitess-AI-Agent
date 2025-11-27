@@ -19,7 +19,7 @@
 ## Architecture
 
 <div align="center">
-  <img src="app/assets/vitess-ai.png" alt="VITESS AI Agent Architecture" width="800"/>
+  <img src="app/assets/vitess-ai-arch.png" alt="VITESS AI Agent Architecture" width="800"/>
 </div>
 
 
