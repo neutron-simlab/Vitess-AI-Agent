@@ -16,6 +16,13 @@
 - **File Management**: Upload and manage files for different VITESS modules
 - **Runtime Configuration**: Dynamic VITESS environment configuration
 
+## Architecture
+
+<div align="center">
+  <img src="app/assets/vitess-ai.png" alt="VITESS AI Agent Architecture" width="800"/>
+</div>
+
+
 ## Prerequisites
 
 **Critical Requirement**: You must have [VITESS](https://vitess.fz-juelich.de) installed on your system with the `vitess` command available in your PATH.
