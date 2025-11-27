@@ -1,0 +1,58 @@
+# Environment files - NEVER copy these to Docker image
+.env
+.env.local
+.env.*.local
+env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Documentation (optional - uncomment if you don't want docs in image)
+# README.md
+# docs/
+
+# Local development files
+tmp/
+temp/
+*.pyo
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.whl
+
+# Lock files (keep uv.lock, but ignore others if any)
+# uv.lock  # Keep this - it's needed for dependency resolution
+
