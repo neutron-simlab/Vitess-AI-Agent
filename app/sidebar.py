@@ -30,24 +30,31 @@ def render_sidebar() -> None:
     """Render the sidebar with all configuration options."""
     with st.sidebar:
         if _logo_path.exists():
-            st.image(str(_logo_path), use_container_width=True)
+            st.image(str(_logo_path), width='stretch')
         st.title("Vitess AI Agent Chatbot")
+        
+        # Connection status indicator
+        if st.session_state.server_connected:
+            st.success("🟢 Server Connected")
+        else:
+            st.error("🔴 Server Disconnected")
+        
         st.divider()
 
         # 1. LLM Configuration
-        with st.expander("LLM Configuration", expanded=False):
-            # Show confirmation dialog if provider change is pending
-            if st.session_state.provider_change_pending and st.session_state.pending_provider:
-                st.warning(
-                    f"**Provider Change Pending**\n\n"
-                    f"You selected **{st.session_state.pending_provider}** as the provider.\n\n"
-                    f"This will regenerate the agent graph with the new LLM. "
-                    f"Your current conversation will continue with the new model.\n\n"
-                    f"**Model**: {st.session_state.pending_model or ('alias-function-call' if st.session_state.pending_provider == Provider.BLABLADOR.value else 'gpt-4o-mini')}"
-                )
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Confirm", use_container_width=True, type="primary"):
+        st.subheader("LLM Configuration")
+        # Show confirmation dialog if provider change is pending
+        if st.session_state.provider_change_pending and st.session_state.pending_provider:
+            st.warning(
+                f"**Provider Change Pending**\n\n"
+                f"You selected **{st.session_state.pending_provider}** as the provider.\n\n"
+                f"This will regenerate the agent graph with the new LLM. "
+                f"Your current conversation will continue with the new model.\n\n"
+                f"**Model**: {st.session_state.pending_model or ('alias-function-call' if st.session_state.pending_provider == Provider.BLABLADOR.value else 'gpt-4o-mini')}"
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                    if st.button("Confirm", width='stretch', type="primary"):
                         # Apply the provider change
                         st.session_state.selected_provider = st.session_state.pending_provider
                         if st.session_state.pending_model:
@@ -82,88 +89,41 @@ def render_sidebar() -> None:
                             st.success(f"Switched to **{st.session_state.selected_provider}** with model **{st.session_state.selected_model}**. Graph will regenerate on next request.")
                         st.rerun()
                 
-                with col2:
-                    if st.button("Cancel", use_container_width=True):
-                        # Cancel the change
-                        st.session_state.provider_change_pending = False
-                        st.session_state.pending_provider = None
-                        st.session_state.pending_model = None
-                        st.rerun()
-                
-                st.divider()
-                # Show current provider (not pending one) while confirmation is pending
-                st.info(f"**Current Provider**: {st.session_state.selected_provider}")
-            else:
-                # Provider selector (only show when not pending confirmation)
-                provider_options = [Provider.OPENAI.value, Provider.BLABLADOR.value]
-                selected_provider = st.radio(
-                    "Provider",
-                    options=provider_options,
-                    index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 0,  # Default to OpenAI (index 0)
-                    help="Select the LLM provider to use"
-                )
-                
-                # Handle provider change - require confirmation for Blablador
-                if selected_provider != st.session_state.selected_provider:
-                    if selected_provider == Provider.BLABLADOR.value:
-                        # For Blablador, require confirmation
-                        st.session_state.provider_change_pending = True
-                        st.session_state.pending_provider = selected_provider
-                        st.session_state.pending_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
-                        st.rerun()
-                    else:
-                        # For OpenAI, apply immediately
-                        st.session_state.selected_provider = selected_provider
-                        st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
-                        
-                        # Restart the graph with new provider/model if server is connected
-                        if st.session_state.server_connected and st.session_state.client:
-                            try:
-                                st.session_state.client.restart(
-                                    provider=st.session_state.selected_provider,
-                                    model=st.session_state.selected_model
-                                )
-                                # Clear conversation state for fresh start
-                                st.session_state.thread_id = str(uuid4())
-                                st.session_state.user_id = str(uuid4())
-                                st.session_state.messages = []
-                                st.session_state.current_interrupt = None
-                                st.session_state.welcome_initialized = False
-                                st.info("Switched to OpenAI. Graph restarted and conversation cleared for fresh start!")
-                            except Exception as e:
-                                st.warning(f"Provider/model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
-                        else:
-                            st.info("Switched to OpenAI. Graph will regenerate on next request.")
-                
-                # Model selector based on provider
-                if st.session_state.selected_provider == Provider.OPENAI.value:
-                    model_options = [model.value for model in OpenAIModelName]
-                    # Ensure selected model is valid for current provider
-                    if st.session_state.selected_model not in model_options:
-                        st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
-                    selected_model = st.selectbox(
-                        "Model",
-                        options=model_options,
-                        index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
-                        help="Select the OpenAI model to use"
-                    )
-                else:  # Blablador
-                    model_options = [model.value for model in BlabladorModelName]
-                    # Ensure selected model is valid for current provider, or auto-select alias-function-call
-                    if st.session_state.selected_model not in model_options:
-                        st.session_state.selected_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
-                    selected_model = st.selectbox(
-                        "Model",
-                        options=model_options,
-                        index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
-                        help="Select the Blablador model to use (defaults to alias-function-call)"
-                    )
-                
-                # Update model if changed
-                if selected_model != st.session_state.selected_model:
-                    st.session_state.selected_model = selected_model
+            with col2:
+                if st.button("Cancel", width='stretch'):
+                    # Cancel the change
+                    st.session_state.provider_change_pending = False
+                    st.session_state.pending_provider = None
+                    st.session_state.pending_model = None
+                    st.rerun()
+            
+            st.divider()
+            # Show current provider (not pending one) while confirmation is pending
+            st.info(f"**Current Provider**: {st.session_state.selected_provider}")
+        else:
+            # Provider selector (only show when not pending confirmation)
+            provider_options = [Provider.OPENAI.value, Provider.BLABLADOR.value]
+            selected_provider = st.radio(
+                "Provider",
+                options=provider_options,
+                index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 0,  # Default to OpenAI (index 0)
+                help="Select the LLM provider to use"
+            )
+            
+            # Handle provider change - require confirmation for Blablador
+            if selected_provider != st.session_state.selected_provider:
+                if selected_provider == Provider.BLABLADOR.value:
+                    # For Blablador, require confirmation
+                    st.session_state.provider_change_pending = True
+                    st.session_state.pending_provider = selected_provider
+                    st.session_state.pending_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+                    st.rerun()
+                else:
+                    # For OpenAI, apply immediately
+                    st.session_state.selected_provider = selected_provider
+                    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
                     
-                    # Restart the graph with new model if server is connected
+                    # Restart the graph with new provider/model if server is connected
                     if st.session_state.server_connected and st.session_state.client:
                         try:
                             st.session_state.client.restart(
@@ -176,305 +136,205 @@ def render_sidebar() -> None:
                             st.session_state.messages = []
                             st.session_state.current_interrupt = None
                             st.session_state.welcome_initialized = False
-                            st.info(f"Model changed to **{selected_model}**. Graph restarted and conversation cleared for fresh start!")
+                            st.info("Switched to OpenAI. Graph restarted and conversation cleared for fresh start!")
                         except Exception as e:
-                            st.warning(f"Model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
+                            st.warning(f"Provider/model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
                     else:
-                        st.info(f"Model changed to **{selected_model}**. Graph will regenerate with the new model on next request.")
-
-        # 2. Vitess Environment Configuration
-        with st.expander("Vitess Environment", expanded=False):
-            if st.session_state.server_connected:
-                # Initialize Vitess config in session state if not present
-                if "vitess_config" not in st.session_state:
-                    st.session_state.vitess_config = {
-                        "modules_path": "/usr/local/vitess/bin",
-                        "project_path": "/tmp/vitess_project",
-                        "log_path": "/tmp/vitess_logs"
-                    }
+                        st.info("Switched to OpenAI. Graph will regenerate on next request.")
+            
+            # Model selector based on provider
+            if st.session_state.selected_provider == Provider.OPENAI.value:
+                model_options = [model.value for model in OpenAIModelName]
+                # Ensure selected model is valid for current provider
+                if st.session_state.selected_model not in model_options:
+                    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+                selected_model = st.selectbox(
+                    "Model",
+                    options=model_options,
+                    index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                    help="Select the OpenAI model to use"
+                )
+            else:  # Blablador
+                model_options = [model.value for model in BlabladorModelName]
+                # Ensure selected model is valid for current provider, or auto-select alias-function-call
+                if st.session_state.selected_model not in model_options:
+                    st.session_state.selected_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+                selected_model = st.selectbox(
+                    "Model",
+                    options=model_options,
+                    index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                    help="Select the Blablador model to use (defaults to alias-function-call)"
+                )
+            
+            # Update model if changed
+            if selected_model != st.session_state.selected_model:
+                st.session_state.selected_model = selected_model
                 
-                # Load current config from server (only once per session)
-                if "vitess_config_loaded" not in st.session_state:
+                # Restart the graph with new model if server is connected
+                if st.session_state.server_connected and st.session_state.client:
                     try:
-                        response = httpx.get(
-                            f"{st.session_state.server_url}/config/vitess",
-                            timeout=5.0
+                        st.session_state.client.restart(
+                            provider=st.session_state.selected_provider,
+                            model=st.session_state.selected_model
                         )
-                        if response.status_code == 200:
-                            config_data = response.json().get("config", {})
-                            st.session_state.vitess_config = {
-                                "modules_path": config_data.get("VITESS_MODULES_PATH", st.session_state.vitess_config["modules_path"]),
-                                "project_path": config_data.get("VITESS_PROJECT_PATH", st.session_state.vitess_config["project_path"]),
-                                "log_path": config_data.get("VITESS_LOG_PATH", st.session_state.vitess_config["log_path"])
-                            }
-                            st.session_state.vitess_config_loaded = True
+                        # Clear conversation state for fresh start
+                        st.session_state.thread_id = str(uuid4())
+                        st.session_state.user_id = str(uuid4())
+                        st.session_state.messages = []
+                        st.session_state.current_interrupt = None
+                        st.session_state.welcome_initialized = False
+                        st.info(f"Model changed to **{selected_model}**. Graph restarted and conversation cleared for fresh start!")
                     except Exception as e:
-                        st.warning(f"Could not load Vitess config from server: {e}")
-                        st.session_state.vitess_config_loaded = True  # Mark as attempted to avoid repeated warnings
-                
-                # Configuration inputs
-                modules_path = st.text_input(
-                    "Vitess Modules Path (V)",
-                    value=st.session_state.vitess_config["modules_path"],
-                    help="Path to Vitess binary modules (default: /usr/local/vitess/bin)",
-                    key="vitess_modules_path"
-                )
-                
-                project_path = st.text_input(
-                    "Vitess Project Path (P)",
-                    value=st.session_state.vitess_config["project_path"],
-                    help="Path to Vitess project directory for simulations (default: /tmp/vitess_project)",
-                    key="vitess_project_path"
-                )
-                
-                log_path = st.text_input(
-                    "Vitess Log Path (L)",
-                    value=st.session_state.vitess_config["log_path"],
-                    help="Path to Vitess log directory (default: /tmp/vitess_logs)",
-                    key="vitess_log_path"
-                )
-                
-                # Update button
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Save Config", use_container_width=True):
-                        try:
-                            response = httpx.put(
-                                f"{st.session_state.server_url}/config/vitess",
-                                params={
-                                    "modules_path": modules_path,
-                                    "project_path": project_path,
-                                    "log_path": log_path
-                                },
-                                timeout=10.0
-                            )
-                            response.raise_for_status()
-                            result = response.json()
-                            
-                            # Update session state
-                            st.session_state.vitess_config = {
-                                "modules_path": modules_path,
-                                "project_path": project_path,
-                                "log_path": log_path
-                            }
-                            
-                            st.success("Vitess configuration saved!")
-                        except Exception as e:
-                            st.error(f"Failed to save Vitess config: {e}")
-                
-                with col2:
-                    if st.button("Reset to Defaults", use_container_width=True):
-                        try:
-                            response = httpx.post(
-                                f"{st.session_state.server_url}/config/vitess/reset",
-                                timeout=10.0
-                            )
-                            response.raise_for_status()
-                            result = response.json()
-                            config_data = result.get("config", {})
-                            
-                            # Update session state with defaults
-                            st.session_state.vitess_config = {
-                                "modules_path": config_data.get("VITESS_MODULES_PATH", "/usr/local/vitess/bin"),
-                                "project_path": config_data.get("VITESS_PROJECT_PATH", "/tmp/vitess_project"),
-                                "log_path": config_data.get("VITESS_LOG_PATH", "/tmp/vitess_logs")
-                            }
-                            
-                            st.success("Vitess configuration reset to defaults!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed to reset Vitess config: {e}")
-                
-                # Display current configuration
-                with st.expander("Current Configuration", expanded=False):
-                    st.json({
-                        "V (Modules)": st.session_state.vitess_config["modules_path"],
-                        "P (Project)": st.session_state.vitess_config["project_path"],
-                        "L (Logs)": st.session_state.vitess_config["log_path"]
-                    })
-            else:
-                st.info("Connect to server to configure Vitess environment")
+                        st.warning(f"Model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
+                else:
+                    st.info(f"Model changed to **{selected_model}**. Graph will regenerate with the new model on next request.")
+
 
         # 3. File Upload Section
-        with st.expander("File Upload", expanded=False):
-            if st.session_state.server_connected:
-                # Load uploaded files for this thread
-                if st.session_state.thread_id:
+        st.subheader("File Upload")
+        if st.session_state.server_connected:
+            # Load uploaded files for this thread
+            if st.session_state.thread_id:
                     uploaded_files_by_module = load_uploaded_files(
                         st.session_state.thread_id,
                         st.session_state.server_url
                     )
                     st.session_state.uploaded_files = uploaded_files_by_module
-                
-                # Detect active module from chat messages
-                active_module = get_active_module_from_messages(st.session_state.messages)
-                
-                # Module selection with dropdown menu
-                module_options = {
-                    "readin": "Read-in Module",
-                    "guide": "Guide Module",
-                    "monitor1d": "Monitor1D Module",
-                    "monitor2d": "Monitor2D Module",
-                    "instrument": "Instrument Module",
-                    "writeout": "Writeout Module"
-                }
-                
-                # If there's an active module, show it; otherwise let user select
-                if active_module and active_module in module_options:
-                    # Auto-select the active module
-                    if st.session_state.selected_upload_module != active_module:
-                        st.session_state.selected_upload_module = active_module
-                        st.rerun()
-                    selected_module = active_module
-                    st.info(f"Active Module: **{module_options[active_module]}** (upload enabled)")
-                else:
-                    # No active module - allow user to select
-                    selected_module = st.selectbox(
-                        "Select Module",
-                        options=list(module_options.keys()),
-                        format_func=lambda x: module_options[x],
-                        index=list(module_options.keys()).index(st.session_state.selected_upload_module) if st.session_state.selected_upload_module in module_options else 0,
-                        key="module_selector",
-                        help="Select the module to upload files for"
-                    )
-                    
-                    if selected_module != st.session_state.selected_upload_module:
-                        st.session_state.selected_upload_module = selected_module
-                        st.rerun()
-                    
-                    if active_module is None:
-                        st.info("No module is currently active. You can still upload files for any module.")
-                
-                st.divider()
-                
-                # Determine if upload should be enabled for this module
-                is_module_active = (active_module == selected_module) if active_module else False
-                
-                # Show upload UI based on selected module
-                _render_file_upload_ui(selected_module, is_module_active)
-                
-                # Summary of all uploaded files
-                st.divider()
-                st.markdown("**Summary of All Uploaded Files**")
-                total_files = sum(len(files) for files in st.session_state.uploaded_files.values())
-                if total_files > 0:
-                    summary_cols = st.columns(6)
-                    with summary_cols[0]:
-                        readin_count = len(st.session_state.uploaded_files.get("readin", []))
-                        st.metric("Read-in", readin_count, help="Number of read-in files")
-                    with summary_cols[1]:
-                        guide_count = len(st.session_state.uploaded_files.get("guide", []))
-                        st.metric("Guide", guide_count, help="Number of guide files")
-                    with summary_cols[2]:
-                        monitor1d_count = len(st.session_state.uploaded_files.get("monitor1d", []))
-                        st.metric("Monitor1D", monitor1d_count, help="Number of Monitor1D files")
-                    with summary_cols[3]:
-                        monitor2d_count = len(st.session_state.uploaded_files.get("monitor2d", []))
-                        st.metric("Monitor2D", monitor2d_count, help="Number of Monitor2D files")
-                    with summary_cols[4]:
-                        instrument_count = len(st.session_state.uploaded_files.get("instrument", []))
-                        st.metric("Instrument", instrument_count, help="Number of instrument files")
-                    with summary_cols[5]:
-                        writeout_count = len(st.session_state.uploaded_files.get("writeout", []))
-                        st.metric("Writeout", writeout_count, help="Number of writeout paths")
-                else:
-                    st.info("No files uploaded yet for this thread.")
+            
+            # Detect active module from chat messages
+            active_module = get_active_module_from_messages(st.session_state.messages)
+            
+            # Module selection with dropdown menu
+            module_options = {
+                "readin": "Read-in Module",
+                "guide": "Guide Module",
+                "monitor1d": "Monitor1D Module",
+                "monitor2d": "Monitor2D Module",
+                "instrument": "Instrument Module",
+                "writeout": "Writeout Module"
+            }
+            
+            # If there's an active module, show it; otherwise let user select
+            if active_module and active_module in module_options:
+                # Auto-select the active module
+                if st.session_state.selected_upload_module != active_module:
+                    st.session_state.selected_upload_module = active_module
+                    st.rerun()
+                selected_module = active_module
+                st.info(f"Active Module: **{module_options[active_module]}** (upload enabled)")
             else:
-                st.info("Connect to server to upload files")
-
-        # Server Configuration
-        with st.expander("Server Configuration", expanded=False):
-            server_url_input = st.text_input(
-                "Server URL",
-                value=st.session_state.server_url,
-                help="FastAPI server URL (default: http://localhost:8000)"
-            )
-
-            if server_url_input != st.session_state.server_url:
-                st.session_state.server_url = server_url_input
-                st.session_state.client = None
-                st.session_state.server_connected = False
-                st.session_state._health_checked = False
-
-            # Health Check
-            if st.button("Check Server Status", use_container_width=True):
-                st.session_state.server_connected = check_server_health(st.session_state.server_url)
-                if st.session_state.server_connected:
-                    st.session_state.client = initialize_client(st.session_state.server_url)
-                    if st.session_state.client is None:
-                        st.session_state.server_connected = False
-                else:
-                    st.session_state.client = None
-
-            # Auto-check on load (only if not already checked)
-            if st.session_state.client is None:
-                # Only check if we haven't initialized or if server was previously disconnected
-                if not hasattr(st.session_state, '_health_checked'):
-                    st.session_state.server_connected = check_server_health(st.session_state.server_url)
-                    st.session_state._health_checked = True
-                    if st.session_state.server_connected:
-                        st.session_state.client = initialize_client(st.session_state.server_url)
-                        if st.session_state.client is None:
-                            st.session_state.server_connected = False
-
-            # Display connection status
-            if st.session_state.server_connected:
-                st.success("Server Connected")
-            else:
-                st.error("Server Disconnected")
-                st.info(
-                    """
-                    **Server not running. Please start the server:**
-                    ```bash
-                    python main.py
-                    ```
-                    Server should run on `http://localhost:8000`
-                    """
+                # No active module - allow user to select
+                selected_module = st.selectbox(
+                    "Select Module",
+                    options=list(module_options.keys()),
+                    format_func=lambda x: module_options[x],
+                    index=list(module_options.keys()).index(st.session_state.selected_upload_module) if st.session_state.selected_upload_module in module_options else 0,
+                    key="module_selector",
+                    help="Select the module to upload files for"
                 )
-
-        # Thread Management
-        with st.expander("Thread Management", expanded=False):
-            st.text(f"Thread ID: {st.session_state.thread_id[:8]}...")
-            st.text(f"User ID: {st.session_state.user_id[:8]}...")
-
-            if st.button("New Thread", use_container_width=True):
-                st.session_state.thread_id = str(uuid4())
-                st.session_state.user_id = str(uuid4())
-                st.session_state.messages = []
-                st.session_state.current_interrupt = None
-                st.rerun()
-
-            if st.button("Clear Chat", use_container_width=True):
-                st.session_state.messages = []
-                st.session_state.current_interrupt = None
-                st.rerun()
-
-        # Debug Options
-        with st.expander("Debug Options", expanded=False):
-            show_system = st.checkbox(
-                "Show System Messages",
-                value=st.session_state.show_system_messages,
-                help="Show internal system messages (for debugging)"
-            )
-            if show_system != st.session_state.show_system_messages:
-                st.session_state.show_system_messages = show_system
-                st.rerun()
+                
+                if selected_module != st.session_state.selected_upload_module:
+                    st.session_state.selected_upload_module = selected_module
+                    st.rerun()
+                
+                if active_module is None:
+                    st.info("No module is currently active. You can still upload files for any module.")
+            
+            st.divider()
+            
+            # Determine if upload should be enabled for this module
+            is_module_active = (active_module == selected_module) if active_module else False
+            
+            # Show upload UI based on selected module
+            _render_file_upload_ui(selected_module, is_module_active)
+            
+            # Summary of all uploaded files
+            st.divider()
+            st.markdown("**Summary of All Uploaded Files**")
+            total_files = sum(len(files) for files in st.session_state.uploaded_files.values())
+            if total_files > 0:
+                summary_cols = st.columns(6)
+                with summary_cols[0]:
+                    readin_count = len(st.session_state.uploaded_files.get("readin", []))
+                    st.metric("Read-in", readin_count, help="Number of read-in files")
+                with summary_cols[1]:
+                    guide_count = len(st.session_state.uploaded_files.get("guide", []))
+                    st.metric("Guide", guide_count, help="Number of guide files")
+                with summary_cols[2]:
+                    monitor1d_count = len(st.session_state.uploaded_files.get("monitor1d", []))
+                    st.metric("Monitor1D", monitor1d_count, help="Number of Monitor1D files")
+                with summary_cols[3]:
+                    monitor2d_count = len(st.session_state.uploaded_files.get("monitor2d", []))
+                    st.metric("Monitor2D", monitor2d_count, help="Number of Monitor2D files")
+                with summary_cols[4]:
+                    instrument_count = len(st.session_state.uploaded_files.get("instrument", []))
+                    st.metric("Instrument", instrument_count, help="Number of instrument files")
+                with summary_cols[5]:
+                    writeout_count = len(st.session_state.uploaded_files.get("writeout", []))
+                    st.metric("Writeout", writeout_count, help="Number of writeout paths")
+            else:
+                st.info("No files uploaded yet for this thread.")
+        else:
+            st.info("Connect to server to upload files")
 
         # Information
-        with st.expander("About", expanded=False):
-            st.info(
-                """
-                **Vitess AI Supervisor** helps configure neutron simulation
-                parameters through an interactive chat interface.
-                
-                The system guides you through:
-                - Read-in parameters
-                - Guide configuration
-                - Monitor1D and Monitor2D parameters
-                - Writeout settings
-                - Simulation execution
-                """
-            )
+        st.subheader("About")
+        st.info(
+            """
+            **Vitess AI Supervisor** helps configure neutron simulation
+            parameters through an interactive chat interface.
+            
+            The system guides you through:
+            - Read-in parameters
+            - Guide configuration
+            - Monitor1D and Monitor2D parameters
+            - Writeout settings
+            - Simulation execution
+            """
+        )
+
+
+def _get_project_path_from_backend(server_url: str) -> str:
+    """
+    Get the project path from the backend server.
+    
+    Args:
+        server_url: Base URL of the server
+        
+    Returns:
+        Project path string, defaults to /tmp/vitess_project if fetch fails
+    """
+    # Check if we have cached project path
+    if "project_path_cache" not in st.session_state:
+        st.session_state.project_path_cache = {}
+    
+    cache_key = f"project_path_{server_url}"
+    if cache_key in st.session_state.project_path_cache:
+        return st.session_state.project_path_cache[cache_key]
+    
+    # Try to fetch from server
+    try:
+        response = httpx.get(
+            f"{server_url}/config/vitess",
+            timeout=5.0
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("status") == "success":
+            config = data.get("config", {})
+            project_path = config.get("VITESS_PROJECT_PATH", "/tmp/vitess_project")
+            # Cache the result
+            st.session_state.project_path_cache[cache_key] = project_path
+            return project_path
+    except Exception:
+        # If fetch fails, return default
+        pass
+    
+    # Return default if fetch fails
+    default_path = "/tmp/vitess_project"
+    st.session_state.project_path_cache[cache_key] = default_path
+    return default_path
 
 
 def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None:
@@ -545,7 +405,7 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
                     st.warning(f"Only the first {remaining_slots} of {len(st.session_state.pending_readin_files)} files will be uploaded.")
                 
                 # Upload button
-                if st.button("Upload Files", key="upload_readin_files", use_container_width=True, disabled=not is_module_active):
+                if st.button("Upload Files", key="upload_readin_files", width='stretch', disabled=not is_module_active):
                     uploaded_count = 0
                     for file_data in files_to_upload:
                         file_bytes = BytesIO(file_data["bytes"])
@@ -651,7 +511,7 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
             st.text(f"  • {file_data['name']} ({file_data['size']:,} bytes)")
             
             # Upload button
-            if st.button("Upload File", key="upload_guide_file", use_container_width=True, disabled=not is_module_active):
+            if st.button("Upload File", key="upload_guide_file", width='stretch', disabled=not is_module_active):
                 file_bytes = BytesIO(file_data["bytes"])
                 result = upload_file_to_server(
                     file_bytes,
@@ -752,7 +612,7 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
             st.text(f"  • {file_data['name']} ({file_data['size']:,} bytes)")
             
             # Upload button
-            if st.button("Upload File", key="upload_instrument_file", use_container_width=True, disabled=not is_module_active):
+            if st.button("Upload File", key="upload_instrument_file", width='stretch', disabled=not is_module_active):
                 file_bytes = BytesIO(file_data["bytes"])
                 result = upload_file_to_server(
                     file_bytes,
@@ -805,14 +665,15 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
         if not is_module_active:
             st.warning("Monitor1D module is not currently active. Configure output file path when the Monitor1D module is being configured.")
         
-        # Calculate default path: root/{thread_id}/outputs/monitor1D.dat
+        # Calculate default path: project_path/{thread_id}/outputs/monitor1D.dat
         default_path = ""
-        if st.session_state.get("thread_id") and st.session_state.get("vitess_config"):
-            project_path = st.session_state.vitess_config.get("project_path", "/tmp/vitess_project")
+        if st.session_state.get("thread_id") and st.session_state.server_connected:
+            # Get project path from backend
+            project_path = _get_project_path_from_backend(st.session_state.server_url)
             thread_id = st.session_state.thread_id
             default_path = f"{project_path}/{thread_id}/outputs/monitor1D.dat"
         elif st.session_state.get("thread_id"):
-            # Fallback if vitess_config not loaded yet
+            # Fallback if server not connected
             thread_id = st.session_state.thread_id
             default_path = f"/tmp/vitess_project/{thread_id}/outputs/monitor1D.dat"
         
@@ -835,7 +696,7 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
         if monitor1d_path:
             st.session_state.monitor1d_path = monitor1d_path
             # Save to file storage as metadata
-            if st.button("Save Path", key="save_monitor1d_path", use_container_width=True, disabled=not is_module_active):
+            if st.button("Save Path", key="save_monitor1d_path", width='stretch', disabled=not is_module_active):
                 # Save path as metadata to server
                 result = save_path_metadata_to_server(
                     monitor1d_path,
@@ -884,14 +745,15 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
         if not is_module_active:
             st.warning("Monitor2D module is not currently active. Configure output file path when the Monitor2D module is being configured.")
         
-        # Calculate default path: root/{thread_id}/outputs/monitor2D.dat
+        # Calculate default path: project_path/{thread_id}/outputs/monitor2D.dat
         default_path = ""
-        if st.session_state.get("thread_id") and st.session_state.get("vitess_config"):
-            project_path = st.session_state.vitess_config.get("project_path", "/tmp/vitess_project")
+        if st.session_state.get("thread_id") and st.session_state.server_connected:
+            # Get project path from backend
+            project_path = _get_project_path_from_backend(st.session_state.server_url)
             thread_id = st.session_state.thread_id
             default_path = f"{project_path}/{thread_id}/outputs/monitor2D.dat"
         elif st.session_state.get("thread_id"):
-            # Fallback if vitess_config not loaded yet
+            # Fallback if server not connected
             thread_id = st.session_state.thread_id
             default_path = f"/tmp/vitess_project/{thread_id}/outputs/monitor2D.dat"
         
@@ -914,7 +776,7 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
         if monitor2d_path:
             st.session_state.monitor2d_path = monitor2d_path
             # Save to file storage as metadata
-            if st.button("Save Path", key="save_monitor2d_path", use_container_width=True, disabled=not is_module_active):
+            if st.button("Save Path", key="save_monitor2d_path", width='stretch', disabled=not is_module_active):
                 # Save path as metadata to server
                 result = save_path_metadata_to_server(
                     monitor2d_path,
@@ -963,14 +825,15 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
         if not is_module_active:
             st.warning("Writeout module is not currently active. Configure save path when the Writeout module is being configured.")
         
-        # Calculate default path: root/{thread_id}/outputs/output.out
+        # Calculate default path: project_path/{thread_id}/outputs/output.out
         default_path = ""
-        if st.session_state.get("thread_id") and st.session_state.get("vitess_config"):
-            project_path = st.session_state.vitess_config.get("project_path", "/tmp/vitess_project")
+        if st.session_state.get("thread_id") and st.session_state.server_connected:
+            # Get project path from backend
+            project_path = _get_project_path_from_backend(st.session_state.server_url)
             thread_id = st.session_state.thread_id
             default_path = f"{project_path}/{thread_id}/outputs/output.out"
         elif st.session_state.get("thread_id"):
-            # Fallback if vitess_config not loaded yet
+            # Fallback if server not connected
             thread_id = st.session_state.thread_id
             default_path = f"/tmp/vitess_project/{thread_id}/outputs/output.out"
         
@@ -993,7 +856,7 @@ def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None
         if writeout_path:
             st.session_state.writeout_path = writeout_path
             # Save to file storage as metadata
-            if st.button("Save Path", key="save_writeout_path", use_container_width=True, disabled=not is_module_active):
+            if st.button("Save Path", key="save_writeout_path", width='stretch', disabled=not is_module_active):
                 # Save path as metadata to server
                 result = save_path_metadata_to_server(
                     writeout_path,

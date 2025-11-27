@@ -135,17 +135,8 @@ def get_module_color(module_name: str, dynamic_modules: Optional[Dict[str, Any]]
 
 def render_header_with_logo() -> None:
     """Render a top header with the Vitess AI logo if available."""
-    if _logo_path.exists():
-        left, mid, right = st.columns([1, 6, 1])
-        with left:
-            st.image(str(_logo_path), use_container_width=True)
-        with mid:
-            st.title("Vitess AI Agent Chatbot")
-        with right:
-            st.empty()
-    else:
-        # Fallback to text title
-        st.title("Vitess AI Agent Chatbot")
+    # Just display the title without the logo
+    st.title("Vitess AI Agent Chatbot")
 
 
 def module_badge_html(module_display_name: str) -> str:
@@ -193,7 +184,7 @@ def render_plotly_figure(plot_json: Dict[str, Any], title: str, expanded: bool =
         
         # Render in expandable section
         with st.expander(title, expanded=expanded):
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     except Exception as e:
         st.error(f"Error rendering plot: {str(e)}")
 

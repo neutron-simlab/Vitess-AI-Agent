@@ -17,6 +17,7 @@ from vitess_ai.schema.llm_models import Provider, OpenAIModelName
 # Import UI modules
 from sidebar import render_sidebar
 from chat_interface import render_chat_interface
+from file_management import check_server_health, initialize_client
 
 # Paths and assets
 _assets_dir = Path(__file__).parent / "assets"
@@ -75,6 +76,17 @@ if "uploaded_files" not in st.session_state:
 
 if "selected_upload_module" not in st.session_state:
     st.session_state.selected_upload_module = "readin"
+
+# Auto-connect to server on app load (only check once per session)
+if not hasattr(st.session_state, '_health_checked'):
+    st.session_state.server_connected = check_server_health(st.session_state.server_url)
+    if st.session_state.server_connected:
+        st.session_state.client = initialize_client(st.session_state.server_url)
+        if st.session_state.client is None:
+            st.session_state.server_connected = False
+    else:
+        st.session_state.client = None
+    st.session_state._health_checked = True
 
 # Render sidebar
 render_sidebar()
