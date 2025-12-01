@@ -102,6 +102,11 @@ async def message_generator(
             user_input.message
         )
         
+        # Initialize streamed_message_ids from existing state to prevent duplicates
+        # This ensures that when the graph resumes from a checkpoint, old messages
+        # are not re-streamed to the client
+        await processor._initialize_streamed_message_ids()
+        
         # Process streamed events from the graph and yield messages over the SSE stream
         async for stream_event in agent.astream(
             **kwargs, stream_mode=["updates", "messages", "custom"], subgraphs=True

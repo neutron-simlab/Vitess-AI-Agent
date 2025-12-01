@@ -20,15 +20,10 @@ from vitess_ai.schema.supervisor import SupervisorStage
 # MODULE RESULT CLASSES
 # =================
 
-class ModuleStatus(str, Enum):
-    """Status of individual modules"""
-    COMPLETED = "completed"
-
-
 class ModuleResult(BaseModel):
-    """Result from a completed module agent"""
+    """Result from a module agent"""
     module_name: str
-    status: ModuleStatus
+    stage: FillingStage  # Use FillingStage instead of ModuleStatus
     parameters: Optional[Dict[str, Any]] = None
     cli_parameters: Optional[str] = None
     error_message: Optional[str] = None
@@ -67,6 +62,7 @@ class UnifiedState(MessagesState):
     
     # Module-level fields (shared across all modules)
     current_module: Optional[str]
+    current_active_module: Optional[str]  # Which module is currently processing (for resumption)
     module_stage: Optional[FillingStage]
     config_mode: str
     validation_status: Optional[bool]
@@ -96,14 +92,14 @@ class UnifiedState(MessagesState):
         """Check if a specific module is completed."""
         if module_name in self.module_results:
             result = self.module_results[module_name]
-            return result.status == "completed"
+            return result.stage.stage == "completed"
         return False
     
     def get_completed_modules(self) -> List[str]:
         """Get list of completed module names."""
         return [
             name for name, result in self.module_results.items()
-            if result.status == "completed"
+            if result.stage.stage == "completed"
         ]
     
     def get_next_module(self) -> Optional[str]:
@@ -122,6 +118,7 @@ class UnifiedState(MessagesState):
     def reset_module_state(self) -> None:
         """Reset module-specific state fields."""
         self.current_module = None
+        self.current_active_module = None
         self.module_stage = None
         self.config_mode = ""
         self.validation_status = None

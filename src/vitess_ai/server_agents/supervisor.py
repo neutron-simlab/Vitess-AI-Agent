@@ -1,9 +1,10 @@
 """
-Supervisor Agent - Flat graph architecture
+Supervisor Agent - React-Agent Orchestrator
 
-This supervisor agent uses a flat graph architecture where all module nodes
-are added directly to the supervisor graph, enabling unified state management
-and centralized interrupt handling.
+This supervisor agent orchestrates module react-agents using a supervisor
+pattern. Module agents are created using LangChain's create_agent
+and integrated as nodes in the supervisor graph, enabling unified state
+management and checkpoint-based resumption.
 """
 
 import logging
@@ -20,25 +21,31 @@ from vitess_ai.schema.supervisor import (
     SupervisorConfig, SupervisorStage, 
     SupervisorStatus, ConfigurationExport
 )
+from vitess_ai.schema.base import FillingStage
 from vitess_ai.core.registry import ModuleRegistry
 from vitess_ai.server_agents.base_module_agent import (
     BaseModuleAgent,
     ModuleBuilder, 
-    ModuleStatus, 
     ModuleMetadata,
 )
-from vitess_ai.server_agents.unified_state import UnifiedState
+from vitess_ai.server_agents.unified_state import UnifiedState, ModuleResult
 from vitess_ai.core.config import global_config
-from vitess_ai.prompts.supervisor import get_simulation_execution_prompt, get_post_simulation_response_prompt
+from vitess_ai.prompts.supervisor import (
+    get_simulation_execution_prompt, 
+    get_post_simulation_response_prompt,
+    get_supervisor_welcome_message
+)
+from vitess_ai.server_agents.tool_wrapper import create_thread_id_tool_node
 
 
 class SupervisorAgent:
     """
-    Supervisor agent with flat graph architecture.
+    Supervisor agent with react-agent orchestrator architecture.
     
-    This agent creates a flat graph where all module nodes are added directly
-    to the supervisor graph, enabling unified state management and centralized
-    interrupt handling.
+    This agent creates a supervisor graph that orchestrates module react-agents.
+    Module agents are created using LangChain's create_agent and integrated
+    as nodes, enabling unified state management and checkpoint-based resumption
+    with END pattern (no interrupts needed).
     """
     
     def __init__(self, config: SupervisorConfig = None, simulation_tools_path: str = None):
@@ -290,11 +297,7 @@ class SupervisorAgent:
                 import os
                 
                 # Prepare environment variables for MCP subprocess
-                # Include current environment plus THREAD_ID and VITESS_THREAD_ID if available
                 env = os.environ.copy()
-                # Note: thread_id will be set dynamically when tools are called via service.py
-                # The environment variables are passed at subprocess creation time
-                # We'll pass current env vars, and service.py will update them before tool calls
                 
                 client = MultiServerMCPClient({
                     "validation": {
@@ -411,15 +414,25 @@ class SupervisorAgent:
         self.logger.info("Supervisor graph restarted successfully with new configuration")
     
     # =================
-    # FLAT GRAPH CREATION
+    # SUPERVISOR GRAPH CREATION (React-Agent Architecture)
     # =================
     
     def _create_flat_graph(self, execution_order: List[str]) -> StateGraph:
-        """Create a flat graph with all module nodes added directly"""
+        """
+        Create supervisor graph with react-agent module nodes.
+        
+        Architecture:
+        - Supervisor node routes to module react-agents
+        - Module react-agents are created using create_agent
+        - Module agents END when needing user input (validation_status != True)
+        - When module ENDs needing input, the entire graph ENDs to wait for user
+        - When user provides input and invokes again, LangGraph resumes from checkpoint
+          and supervisor routes back to the active module
+        """
         workflow = StateGraph(UnifiedState)
         
         # Add supervisor nodes
-        workflow.add_node("supervisor_welcome", self._welcome_node)
+        workflow.add_node("supervisor", self._supervisor_routing_node)
         workflow.add_node("supervisor_prepare_simulation", self._prepare_simulation_node)
         workflow.add_node("supervisor_run_simulation", self._run_simulation_node)
         workflow.add_node("supervisor_post_simulation_response", self._post_simulation_response_node)
@@ -429,57 +442,34 @@ class SupervisorAgent:
         
         # Add simulation tools node if available
         if self.simulation_tools:
-            workflow.add_node("supervisor_simulation_tools", ToolNode(self.simulation_tools))
+            workflow.add_node("supervisor_simulation_tools", create_thread_id_tool_node(self.simulation_tools))
         
-        # Add module nodes and edges for each module in execution order
+        # Add module react-agents as nodes with wrapper for state management
         for module_name in execution_order:
             agent = self.agent_instances[module_name]
+            # Create react-agent with comprehensive prompt (includes both default and custom modes)
+            react_agent = agent.create_module_react_agent(config_mode=None)  # None = handle dynamically
+            # Wrap react-agent to handle state updates, welcome messages, and thread_id injection via system message
+            wrapped_agent = self._create_module_wrapper(module_name, react_agent)
+            workflow.add_node(f"{module_name}_agent", wrapped_agent)
             
-            # Use the _create_base_graph() method to get the graph structure
-            module_graph = agent._create_base_graph()
+        # Routing edges
+        workflow.add_edge(START, "supervisor")
             
-            # Add all nodes from the module graph to the main workflow
-            for node_name, node_func in module_graph['nodes'].items():
-                workflow.add_node(node_name, node_func)
+        # Supervisor routing - routes to modules or simulation
+        workflow.add_conditional_edges("supervisor", self._route_supervisor)
             
-            # Add module-specific edges with proper routing
-            # Wire welcome -> interrupt, then conditional routing from interrupt
-            workflow.add_edge(f"{module_name}_welcome", f"{module_name}_welcome_interrupt")
+        # Module agents return to supervisor or END
+        for module_name in execution_order:
             workflow.add_conditional_edges(
-                f"{module_name}_welcome_interrupt", 
-                lambda state, mn=module_name: self._route_module_welcome(state, mn)
+                f"{module_name}_agent",
+                lambda state, mn=module_name: self._route_from_module(state, mn),
+                {
+                    "supervisor": "supervisor",
+                    "supervisor_error_handler": "supervisor_error_handler",
+                    END: END
+                }
             )
-            
-            # Setup to params config - separate paths for default and custom
-            workflow.add_edge(f"{module_name}_default_setup", f"{module_name}_default_params_config")
-            workflow.add_edge(f"{module_name}_customize_setup", f"{module_name}_custom_params_config")
-            
-            # Params config routing - separate for default and custom
-            workflow.add_conditional_edges(
-                f"{module_name}_default_params_config",
-                lambda state, mn=module_name: self._route_module_default_params_config(state, mn)
-            )
-            workflow.add_conditional_edges(
-                f"{module_name}_custom_params_config",
-                lambda state, mn=module_name: self._route_module_custom_params_config(state, mn)
-            )
-            
-            # Tools routing if available
-            if agent.tools:
-                workflow.add_conditional_edges(
-                    f"{module_name}_tools",
-                    lambda state, mn=module_name: self._route_module_tools(state, mn)
-                )
-            
-            # Finalize routing to next module or simulation
-            workflow.add_conditional_edges(
-                f"{module_name}_finalize",
-                lambda state, mn=module_name: self._route_module_finalize(state, mn)
-            )
-        
-        # Add supervisor edges
-        workflow.add_edge(START, "supervisor_welcome")
-        workflow.add_conditional_edges("supervisor_welcome", self._route_from_welcome)
         
         # Simulation execution routing
         workflow.add_edge("supervisor_prepare_simulation", "supervisor_run_simulation")
@@ -499,54 +489,6 @@ class SupervisorAgent:
     # SUPERVISOR NODE IMPLEMENTATIONS
     # =================
     
-    def _welcome_node(self, state: UnifiedState) -> dict:
-        """Welcome node with dynamic module information"""
-        self.logger.info("Supervisor welcome node triggered.")
-        
-        # Get thread_id and user_id from state (set in initial input)
-        thread_id = state.get('thread_id')
-        user_id = state.get('user_id')
-        
-        # Set environment variables for MCP tools if thread_id is available
-        if thread_id:
-            import os
-            os.environ["THREAD_ID"] = thread_id
-            os.environ["VITESS_THREAD_ID"] = thread_id
-            self.logger.info(f"Using thread_id from state: {thread_id} and set environment variables")
-            self.logger.debug(f"Environment variables set: THREAD_ID={os.environ.get('THREAD_ID')}, VITESS_THREAD_ID={os.environ.get('VITESS_THREAD_ID')}")
-        else:
-            self.logger.warning("No thread_id found in state - MCP tools may not work correctly")
-        
-        # Show available modules
-        modules_info = []
-        execution_order = self.registry.get_execution_order()
-        
-        for module_name in execution_order:
-            module_metadata = self.registry.get_module(module_name)
-            if module_metadata:
-                optional_text = " (optional)" if module_metadata.optional else ""
-                modules_info.append(f"{module_metadata.order}. **{module_metadata.display_name}**{optional_text}: {module_metadata.description}")
-        
-        simulation_info = f"\n **Simulation Execution**: Automatic execution of configured simulation" if self.simulation_tools else ""
-        
-        welcome_text = self.config.welcome_message + "\n\n**Available Modules:**\n" + "\n".join(modules_info) + "\n" + simulation_info 
-        
-        # Return welcome message in messages for streaming
-        # Preserve thread_id and user_id from state
-        return {
-            'messages': [
-                AIMessage(content=welcome_text)
-            ],
-            'current_stage': SupervisorStage.MODULE_EXECUTION,
-            'execution_order': execution_order,
-            'pending_modules': execution_order.copy(),
-            'module_results': {},
-            'thread_id': thread_id or "",
-            'user_id': user_id or "",
-            'cli_generation_ready': False,
-            'error_message': None,
-        }
-    
     def _prepare_simulation_node(self, state: UnifiedState) -> dict:
         """Prepare simulation node - emits the 'starting simulation' message before execution"""
         self.logger.info("Preparing simulation execution - showing start message")
@@ -557,7 +499,7 @@ class SupervisorAgent:
         
         # Create user-visible message indicating simulation execution is starting
         completed_modules = [name for name, result in module_results.items() 
-                             if result.status == ModuleStatus.COMPLETED]
+                             if result.stage.stage == "completed"]
         simulation_start_message = f"""
 {'='*3}
 **STARTING SIMULATION EXECUTION**
@@ -649,7 +591,7 @@ All modules have been configured successfully:
         # Generate summary
         module_results = state.get('module_results', {})
         completed_modules = [name for name, result in module_results.items() 
-                           if result.status == ModuleStatus.COMPLETED]
+                           if result.stage.stage == "completed"]
         
         # Check if simulation was executed by looking for simulation finish status
         simulation_executed = state.get('simulation_finish', False)
@@ -723,73 +665,500 @@ Configuration is complete. The simulation parameters are ready for execution.
     # ROUTING FUNCTIONS
     # =================
     
-    def _route_from_welcome(self, state: UnifiedState) -> str:
-        """Route from welcome to first module or error"""
-        if state.get('current_stage') == SupervisorStage.MODULE_EXECUTION:
-            execution_order = state.get('execution_order', [])
-            if execution_order:
-                first_module = execution_order[0]
-                return f"{first_module}_welcome"
+    def _get_completed_modules(self, module_results: dict) -> List[str]:
+        """
+        Get list of completed module names from module_results.
         
-        if state.get('current_stage') == SupervisorStage.ERROR:
-            return "supervisor_error_handler"
+        A module is considered completed only if:
+        - It has a ModuleResult in module_results
+        - The ModuleResult has stage="completed" (which means validation_status was True)
         
-        # If we're still in welcome stage, automatically proceed to module execution
-        execution_order = self.registry.get_execution_order()
-        if execution_order:
-            first_module = execution_order[0]
-            return f"{first_module}_welcome"
+        Args:
+            module_results: Dictionary of module_name -> ModuleResult
+            
+        Returns:
+            List of completed module names
+        """
+        completed = []
+        for name, result in module_results.items():
+            stage = getattr(result, 'stage', None) if hasattr(result, 'stage') else result.get('stage') if isinstance(result, dict) else None
+            # Handle both FillingStage object and dict/string
+            if hasattr(stage, 'stage'):
+                stage_value = stage.stage
+            elif isinstance(stage, dict):
+                stage_value = stage.get('stage')
+            else:
+                stage_value = stage
+            if stage_value == "completed":
+                completed.append(name)
+        return completed
+    
+    def _are_all_modules_completed(self, execution_order: List[str], module_results: dict) -> bool:
+        """
+        Verify that ALL modules in execution_order have been validated and completed.
         
-        return "supervisor_error_handler"  # No modules available
+        This checks:
+        1. execution_order is not empty
+        2. Every module in execution_order has a ModuleResult with stage="completed"
+        3. The number of completed modules equals the number of modules in execution_order
+        
+        Args:
+            execution_order: List of module names in execution order
+            module_results: Dictionary of module_name -> ModuleResult
+            
+        Returns:
+            True if all modules are completed, False otherwise
+        """
+        if not execution_order:
+            self.logger.warning("execution_order is empty, cannot verify completion")
+            return False
+        
+        completed = self._get_completed_modules(module_results)
+        
+        # Check that all modules in execution_order are completed
+        for module in execution_order:
+            if module not in completed:
+                self.logger.debug(f"Module {module} is not completed (completed modules: {completed})")
+                return False
+        
+        # Verify count matches (defensive check)
+        if len(completed) != len(execution_order):
+            self.logger.warning(
+                f"Completion count mismatch: {len(completed)} completed modules "
+                f"but {len(execution_order)} modules in execution_order"
+            )
+            return False
+        
+        self.logger.info(f"All {len(execution_order)} modules are completed: {execution_order}")
+        return True
     
-    def _route_module_welcome(self, state: UnifiedState, module_name: str) -> str:
-        """Route from module welcome based on config mode"""
-        agent = self.agent_instances[module_name]
-        return agent.route_after_welcome(state)
+    def _supervisor_routing_node(self, state: UnifiedState) -> dict:
+        """
+        Supervisor routing node - determines which module to route to.
+        
+        This node:
+        - Shows welcome message on first invocation (if current_stage == WELCOME)
+        - Checks for active module that needs continuation
+        - Finds next pending module
+        - Routes to simulation if all modules complete
+        """
+        self.logger.info("Supervisor routing node triggered")
+        
+        # Note: state is passed as a dict by LangGraph, not as UnifiedState instance
+        # So we need to access it as a dict and implement get_next_module logic inline
+        
+        # Check if this is the first invocation (welcome stage)
+        # Also check if state is new/empty (no execution_order and no messages from supervisor)
+        current_stage = state.get('current_stage')
+        execution_order = state.get('execution_order', [])
+        messages = state.get('messages', [])
+        
+        # Check if this is a new conversation (no execution_order set yet)
+        is_new_conversation = not execution_order
+        
+        # Check if welcome message already exists in messages
+        has_welcome_message = False
+        for msg in messages:
+            if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == 'supervisor':
+                # Check if it looks like a welcome message
+                if hasattr(msg, 'content') and 'Neutron Simulation Configuration System' in str(msg.content):
+                    has_welcome_message = True
+                    break
+        
+        state_updates = {}
+        
+        # Show welcome if: (1) explicitly in WELCOME stage, or (2) new conversation without welcome message
+        if current_stage == SupervisorStage.WELCOME or (is_new_conversation and not has_welcome_message):
+            # First invocation - show welcome message
+            self.logger.info("First invocation detected, showing welcome message")
+            
+            # Get thread_id and user_id from state (set in initial input)
+            thread_id = state.get('thread_id')
+            user_id = state.get('user_id')
+            
+            # Set environment variables as fallback for MCP subprocesses
+            if thread_id:
+                import os
+                os.environ["THREAD_ID"] = thread_id
+                os.environ["VITESS_THREAD_ID"] = thread_id
+                self.logger.debug(f"Set environment variables: THREAD_ID={thread_id}")
+            
+            # Show available modules
+            modules_info = []
+            execution_order = self.registry.get_execution_order()
+            
+            for module_name in execution_order:
+                module_metadata = self.registry.get_module(module_name)
+                if module_metadata:
+                    optional_text = " (optional)" if module_metadata.optional else ""
+                    modules_info.append(f"{module_metadata.order}. **{module_metadata.display_name}**{optional_text}: {module_metadata.description}")
+            
+            # Generate welcome message using prompt helper
+            welcome_text = get_supervisor_welcome_message(
+                modules_info=modules_info,
+                simulation_tools_available=bool(self.simulation_tools)
+            )
+            
+            # Create welcome message with supervisor module marker for proper display
+            welcome_message = AIMessage(
+                content=welcome_text,
+                additional_kwargs={"module_name": "supervisor"}
+            )
+            
+            # Update state with welcome message and transition to MODULE_EXECUTION
+            state_updates.update({
+                'messages': state.get('messages', []) + [welcome_message],
+                'current_stage': SupervisorStage.MODULE_EXECUTION,
+                'execution_order': execution_order,
+                'pending_modules': execution_order.copy(),
+                'module_results': state.get('module_results', {}),
+                'thread_id': thread_id or "",
+                'user_id': user_id or "",
+                'cli_generation_ready': False,
+                'error_message': None,
+                'current_module': 'supervisor',  # Set current_module for proper display
+            })
+        
+        # Update current_active_module if routing to a new module
+        current_active = state.get('current_active_module')
+        if not current_active:
+            # Find next module using dict access
+            # Get execution_order from state_updates first (if welcome stage just set it), then from state
+            execution_order = state_updates.get('execution_order') or state.get('execution_order', [])
+            module_results = state.get('module_results', {})
+            
+            # If execution_order is empty, we can't determine routing yet
+            # This should only happen if welcome stage hasn't set it yet (shouldn't happen in normal flow)
+            if not execution_order:
+                self.logger.warning("execution_order is empty in routing node - this should not happen after welcome stage")
+                # Try to get it from registry as fallback
+                execution_order = self.registry.get_execution_order()
+                if execution_order:
+                    state_updates['execution_order'] = execution_order
+                    self.logger.info(f"Retrieved execution_order from registry: {execution_order}")
+                else:
+                    self.logger.error("Cannot determine execution_order - no modules registered")
+                    return state_updates
+            
+            # Verify all modules are completed before routing to simulation
+            # Only check if execution_order is not empty
+            if execution_order and self._are_all_modules_completed(execution_order, module_results):
+                # All modules have been validated and completed
+                self.logger.info("All modules validated and completed, ready for simulation")
+                # Don't set current_active_module - let _route_supervisor handle routing to simulation
+            else:
+                # Get completed modules to find next pending module
+                completed = self._get_completed_modules(module_results)
+                
+                # Find first module in execution order that isn't completed
+                next_module = None
+                for module in execution_order:
+                    if module not in completed:
+                        next_module = module
+                        break
+                
+                if next_module:
+                    self.logger.info(f"Routing to next module: {next_module} (completed: {completed}, pending: {[m for m in execution_order if m not in completed]})")
+                    state_updates.update({
+                        'current_active_module': next_module,
+                        'current_module': next_module
+                    })
+                else:
+                    # This should not happen if _are_all_modules_completed works correctly
+                    # But handle edge case: all modules completed but verification failed, or execution_order is empty
+                    if not execution_order:
+                        self.logger.error("execution_order is empty, cannot determine next module")
+                    else:
+                        self.logger.warning(
+                            f"Could not find next module but not all modules are completed. "
+                            f"Execution order: {execution_order}, Completed: {completed}, "
+                            f"Module results: {list(module_results.keys())}"
+                        )
+        else:
+            # Active module exists - keep it
+            self.logger.info(f"Resuming active module: {current_active}")
+            state_updates['current_module'] = current_active
+        
+        return state_updates
     
-    def _route_module_default_params_config(self, state: UnifiedState, module_name: str) -> str:
-        """Route from module default params config based on tool calls"""
-        agent = self.agent_instances[module_name]
-        return agent.route_after_default_params_config(state)
-    
-    def _route_module_custom_params_config(self, state: UnifiedState, module_name: str) -> str:
-        """Route from module custom params config based on tool calls"""
-        agent = self.agent_instances[module_name]
-        return agent.route_after_custom_params_config(state)
-    
-    def _route_module_tools(self, state: UnifiedState, module_name: str) -> str:
-        """Route from module tools based on validation status"""
-        agent = self.agent_instances[module_name]
-        return agent.route_after_tools(state)
-    
-    def _route_module_finalize(self, state: UnifiedState, module_name: str) -> str:
-        """Route from module finalize to next module or simulation"""
+    def _route_supervisor(self, state: UnifiedState) -> str:
+        """
+        Route from supervisor to appropriate module agent or simulation.
+        
+        Priority:
+        1. Resume active module if user input provided
+        2. Find next pending module
+        3. All modules complete - go to simulation
+        
+        Note: state is passed as a dict by LangGraph, not as UnifiedState instance
+        """
+        # Priority 1: Resume active module if user input provided
+        current_active = state.get('current_active_module')
+        if current_active:
+            # User provided input, route to active module
+            # Module will resume from checkpoint automatically
+            self.logger.info(f"Routing to active module: {current_active}")
+            return f"{current_active}_agent"
+        
+        # Priority 2: Find next pending module
+        # Note: state is passed as a dict, so we need to implement get_next_module logic inline
         execution_order = state.get('execution_order', [])
         module_results = state.get('module_results', {})
         
-        try:
-            current_index = execution_order.index(module_name)
-            
-            if current_index == len(execution_order) - 1:
-                # Last module completed - go to simulation preparation
-                self.logger.info("All modules completed, routing to simulation preparation")
-                return "supervisor_prepare_simulation"
+        # If execution_order is empty, we can't determine routing
+        # This should only happen on first invocation before welcome stage sets it
+        if not execution_order:
+            self.logger.warning("execution_order is empty in route_supervisor - trying registry as fallback")
+            # Try to get it from registry as fallback
+            execution_order = self.registry.get_execution_order()
+            if not execution_order:
+                self.logger.error("Cannot determine execution_order - no modules registered")
+                # Fallback: return to supervisor to try again (shouldn't happen in normal flow)
+                return "supervisor"
+        
+        # Verify all modules are completed before routing to simulation
+        # Only check if execution_order is not empty
+        if execution_order and self._are_all_modules_completed(execution_order, module_results):
+            # Priority 3: All modules validated and completed - route to simulation
+            self.logger.info("All modules validated and completed, routing to simulation")
+            return "supervisor_prepare_simulation"
+        
+        # Get completed modules to find next pending module
+        completed = self._get_completed_modules(module_results)
+        
+        # Find first module in execution order that isn't completed
+        next_module = None
+        for module in execution_order:
+            if module not in completed:
+                next_module = module
+                break
+        
+        if next_module:
+            # Mark as active and route
+            self.logger.info(f"Routing to next module: {next_module} (completed: {completed}, pending: {[m for m in execution_order if m not in completed]})")
+            return f"{next_module}_agent"
+        
+        # Edge case: no next module found but not all modules are completed
+        # This should not happen if _are_all_modules_completed works correctly
+        self.logger.error(
+            f"Could not find next module but not all modules are completed. "
+            f"Execution order: {execution_order}, Completed: {completed}, "
+            f"Module results: {list(module_results.keys())}"
+        )
+        # Fallback: route to simulation (should not reach here in normal flow)
+        return "supervisor_prepare_simulation"
+    
+    def _route_from_module(self, state: UnifiedState, module_name: str) -> str:
+        """
+        Route from module agent back to supervisor or END.
+        
+        This handles:
+        - Module completion: clear active module, return to supervisor
+        - Module END (needs input): keep active module, END graph to wait for user input
+        - Module error: route to error handler
+        
+        When a module ENDs waiting for user input, the entire graph ENDs.
+        When user provides input and invokes again, LangGraph resumes from checkpoint
+        and supervisor will route back to the active module.
+        """
+        # Note: state is passed as a dict by LangGraph, not as UnifiedState instance
+        # So we need to access it as a dict
+        module_results = state.get('module_results', {})
+        module_result = module_results.get(module_name)
+        
+        if module_result:
+            # Handle both ModuleResult object and dict
+            if hasattr(module_result, 'stage'):
+                stage = module_result.stage
+            elif isinstance(module_result, dict):
+                stage = module_result.get('stage')
             else:
-                # Route directly to next module (bypassing summarize)
-                completed = [name for name, res in module_results.items() if getattr(res, 'status', None) == ModuleStatus.COMPLETED]
-                # Find first module not completed
-                next_module = None
-                for mn in execution_order:
-                    if mn not in completed:
-                        next_module = mn
+                stage = None
+            
+            # Extract stage value
+            if hasattr(stage, 'stage'):
+                stage_value = stage.stage
+            elif isinstance(stage, dict):
+                stage_value = stage.get('stage')
+            else:
+                stage_value = stage
+            
+            if stage_value == "completed":
+                # Module complete - clear active module, return to supervisor
+                self.logger.info(f"Module {module_name} completed, returning to supervisor")
+                return "supervisor"
+            elif stage_value == "error":
+                # Module error - route to error handler
+                self.logger.error(f"Module {module_name} encountered error")
+                return "supervisor_error_handler"
+        
+        # Module ENDed but not complete (needs user input)
+        # Keep current_active_module set, END graph to wait for user input
+        # When user provides input and invokes again, LangGraph resumes from checkpoint
+        # and supervisor will route back to this active module
+        self.logger.info(f"Module {module_name} ENDed waiting for input, ending graph to wait for user")
+        return END
+    
+    def _create_module_wrapper(self, module_name: str, react_agent):
+        """
+        Create a wrapper around react-agent to handle state updates.
+        
+        This wrapper:
+        - Checks if welcome message needs to be shown
+        - Invokes the react-agent
+        - Checks for module completion from tool results
+        - Updates ModuleResult in state when complete
+        - Manages current_active_module
+        """
+        async def wrapper_node(state: UnifiedState):
+            """Wrapper node that invokes react-agent and handles state updates"""
+            self.logger.info(f"Invoking react-agent for module: {module_name}")
+            
+            agent = self.agent_instances[module_name]
+            messages = state.get('messages', [])
+            
+            # Add thread_id to system message so LLM passes it to tools
+            thread_id = state.get('thread_id')
+            if thread_id:
+                # Add system message with thread_id context at the beginning
+                thread_id_context = SystemMessage(
+                    content=f"**CONTEXT: Current thread_id is {thread_id}. When calling tools that require file access (such as file_status, get_files, etc.), you MUST pass thread_id={thread_id} as a parameter.**"
+                )
+                messages = [thread_id_context] + messages
+                self.logger.debug(f"Added thread_id={thread_id} to system message")
+            
+            # Update state with messages (including thread_id context if added)
+            state = {**state, 'messages': messages}
+            
+            # Set current_active_module if not set
+            if not state.get('current_active_module'):
+                state_updates = {'current_active_module': module_name, 'current_module': module_name}
+                
+                # Check if this is the first time entering this module
+                # If no messages from this module yet, add welcome message
+                has_module_welcome = False
+                for msg in messages:
+                    if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == module_name:
+                        has_module_welcome = True
                         break
-                if next_module is None:
-                    return "supervisor_prepare_simulation"
-                self.logger.info(f"Routing directly to next module: {next_module}")
-                return f"{next_module}_welcome"
-        except ValueError as e:
-            self.logger.error(f"Module {module_name} not found in execution order: {execution_order}")
-            return "supervisor_error_handler"
+                    # Also check if welcome message content is present
+                    if hasattr(msg, 'content') and agent.welcome_message in str(msg.content):
+                        has_module_welcome = True
+                        break
+                
+                # Add welcome message if not present
+                if not has_module_welcome:
+                    welcome_msg = AIMessage(
+                        content=agent.welcome_message,
+                        additional_kwargs={"module_name": module_name}
+                    )
+                    state_updates['messages'] = messages + [welcome_msg]
+                    self.logger.info(f"Added welcome message for module: {module_name}")
+            else:
+                state_updates = {'current_module': module_name}
+            
+            # Check if config_mode needs to be extracted from conversation
+            # The react-agent prompt includes instructions to detect config_mode from messages
+            config_mode = state.get('config_mode', '')
+            
+            # Prepare invoke state (with any updates we've made)
+            invoke_state = {**state, **state_updates} if state_updates else state
+            
+            # If config_mode is not set but we have messages, try to detect it
+            if not config_mode:
+                messages = invoke_state.get('messages', [])
+                # Look for user responses indicating config mode choice
+                for msg in reversed(messages):
+                    if hasattr(msg, 'content'):
+                        content = str(msg.content).lower()
+                        if 'default' in content and 'setup' in content:
+                            config_mode = 'Default Setup'
+                            state_updates['config_mode'] = config_mode
+                            invoke_state['config_mode'] = config_mode
+                            break
+                        elif 'customize' in content or 'custom' in content:
+                            config_mode = 'Customize'
+                            state_updates['config_mode'] = config_mode
+                            invoke_state['config_mode'] = config_mode
+                            break
+            
+            # Invoke react-agent
+            try:
+                # React-agent expects messages in state
+                # invoke_state already includes welcome message and config_mode if detected
+                result = await react_agent.ainvoke(invoke_state)
+                
+                # Check if module is complete by examining tool results in messages
+                messages = result.get('messages', [])
+                module_complete = False
+                validated_params = {}
+                cli_params = ""
+                
+                # Look for validation tool results indicating completion
+                for msg in reversed(messages):
+                    if isinstance(msg, ToolMessage):
+                        try:
+                            # Parse tool result to check for validation success
+                            tool_result = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
+                            if isinstance(tool_result, dict):
+                                validation_status = tool_result.get('validation_status', False)
+                                if validation_status:
+                                    # Module validation succeeded - module is complete
+                                    module_complete = True
+                                    validated_params = tool_result.get('validated_params', {})
+                                    cli_params = tool_result.get('cli_parameters', '')
+                                    self.logger.info(f"Module {module_name} validation succeeded")
+                                    break
+                        except (json.JSONDecodeError, AttributeError, TypeError):
+                            # Not a validation result, continue
+                            continue
+                
+                # Update module result if complete
+                if module_complete:
+                    module_result = ModuleResult(
+                        module_name=module_name,
+                        stage=FillingStage(stage='completed'),
+                        parameters=validated_params,
+                        cli_parameters=cli_params,
+                        thread_id=state.get('thread_id'),
+                        user_id=state.get('user_id')
+                    )
+                    updated_results = state.get('module_results', {}).copy()
+                    updated_results[module_name] = module_result
+                    
+                    state_updates.update({
+                        'module_results': updated_results,
+                        'current_active_module': None,  # Clear active module
+                        'module_stage': FillingStage(stage='completed')
+                    })
+                else:
+                    # Module still processing
+                    state_updates['module_stage'] = FillingStage(stage='processing')
+                
+                # Merge react-agent result with state updates
+                return {**result, **state_updates}
+            except Exception as e:
+                self.logger.error(f"Error in react-agent for {module_name}: {e}", exc_info=True)
+                # Return error state
+                error_result = ModuleResult(
+                    module_name=module_name,
+                    stage=FillingStage(stage='error'),
+                    error_message=str(e),
+                    thread_id=state.get('thread_id'),
+                    user_id=state.get('user_id')
+                )
+                updated_results = state.get('module_results', {}).copy()
+                updated_results[module_name] = error_result
+                
+                return {
+                    **state_updates,
+                    'module_results': updated_results,
+                    'module_stage': FillingStage(stage='error'),
+                    'error_message': str(e),
+                    'current_active_module': None
+                }
+        
+        return wrapper_node
     
     def _route_from_simulation(self, state: UnifiedState) -> str:
         """Route from simulation execution based on tools availability"""
@@ -1121,7 +1490,7 @@ Configuration is complete. The simulation parameters are ready for execution.
                 cli_parameters = {}
                 
                 for name, result_obj in module_results.items():
-                    if result_obj.status == ModuleStatus.COMPLETED:
+                    if result_obj.stage.stage == "completed":
                         parameters[name] = result_obj.parameters
                         cli_parameters[name] = result_obj.cli_parameters
                 
@@ -1154,7 +1523,7 @@ Configuration is complete. The simulation parameters are ready for execution.
                     "current_stage": result['current_stage'],
                     "completed_modules": [
                         name for name, res in result.get('module_results', {}).items()
-                        if res.status == ModuleStatus.COMPLETED
+                        if res.stage.stage == "completed"
                     ]
                 }
                 
@@ -1188,7 +1557,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         module_results = state.values.get('module_results', {})
         completed = [
             name for name, res in module_results.items() 
-            if res.status == ModuleStatus.COMPLETED
+            if res.stage.stage == "completed"
         ]
         total_modules = len(state.values.get('execution_order', []))
         
@@ -1216,7 +1585,7 @@ Configuration is complete. The simulation parameters are ready for execution.
             simulation_configuration={
                 f"{name}_parameters": result.parameters
                 for name, result in module_results.items()
-                if result.status == ModuleStatus.COMPLETED
+                if result.stage.stage == "completed"
             },
             metadata={
                 "thread_id": thread_id,

@@ -69,18 +69,22 @@ def langchain_to_chat_message(message: BaseMessage, module_name: str = None) -> 
             if not ai_message.custom_data:
                 ai_message.custom_data = {}
             
-            # Add module information if provided
-            if module_name:
-                ai_message.custom_data["module_name"] = module_name
-            
-            # Check for module info in message metadata
+            # Check for module info in message metadata first (has priority)
+            # This ensures messages with explicit module_name in additional_kwargs
+            # (like supervisor welcome message) are correctly labeled
+            message_module_name = None
             if hasattr(message, "additional_kwargs") and message.additional_kwargs:
                 metadata = message.additional_kwargs
-                if "module_name" in metadata and not module_name:
-                    ai_message.custom_data["module_name"] = metadata["module_name"]
+                if "module_name" in metadata:
+                    message_module_name = metadata["module_name"]
                 # Extract plot_data if present
                 if "plot_data" in metadata:
                     ai_message.custom_data["plot_data"] = metadata["plot_data"]
+            
+            # Use module_name from message metadata if available, otherwise use provided parameter
+            final_module_name = message_module_name or module_name
+            if final_module_name:
+                ai_message.custom_data["module_name"] = final_module_name
             
             if message.tool_calls:
                 ai_message.tool_calls = message.tool_calls

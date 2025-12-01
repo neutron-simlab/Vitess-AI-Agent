@@ -57,28 +57,23 @@ class InterruptHandler:
             run_id=run_id,
         )
         
-        # Check for interrupts that need to be resumed
+        # Check if there's an active module waiting for input (END pattern)
+        # With react-agent architecture, modules END when needing user input
+        # LangGraph automatically resumes from checkpoint when invoked with same thread_id
         try:
-            has_interrupt = await InterruptHandler.has_pending_interrupt(agent, config)
+            has_active_module = await InterruptHandler.has_active_module_waiting(agent, config)
         except Exception as e:
-            logger.error(f"Failed to check for interrupts: {e}", exc_info=True)
-            raise StateError(
-                "Failed to check for interrupts",
-                operation="get_state",
-                details={"error": str(e)}
-            ) from e
+            logger.error(f"Failed to check for active module: {e}", exc_info=True)
+            # Continue with normal input if state check fails
+            has_active_module = False
         
-        # Prepare input based on interrupt status
-        if has_interrupt:
-            # User input is response to resume agent execution from interrupt
-            input_data: Command | dict[str, Any] = Command(resume=user_input)
-        else:
-            # Normal input - add as human message and include thread_id/user_id in state
-            input_data = {
-                "messages": [HumanMessage(content=user_input)],
-                "thread_id": thread_id,
-                "user_id": user_id,
-            }
+        # Prepare input - always add as human message
+        # LangGraph will automatically resume from checkpoint if there's an active module
+        input_data = {
+            "messages": [HumanMessage(content=user_input)],
+            "thread_id": thread_id,
+            "user_id": user_id,
+        }
         
         kwargs = {
             "input": input_data,
@@ -88,6 +83,39 @@ class InterruptHandler:
         return kwargs, run_id
     
     @staticmethod
+    async def has_active_module_waiting(
+        agent: CompiledStateGraph,
+        config: RunnableConfig
+    ) -> bool:
+        """
+        Check if there's an active module waiting for user input (END pattern).
+        
+        With react-agent architecture, modules END when needing user input.
+        This checks if current_active_module is set in state.
+        
+        Args:
+            agent: The compiled state graph
+            config: The runnable config for state access
+            
+        Returns:
+            True if there's an active module waiting, False otherwise
+        """
+        try:
+            state: Any = await agent.aget_state(config=config)
+            
+            if not state or not state.values:
+                return False
+            
+            # Check for current_active_module in state
+            current_active_module = state.values.get('current_active_module')
+            return current_active_module is not None
+            
+        except Exception as e:
+            logger.error(f"Failed to access agent state: {e}", exc_info=True)
+            # Return False on error - will start fresh
+            return False
+    
+    @staticmethod
     async def has_pending_interrupt(
         agent: CompiledStateGraph,
         config: RunnableConfig
@@ -95,37 +123,15 @@ class InterruptHandler:
         """
         Check if there are pending interrupts in the agent state.
         
+        DEPRECATED: With react-agent architecture, we use END pattern instead of interrupts.
+        This method is kept for backward compatibility but checks for active modules instead.
+        
         Args:
             agent: The compiled state graph
             config: The runnable config for state access
             
         Returns:
-            True if there are pending interrupts, False otherwise
-            
-        Raises:
-            StateError: If there's an error accessing state
+            True if there's an active module waiting, False otherwise
         """
-        try:
-            state: Any = await agent.aget_state(config=config)
-            
-            if not state:
-                return False
-            
-            # Check for interrupts in state tasks
-            if hasattr(state, 'tasks'):
-                interrupted_tasks = [
-                    task for task in state.tasks
-                    if hasattr(task, "interrupts") and task.interrupts
-                ]
-                return len(interrupted_tasks) > 0
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Failed to access agent state: {e}", exc_info=True)
-            raise StateError(
-                "Failed to access agent state",
-                operation="get_state",
-                details={"error": str(e)}
-            ) from e
+        return await InterruptHandler.has_active_module_waiting(agent, config)
 

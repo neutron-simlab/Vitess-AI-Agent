@@ -17,24 +17,6 @@ from ui_components import (
 )
 
 
-def is_message_duplicate(message: ChatMessage, messages: list[ChatMessage]) -> bool:
-    """Check if a message is a duplicate based on content and type.
-    
-    Args:
-        message: ChatMessage to check
-        messages: List of existing messages
-        
-    Returns:
-        True if duplicate found, False otherwise
-    """
-    for existing_msg in messages:
-        if (isinstance(existing_msg, ChatMessage) and 
-            existing_msg.type == message.type and
-            existing_msg.content == message.content):
-            return True
-    return False
-
-
 def process_stream_chunk(
     chunk,
     client: AgentClient,
@@ -71,8 +53,8 @@ def process_stream_chunk(
             return response_text, current_streaming_module, received_complete_message
         
         received_complete_message = True
-        if not is_message_duplicate(chunk, messages):
-            messages.append(chunk)
+        # Backend handles deduplication, so we can always append
+        messages.append(chunk)
         
         if chunk.type == "ai":
             message_placeholder.markdown(chunk.content)
@@ -169,16 +151,13 @@ def render_chat_interface() -> None:
                         f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
                         unsafe_allow_html=True,
                     )
-                    if not is_message_duplicate(
-                        ChatMessage(type="ai", content=response_text),
-                        st.session_state.messages,
-                    ):
-                        ai_message = ChatMessage(
-                            type="ai",
-                            content=response_text,
-                            custom_data={"module_name": current_streaming_module},
-                        )
-                        st.session_state.messages.append(ai_message)
+                    # Backend handles deduplication, so we can always append
+                    ai_message = ChatMessage(
+                        type="ai",
+                        content=response_text,
+                        custom_data={"module_name": current_streaming_module},
+                    )
+                    st.session_state.messages.append(ai_message)
                 st.rerun()
 
     # Display chat history (filter out system messages unless debug mode is enabled)
@@ -245,17 +224,13 @@ def render_chat_interface() -> None:
                                     f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
                                     unsafe_allow_html=True,
                                 )
-                                # Add as AI message if not already added (avoid duplicates)
-                                if not is_message_duplicate(
-                                    ChatMessage(type="ai", content=response_text),
-                                    st.session_state.messages
-                                ):
-                                    ai_message = ChatMessage(
-                                        type="ai",
-                                        content=response_text,
-                                        custom_data={"module_name": current_streaming_module}
-                                    )
-                                    st.session_state.messages.append(ai_message)
+                                # Backend handles deduplication, so we can always append
+                                ai_message = ChatMessage(
+                                    type="ai",
+                                    content=response_text,
+                                    custom_data={"module_name": current_streaming_module}
+                                )
+                                st.session_state.messages.append(ai_message)
                         
                         st.session_state.current_interrupt = None
                         st.rerun()
@@ -323,18 +298,13 @@ def render_chat_interface() -> None:
                                 unsafe_allow_html=True
                             )
                             
-                            # Ensure message is in history (avoid duplicates)
-                            if not is_message_duplicate(
-                                ChatMessage(type="ai", content=response_text),
-                                st.session_state.messages
-                            ):
-                                # Create AI message with module info for proper display in history
-                                ai_message = ChatMessage(
-                                    type="ai", 
-                                    content=response_text,
-                                    custom_data={"module_name": current_streaming_module}
-                                )
-                                st.session_state.messages.append(ai_message)
+                            # Backend handles deduplication, so we can always append
+                            ai_message = ChatMessage(
+                                type="ai", 
+                                content=response_text,
+                                custom_data={"module_name": current_streaming_module}
+                            )
+                            st.session_state.messages.append(ai_message)
                         elif not response_text and st.session_state.messages:
                             # If no response text accumulated, check for last message
                             last_msg = st.session_state.messages[-1]

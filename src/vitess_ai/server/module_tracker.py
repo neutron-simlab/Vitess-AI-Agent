@@ -70,7 +70,7 @@ class ModuleTracker:
         
         Examples:
             "readin_welcome" -> "readin"
-            "supervisor_welcome" -> "supervisor"
+            "supervisor" -> "supervisor"
             "guide_params_config" -> "guide"
             "monitor1d_welcome" -> "monitor1d"
             "monitor2d_params_config" -> "monitor2d"
