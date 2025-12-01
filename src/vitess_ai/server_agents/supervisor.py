@@ -424,7 +424,7 @@ class SupervisorAgent:
         Architecture:
         - Supervisor node routes to module react-agents
         - Module react-agents are created using create_agent
-        - Module agents END when needing user input (validation_status != True)
+        - Module agents END when needing user input (validation not yet complete)
         - When module ENDs needing input, the entire graph ENDs to wait for user
         - When user provides input and invokes again, LangGraph resumes from checkpoint
           and supervisor routes back to the active module
@@ -671,7 +671,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         
         A module is considered completed only if:
         - It has a ModuleResult in module_results
-        - The ModuleResult has stage="completed" (which means validation_status was True)
+        - The ModuleResult has stage="completed" (which means the validation tool returned success with valid parameters)
         
         Args:
             module_results: Dictionary of module_name -> ModuleResult
@@ -742,7 +742,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         - Finds next pending module
         - Routes to simulation if all modules complete
         """
-        self.logger.info("Supervisor routing node triggered")
+        self.logger.info("[SUPERVISOR ROUTING] Supervisor routing node triggered")
         
         # Note: state is passed as a dict by LangGraph, not as UnifiedState instance
         # So we need to access it as a dict and implement get_next_module logic inline
@@ -752,6 +752,10 @@ Configuration is complete. The simulation parameters are ready for execution.
         current_stage = state.get('current_stage')
         execution_order = state.get('execution_order', [])
         messages = state.get('messages', [])
+        module_results = state.get('module_results', {})
+        current_active = state.get('current_active_module')
+        
+        self.logger.debug(f"[SUPERVISOR ROUTING] State: current_stage={current_stage}, execution_order={execution_order}, current_active_module={current_active}, completed_modules={self._get_completed_modules(module_results)}")
         
         # Check if this is a new conversation (no execution_order set yet)
         is_new_conversation = not execution_order
@@ -770,7 +774,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         # Show welcome if: (1) explicitly in WELCOME stage, or (2) new conversation without welcome message
         if current_stage == SupervisorStage.WELCOME or (is_new_conversation and not has_welcome_message):
             # First invocation - show welcome message
-            self.logger.info("First invocation detected, showing welcome message")
+            self.logger.info("[SUPERVISOR ROUTING] First invocation detected, showing welcome message")
             
             # Get thread_id and user_id from state (set in initial input)
             thread_id = state.get('thread_id')
@@ -844,11 +848,14 @@ Configuration is complete. The simulation parameters are ready for execution.
             # Only check if execution_order is not empty
             if execution_order and self._are_all_modules_completed(execution_order, module_results):
                 # All modules have been validated and completed
-                self.logger.info("All modules validated and completed, ready for simulation")
+                self.logger.info("[SUPERVISOR ROUTING] All modules validated and completed, ready for simulation")
                 # Don't set current_active_module - let _route_supervisor handle routing to simulation
             else:
                 # Get completed modules to find next pending module
                 completed = self._get_completed_modules(module_results)
+                pending = [m for m in execution_order if m not in completed]
+                
+                self.logger.debug(f"[SUPERVISOR ROUTING] Completed modules: {completed}, Pending modules: {pending}")
                 
                 # Find first module in execution order that isn't completed
                 next_module = None
@@ -858,7 +865,7 @@ Configuration is complete. The simulation parameters are ready for execution.
                         break
                 
                 if next_module:
-                    self.logger.info(f"Routing to next module: {next_module} (completed: {completed}, pending: {[m for m in execution_order if m not in completed]})")
+                    self.logger.info(f"[SUPERVISOR ROUTING] Routing to next module: {next_module} (completed: {completed}, pending: {pending})")
                     state_updates.update({
                         'current_active_module': next_module,
                         'current_module': next_module
@@ -867,16 +874,16 @@ Configuration is complete. The simulation parameters are ready for execution.
                     # This should not happen if _are_all_modules_completed works correctly
                     # But handle edge case: all modules completed but verification failed, or execution_order is empty
                     if not execution_order:
-                        self.logger.error("execution_order is empty, cannot determine next module")
+                        self.logger.error("[SUPERVISOR ROUTING] execution_order is empty, cannot determine next module")
                     else:
                         self.logger.warning(
-                            f"Could not find next module but not all modules are completed. "
+                            f"[SUPERVISOR ROUTING] Could not find next module but not all modules are completed. "
                             f"Execution order: {execution_order}, Completed: {completed}, "
                             f"Module results: {list(module_results.keys())}"
                         )
         else:
             # Active module exists - keep it
-            self.logger.info(f"Resuming active module: {current_active}")
+            self.logger.info(f"[SUPERVISOR ROUTING] Resuming active module: {current_active}")
             state_updates['current_module'] = current_active
         
         return state_updates
@@ -897,7 +904,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         if current_active:
             # User provided input, route to active module
             # Module will resume from checkpoint automatically
-            self.logger.info(f"Routing to active module: {current_active}")
+            self.logger.info(f"[ROUTE SUPERVISOR] Routing to active module: {current_active}")
             return f"{current_active}_agent"
         
         # Priority 2: Find next pending module
@@ -905,14 +912,16 @@ Configuration is complete. The simulation parameters are ready for execution.
         execution_order = state.get('execution_order', [])
         module_results = state.get('module_results', {})
         
+        self.logger.debug(f"[ROUTE SUPERVISOR] execution_order={execution_order}, module_results keys={list(module_results.keys())}")
+        
         # If execution_order is empty, we can't determine routing
         # This should only happen on first invocation before welcome stage sets it
         if not execution_order:
-            self.logger.warning("execution_order is empty in route_supervisor - trying registry as fallback")
+            self.logger.warning("[ROUTE SUPERVISOR] execution_order is empty in route_supervisor - trying registry as fallback")
             # Try to get it from registry as fallback
             execution_order = self.registry.get_execution_order()
             if not execution_order:
-                self.logger.error("Cannot determine execution_order - no modules registered")
+                self.logger.error("[ROUTE SUPERVISOR] Cannot determine execution_order - no modules registered")
                 # Fallback: return to supervisor to try again (shouldn't happen in normal flow)
                 return "supervisor"
         
@@ -920,11 +929,14 @@ Configuration is complete. The simulation parameters are ready for execution.
         # Only check if execution_order is not empty
         if execution_order and self._are_all_modules_completed(execution_order, module_results):
             # Priority 3: All modules validated and completed - route to simulation
-            self.logger.info("All modules validated and completed, routing to simulation")
+            self.logger.info("[ROUTE SUPERVISOR] All modules validated and completed, routing to simulation")
             return "supervisor_prepare_simulation"
         
         # Get completed modules to find next pending module
         completed = self._get_completed_modules(module_results)
+        pending = [m for m in execution_order if m not in completed]
+        
+        self.logger.debug(f"[ROUTE SUPERVISOR] Completed: {completed}, Pending: {pending}")
         
         # Find first module in execution order that isn't completed
         next_module = None
@@ -935,13 +947,13 @@ Configuration is complete. The simulation parameters are ready for execution.
         
         if next_module:
             # Mark as active and route
-            self.logger.info(f"Routing to next module: {next_module} (completed: {completed}, pending: {[m for m in execution_order if m not in completed]})")
+            self.logger.info(f"[ROUTE SUPERVISOR] Routing to next module: {next_module} (completed: {completed}, pending: {pending})")
             return f"{next_module}_agent"
         
         # Edge case: no next module found but not all modules are completed
         # This should not happen if _are_all_modules_completed works correctly
         self.logger.error(
-            f"Could not find next module but not all modules are completed. "
+            f"[ROUTE SUPERVISOR] Could not find next module but not all modules are completed. "
             f"Execution order: {execution_order}, Completed: {completed}, "
             f"Module results: {list(module_results.keys())}"
         )
@@ -966,6 +978,8 @@ Configuration is complete. The simulation parameters are ready for execution.
         module_results = state.get('module_results', {})
         module_result = module_results.get(module_name)
         
+        self.logger.debug(f"[ROUTING] Routing from module {module_name}, module_result exists: {module_result is not None}")
+        
         if module_result:
             # Handle both ModuleResult object and dict
             if hasattr(module_result, 'stage'):
@@ -983,20 +997,22 @@ Configuration is complete. The simulation parameters are ready for execution.
             else:
                 stage_value = stage
             
+            self.logger.debug(f"[ROUTING] Module {module_name} stage_value: {stage_value}")
+            
             if stage_value == "completed":
                 # Module complete - clear active module, return to supervisor
-                self.logger.info(f"Module {module_name} completed, returning to supervisor")
+                self.logger.info(f"[ROUTING] Module {module_name} completed, routing to supervisor")
                 return "supervisor"
             elif stage_value == "error":
                 # Module error - route to error handler
-                self.logger.error(f"Module {module_name} encountered error")
+                self.logger.error(f"[ROUTING] Module {module_name} encountered error, routing to error handler")
                 return "supervisor_error_handler"
         
         # Module ENDed but not complete (needs user input)
         # Keep current_active_module set, END graph to wait for user input
         # When user provides input and invokes again, LangGraph resumes from checkpoint
         # and supervisor will route back to this active module
-        self.logger.info(f"Module {module_name} ENDed waiting for input, ending graph to wait for user")
+        self.logger.info(f"[ROUTING] Module {module_name} ENDed waiting for input, ending graph to wait for user")
         return END
     
     def _create_module_wrapper(self, module_name: str, react_agent):
@@ -1012,10 +1028,30 @@ Configuration is complete. The simulation parameters are ready for execution.
         """
         async def wrapper_node(state: UnifiedState):
             """Wrapper node that invokes react-agent and handles state updates"""
-            self.logger.info(f"Invoking react-agent for module: {module_name}")
+            self.logger.info(f"[MODULE ENTRY] Entering module: {module_name}")
             
             agent = self.agent_instances[module_name]
             messages = state.get('messages', [])
+            current_active = state.get('current_active_module')
+            
+            # Determine if this is a new module entry or resuming the same module
+            is_new_module = not current_active or current_active != module_name
+            
+            if is_new_module:
+                self.logger.info(f"[MODULE ENTRY] New module entry detected for {module_name} (previous active: {current_active})")
+                # Reset module-specific state when entering a new module
+                # Initialize module_config_modes if not exists
+                module_config_modes = state.get('module_config_modes', {}).copy()
+                # Don't set config_mode for new module - it will be detected or set by the module agent
+                
+                state_updates = {
+                    'current_active_module': module_name,
+                    'current_module': module_name,
+                }
+                self.logger.info(f"[STATE RESET] Reset module-specific state for {module_name} (config_mode will be module-specific)")
+            else:
+                self.logger.info(f"[MODULE RESUME] Resuming module: {module_name}")
+                state_updates = {'current_module': module_name}
             
             # Add thread_id to system message so LLM passes it to tools
             thread_id = state.get('thread_id')
@@ -1030,12 +1066,9 @@ Configuration is complete. The simulation parameters are ready for execution.
             # Update state with messages (including thread_id context if added)
             state = {**state, 'messages': messages}
             
-            # Set current_active_module if not set
-            if not state.get('current_active_module'):
-                state_updates = {'current_active_module': module_name, 'current_module': module_name}
-                
-                # Check if this is the first time entering this module
-                # If no messages from this module yet, add welcome message
+            # Check if this is the first time entering this module
+            # If no messages from this module yet, add welcome message
+            if is_new_module:
                 has_module_welcome = False
                 for msg in messages:
                     if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == module_name:
@@ -1053,72 +1086,185 @@ Configuration is complete. The simulation parameters are ready for execution.
                         additional_kwargs={"module_name": module_name}
                     )
                     state_updates['messages'] = messages + [welcome_msg]
-                    self.logger.info(f"Added welcome message for module: {module_name}")
-            else:
-                state_updates = {'current_module': module_name}
+                    self.logger.info(f"[WELCOME] Added welcome message for module: {module_name}")
             
-            # Check if config_mode needs to be extracted from conversation
-            # The react-agent prompt includes instructions to detect config_mode from messages
-            config_mode = state.get('config_mode', '')
-            
+            # Get module-specific config_mode from module_config_modes dict
             # Prepare invoke state (with any updates we've made)
             invoke_state = {**state, **state_updates} if state_updates else state
             
-            # If config_mode is not set but we have messages, try to detect it
+            # Get or initialize module_config_modes
+            module_config_modes = invoke_state.get('module_config_modes', {})
+            if not isinstance(module_config_modes, dict):
+                module_config_modes = {}
+            
+            # Get config_mode for this specific module
+            config_mode = module_config_modes.get(module_name, '')
+            
+            # If config_mode is not set but we have messages, try to detect it from CURRENT module only
             if not config_mode:
-                messages = invoke_state.get('messages', [])
-                # Look for user responses indicating config mode choice
-                for msg in reversed(messages):
+                all_messages = invoke_state.get('messages', [])
+                # Filter to only messages from the current module
+                module_messages = []
+                for msg in all_messages:
+                    # Include messages explicitly tagged with this module_name
+                    if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == module_name:
+                        module_messages.append(msg)
+                    # Also include user messages that come after this module's welcome message
+                    # (heuristic: user messages after module welcome are likely for that module)
+                    elif not hasattr(msg, 'additional_kwargs') or not msg.additional_kwargs.get('module_name'):
+                        # This is a user message or system message, include it if we're in this module's context
+                        module_messages.append(msg)
+                
+                self.logger.debug(f"[CONFIG_MODE] Searching for config_mode in {len(module_messages)} messages from module {module_name}")
+                
+                # Look for user responses indicating config mode choice in module-specific messages
+                for msg in reversed(module_messages):
                     if hasattr(msg, 'content'):
                         content = str(msg.content).lower()
                         if 'default' in content and 'setup' in content:
                             config_mode = 'Default Setup'
-                            state_updates['config_mode'] = config_mode
-                            invoke_state['config_mode'] = config_mode
+                            module_config_modes[module_name] = config_mode
+                            state_updates['module_config_modes'] = module_config_modes
+                            invoke_state['module_config_modes'] = module_config_modes
+                            self.logger.info(f"[CONFIG_MODE] Detected config_mode='{config_mode}' for module {module_name}")
                             break
                         elif 'customize' in content or 'custom' in content:
                             config_mode = 'Customize'
-                            state_updates['config_mode'] = config_mode
-                            invoke_state['config_mode'] = config_mode
+                            module_config_modes[module_name] = config_mode
+                            state_updates['module_config_modes'] = module_config_modes
+                            invoke_state['module_config_modes'] = module_config_modes
+                            self.logger.info(f"[CONFIG_MODE] Detected config_mode='{config_mode}' for module {module_name}")
                             break
+                
+                if not config_mode:
+                    self.logger.debug(f"[CONFIG_MODE] No config_mode detected for module {module_name}, will use dynamic detection in prompt")
+            else:
+                self.logger.info(f"[CONFIG_MODE] Using existing config_mode='{config_mode}' for module {module_name}")
             
             # Invoke react-agent
             try:
                 # React-agent expects messages in state
                 # invoke_state already includes welcome message and config_mode if detected
+                # Get config_mode for logging
+                module_config_modes = invoke_state.get('module_config_modes', {})
+                current_config_mode = module_config_modes.get(module_name, '')
+                self.logger.debug(f"[REACT_AGENT] Invoking react-agent for module {module_name} with config_mode='{current_config_mode}'")
                 result = await react_agent.ainvoke(invoke_state)
                 
                 # Check if module is complete by examining tool results in messages
-                messages = result.get('messages', [])
+                # IMPORTANT: Only check result_messages (from current invocation) to avoid picking up validation from previous modules
+                result_messages = result.get('messages', [])
+                
+                self.logger.debug(f"[VALIDATION] Checking validation status for module {module_name}: {len(result_messages)} new messages from current invocation")
+                
                 module_complete = False
                 validated_params = {}
                 cli_params = ""
+                validation_source = None
+                validation_tool_name = None
+                
+                # Map module names to their validation tool name patterns
+                module_validation_tools = {
+                    'readin': 'validate_readin_module',
+                    'guide': 'validate_guide_parameters',
+                    'writeout': 'validate_writeout_module',
+                    'monitor1d': 'validate_monitor1d_module',
+                    'monitor2d': 'validate_monitor2d_module',
+                }
+                expected_tool_pattern = module_validation_tools.get(module_name, '')
                 
                 # Look for validation tool results indicating completion
-                for msg in reversed(messages):
+                # Only check result_messages from current invocation to ensure we're checking the right module
+                for msg in reversed(result_messages):
                     if isinstance(msg, ToolMessage):
                         try:
                             # Parse tool result to check for validation success
                             tool_result = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
                             if isinstance(tool_result, dict):
                                 validation_status = tool_result.get('validation_status', False)
-                                if validation_status:
-                                    # Module validation succeeded - module is complete
-                                    module_complete = True
-                                    validated_params = tool_result.get('validated_params', {})
-                                    cli_params = tool_result.get('cli_parameters', '')
-                                    self.logger.info(f"Module {module_name} validation succeeded")
-                                    break
-                        except (json.JSONDecodeError, AttributeError, TypeError):
+                                
+                                # Log all validation attempts for debugging
+                                if 'validation_status' in tool_result:
+                                    # Try to identify the tool name from the tool_call_id
+                                    # Find the corresponding AIMessage with this tool_call_id
+                                    tool_name = None
+                                    tool_call_id = getattr(msg, 'tool_call_id', None)
+                                    if tool_call_id:
+                                        # Look for the AIMessage that has this tool_call_id
+                                        for ai_msg in reversed(result_messages):
+                                            if hasattr(ai_msg, 'tool_calls') and ai_msg.tool_calls:
+                                                for tc in ai_msg.tool_calls:
+                                                    if tc.get('id') == tool_call_id:
+                                                        tool_name = tc.get('name', '')
+                                                        break
+                                                if tool_name:
+                                                    break
+                                    
+                                    self.logger.debug(f"[VALIDATION] Found validation_status={validation_status} for tool '{tool_name}' (expected pattern: '{expected_tool_pattern}')")
+                                    
+                                    # Only accept validation if:
+                                    # 1. validation_status is True
+                                    # 2. Tool name matches expected pattern for this module (or pattern is empty if unknown)
+                                    # 3. validated_params is not empty
+                                    if validation_status:
+                                        validated_params_raw = tool_result.get('validated_params', {})
+                                        cli_params_raw = tool_result.get('cli_parameters', '')
+                                        
+                                        # Convert validated_params to dict if it's a Pydantic model
+                                        if hasattr(validated_params_raw, 'model_dump'):
+                                            validated_params = validated_params_raw.model_dump()
+                                        elif isinstance(validated_params_raw, dict):
+                                            validated_params = validated_params_raw
+                                        else:
+                                            validated_params = validated_params_raw
+                                        
+                                        cli_params = cli_params_raw if cli_params_raw else ''
+                                        
+                                        # Check if tool belongs to this module
+                                        tool_matches = (not expected_tool_pattern or 
+                                                       (tool_name and expected_tool_pattern in tool_name))
+                                        
+                                        # Check if parameters are actually present
+                                        has_params = False
+                                        if isinstance(validated_params, dict):
+                                            has_params = len(validated_params) > 0
+                                        elif validated_params:
+                                            has_params = True
+                                        
+                                        if tool_matches and has_params:
+                                            # Module validation succeeded - module is complete
+                                            module_complete = True
+                                            validation_source = "result"
+                                            validation_tool_name = tool_name or 'unknown'
+                                            self.logger.info(f"[VALIDATION] Module {module_name} validation succeeded (tool: {validation_tool_name}, params_count: {len(validated_params) if isinstance(validated_params, dict) else 'N/A'}, cli_length: {len(cli_params) if cli_params else 0})")
+                                            break
+                                        else:
+                                            if not tool_matches:
+                                                self.logger.debug(f"[VALIDATION] Validation result found but tool '{tool_name}' doesn't match expected pattern '{expected_tool_pattern}' for module {module_name}")
+                                            if not has_params:
+                                                self.logger.debug(f"[VALIDATION] Validation result found but validated_params is empty for module {module_name}")
+                        except (json.JSONDecodeError, AttributeError, TypeError) as e:
                             # Not a validation result, continue
+                            self.logger.debug(f"[VALIDATION] Skipping non-validation tool message: {type(e).__name__}")
                             continue
+                
+                if not module_complete:
+                    self.logger.debug(f"[VALIDATION] Module {module_name} validation not yet complete - no valid validation_status=True found in current invocation results")
                 
                 # Update module result if complete
                 if module_complete:
+                    # Convert validated_params to dict if it's a Pydantic model
+                    if hasattr(validated_params, 'model_dump'):
+                        validated_params_dict = validated_params.model_dump()
+                    elif isinstance(validated_params, dict):
+                        validated_params_dict = validated_params
+                    else:
+                        validated_params_dict = validated_params
+                    
                     module_result = ModuleResult(
                         module_name=module_name,
                         stage=FillingStage(stage='completed'),
-                        parameters=validated_params,
+                        parameters=validated_params_dict,
                         cli_parameters=cli_params,
                         thread_id=state.get('thread_id'),
                         user_id=state.get('user_id')
@@ -1126,19 +1272,25 @@ Configuration is complete. The simulation parameters are ready for execution.
                     updated_results = state.get('module_results', {}).copy()
                     updated_results[module_name] = module_result
                     
+                    params_count = len(validated_params_dict) if isinstance(validated_params_dict, dict) else 0
+                    self.logger.info(f"[MODULE COMPLETE] Module {module_name} completed successfully: {params_count} parameters validated, cli_parameters length={len(cli_params)}, validation_source={validation_source}")
+                    
                     state_updates.update({
                         'module_results': updated_results,
                         'current_active_module': None,  # Clear active module
                         'module_stage': FillingStage(stage='completed')
                     })
+                    self.logger.info(f"[STATE UPDATE] Cleared current_active_module, set module_stage=completed for {module_name}")
                 else:
                     # Module still processing
                     state_updates['module_stage'] = FillingStage(stage='processing')
+                    self.logger.debug(f"[MODULE PROCESSING] Module {module_name} still processing, module_stage=processing")
                 
                 # Merge react-agent result with state updates
+                self.logger.debug(f"[MODULE EXIT] Exiting module {module_name}, module_complete={module_complete}")
                 return {**result, **state_updates}
             except Exception as e:
-                self.logger.error(f"Error in react-agent for {module_name}: {e}", exc_info=True)
+                self.logger.error(f"[MODULE ERROR] Error in react-agent for {module_name}: {e}", exc_info=True)
                 # Return error state
                 error_result = ModuleResult(
                     module_name=module_name,
@@ -1149,6 +1301,8 @@ Configuration is complete. The simulation parameters are ready for execution.
                 )
                 updated_results = state.get('module_results', {}).copy()
                 updated_results[module_name] = error_result
+                
+                self.logger.error(f"[STATE UPDATE] Set module {module_name} to error state, cleared current_active_module")
                 
                 return {
                     **state_updates,
@@ -1472,10 +1626,7 @@ Configuration is complete. The simulation parameters are ready for execution.
             cli_command=None,
             current_module=None,
             module_stage=None,
-            config_mode="",
-            validation_status=None,
-            parameters=None,
-            cli_parameters="",
+            module_config_modes={},  # Module-specific config modes: {module_name: config_mode}
             simulation_finish=None,
             context={},
         )

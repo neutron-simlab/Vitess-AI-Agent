@@ -257,18 +257,6 @@ class BaseModuleAgent(ABC, Generic[R]):
         """
         return f"\n{self.name} configuration completed successfully!"
     
-    def parse_config_mode(self, response: R) -> str:
-        """Parse config mode from initial response - override if different attribute name"""
-        return response.response  # type: ignore
-    
-    def validate_config_mode(self, config_mode: str) -> bool:
-        """Validate the config mode - override for custom validation"""
-        return config_mode in ['Default Setup', 'Customize', 'Custom']
-    
-    def get_valid_config_modes(self) -> List[str]:
-        """Return list of valid configuration modes - override if different"""
-        return ['Default Setup', 'Customize', 'Custom']
-    
     # =================
     # PRIVATE SETUP METHODS
     # =================
@@ -297,6 +285,8 @@ class BaseModuleAgent(ABC, Generic[R]):
         Returns:
             Combined prompt string for the react-agent
         """
+        self.logger.debug(f"[PROMPT] Generating prompt for {self.module_name}: config_mode={config_mode}, include_welcome={include_welcome}")
+        
         prompt_parts = []
         
         # Add welcome message if requested
@@ -314,9 +304,11 @@ After greeting the user, you need to determine their configuration preference:
         if config_mode and config_mode in ['Customize', 'Custom']:
             prompt_parts.append("**CURRENT MODE: CUSTOMIZE**")
             prompt_parts.append(self.custom_prompt)
+            self.logger.info(f"[PROMPT] Using CUSTOMIZE prompt for {self.module_name}")
         elif config_mode == 'Default Setup':
             prompt_parts.append("**CURRENT MODE: DEFAULT SETUP**")
             prompt_parts.append(self.default_prompt)
+            self.logger.info(f"[PROMPT] Using DEFAULT SETUP prompt for {self.module_name}")
         else:
             # Include both prompts with instructions to use the appropriate one
             prompt_parts.append("""
@@ -336,8 +328,13 @@ Based on the user's response to the welcome message, use the appropriate section
 **CUSTOMIZE SECTION:**
 """)
             prompt_parts.append(self.custom_prompt)
+            self.logger.info(f"[PROMPT] Using DYNAMIC prompt (both modes) for {self.module_name} - will detect from conversation")
         
-        return "\n\n".join(prompt_parts)
+        final_prompt = "\n\n".join(prompt_parts)
+        prompt_length = len(final_prompt)
+        self.logger.debug(f"[PROMPT] Generated prompt for {self.module_name}: length={prompt_length} characters")
+        
+        return final_prompt
     
     def create_module_react_agent(self, config_mode: str = None):
         """
@@ -356,10 +353,14 @@ Based on the user's response to the welcome message, use the appropriate section
         Returns:
             Compiled react-agent graph
         """
-        self.logger.info(f"Creating react-agent for {self.module_name} with config_mode={config_mode}")
+        self.logger.info(f"[REACT_AGENT] Creating react-agent for {self.module_name} with config_mode={config_mode}, provider={self.provider}, model={self.model}")
         
         # Get comprehensive prompt that includes welcome and handles config mode
         prompt = self.get_module_prompt(config_mode=config_mode, include_welcome=True)
+        
+        # Log tool information
+        tool_names = [tool.name if hasattr(tool, 'name') else str(type(tool).__name__) for tool in self.tools]
+        self.logger.debug(f"[REACT_AGENT] Tools for {self.module_name}: {tool_names}")
         
         # Create react-agent with LLM, tools, and module-specific prompt
         react_agent = create_agent(
@@ -369,7 +370,7 @@ Based on the user's response to the welcome message, use the appropriate section
             name=f"{self.module_name}_agent"
         )
         
-        self.logger.info(f"React-agent created for {self.module_name} with {len(self.tools)} tools")
+        self.logger.info(f"[REACT_AGENT] React-agent created successfully for {self.module_name}: {len(self.tools)} tools, prompt_length={len(prompt)}")
         return react_agent
     
 

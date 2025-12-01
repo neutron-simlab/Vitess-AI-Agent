@@ -37,14 +37,14 @@ def create_thread_id_tool_node(tools: List[BaseTool]) -> callable:
             pass
         return False
     
-    def tool_node_with_thread_id(state: Dict[str, Any]) -> Dict[str, Any]:
+    async def tool_node_with_thread_id(state: Dict[str, Any]) -> Dict[str, Any]:
         """ToolNode that injects thread_id from state into tool calls"""
         thread_id = state.get('thread_id')
         messages = state.get('messages', [])
         
         if not thread_id:
             logger.debug("No thread_id in state, executing tools without injection")
-            return tool_node(state)
+            return await tool_node.ainvoke(state)
         
         # Find last AIMessage with tool_calls
         last_ai_message = None
@@ -54,7 +54,7 @@ def create_thread_id_tool_node(tools: List[BaseTool]) -> callable:
                 break
         
         if not last_ai_message:
-            return tool_node(state)
+            return await tool_node.ainvoke(state)
         
         # Inject thread_id into tool calls
         modified_tool_calls = []
@@ -90,6 +90,6 @@ def create_thread_id_tool_node(tools: List[BaseTool]) -> callable:
         
         # Execute with modified state
         modified_state = {**state, 'messages': modified_messages}
-        return tool_node(modified_state)
+        return await tool_node.ainvoke(modified_state)
     
     return tool_node_with_thread_id

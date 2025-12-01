@@ -64,10 +64,7 @@ class UnifiedState(MessagesState):
     current_module: Optional[str]
     current_active_module: Optional[str]  # Which module is currently processing (for resumption)
     module_stage: Optional[FillingStage]
-    config_mode: str
-    validation_status: Optional[bool]
-    parameters: Any
-    cli_parameters: str
+    module_config_modes: Dict[str, str]  # Module-specific config modes: {module_name: config_mode}
     
     # Common fields
     thread_id: Optional[str]
@@ -116,12 +113,14 @@ class UnifiedState(MessagesState):
         return len(completed) == len(self.execution_order)
     
     def reset_module_state(self) -> None:
-        """Reset module-specific state fields."""
+        """Reset module-specific state fields.
+        
+        Note: This method is currently unused but kept for potential future use.
+        Module-specific data (parameters, cli_parameters, validation_status) 
+        are now stored in ModuleResult objects within module_results dict.
+        """
         self.current_module = None
         self.current_active_module = None
         self.module_stage = None
-        self.config_mode = ""
-        self.validation_status = None
-        self.parameters = None
-        self.cli_parameters = ""
+        self.module_config_modes = {}
         self.error_message = None
