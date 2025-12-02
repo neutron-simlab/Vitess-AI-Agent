@@ -13,7 +13,8 @@ from ui_components import (
     render_module_badge,
     render_streaming_token,
     get_module_color,
-    get_module_info_from_server
+    get_module_info_from_server,
+    markdown_to_html
 )
 
 
@@ -146,9 +147,11 @@ def render_chat_interface() -> None:
                         dynamic_modules = get_module_info_from_server(st.session_state.server_url)
                     color = get_module_color(current_streaming_module, dynamic_modules)
                     badge_text = render_module_badge(current_streaming_module, dynamic_modules)
+                    # Convert markdown to HTML first, then wrap in styled div
+                    html_content = markdown_to_html(response_text)
                     message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                     message_placeholder.markdown(
-                        f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
+                        f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
                         unsafe_allow_html=True,
                     )
                     # Backend handles deduplication, so we can always append
@@ -219,9 +222,11 @@ def render_chat_interface() -> None:
                                     dynamic_modules = get_module_info_from_server(st.session_state.server_url)
                                 color = get_module_color(current_streaming_module, dynamic_modules)
                                 badge_text = render_module_badge(current_streaming_module, dynamic_modules)
+                                # Convert markdown to HTML first, then wrap in styled div
+                                html_content = markdown_to_html(response_text)
                                 message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                                 message_placeholder.markdown(
-                                    f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
+                                    f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
                                     unsafe_allow_html=True,
                                 )
                                 # Backend handles deduplication, so we can always append
@@ -291,10 +296,13 @@ def render_chat_interface() -> None:
                             color = get_module_color(current_streaming_module, dynamic_modules)
                             badge_text = render_module_badge(current_streaming_module, dynamic_modules)
                             
+                            # Convert markdown to HTML first, then wrap in styled div
+                            html_content = markdown_to_html(response_text)
+                            
                             # Display final message with color and badge
                             message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                             message_placeholder.markdown(
-                                f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
+                                f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
                                 unsafe_allow_html=True
                             )
                             

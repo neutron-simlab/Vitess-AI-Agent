@@ -1,3 +1,4 @@
+import os
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -10,6 +11,16 @@ from langchain_core.messages import (
 )
 
 from vitess_ai.schema.server import ChatMessage
+
+
+def set_thread_id_env(thread_id: str) -> None:
+    """Set thread_id as environment variable for MCP tools.
+    
+    Args:
+        thread_id: Thread ID to set in environment variables
+    """
+    os.environ["THREAD_ID"] = thread_id
+    os.environ["VITESS_THREAD_ID"] = thread_id
 
 
 def convert_message_content_to_string(content: str | list[str | dict]) -> str:
@@ -25,22 +36,8 @@ def convert_message_content_to_string(content: str | list[str | dict]) -> str:
     return "".join(text)
 
 
-def _is_mcp_tool(name: str) -> bool:
-    """Check if a tool name indicates it's an MCP tool.
-    
-    MCP tools typically have names like:
-    - validate_*_parameters (validate_guide_parameters, validate_readin_parameters, etc.)
-    - run_simulation
-    - launch_*_gui (launch_picker_gui, launch_instrument_gui)
-    - Other module-specific validation tools
-    """
-    mcp_patterns = [
-        "validate_",
-        "run_simulation",
-        "launch_",
-        "generate_cli",
-    ]
-    return any(name.startswith(pattern) for pattern in mcp_patterns)
+# Import MCP tool detection from mcp module
+from vitess_ai.mcp.utils import is_mcp_tool as _is_mcp_tool
 
 
 def langchain_to_chat_message(message: BaseMessage, module_name: str = None) -> ChatMessage:

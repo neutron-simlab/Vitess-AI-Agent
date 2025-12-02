@@ -1,8 +1,10 @@
 """
-Interrupt handling utilities for LangGraph agents.
+Agent input preparation utilities for LangGraph agents.
 
-This module provides utilities for detecting and handling interrupts in
-LangGraph agent execution, including resumption logic.
+This module provides utilities for preparing input for LangGraph agent execution
+in the react-agent architecture. With react-agent architecture, modules use the
+END pattern (ending when user input is needed) rather than interrupts.
+LangGraph automatically resumes from checkpoint when invoked with the same thread_id.
 """
 
 import logging
@@ -12,15 +14,14 @@ from uuid import UUID, uuid4
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command
 
-from vitess_ai.server.errors import InterruptError, StateError
+from vitess_ai.server.errors import StateError
 
 logger = logging.getLogger(__name__)
 
 
-class InterruptHandler:
-    """Handles interrupt detection and input preparation for LangGraph agents."""
+class AgentInputHandler:
+    """Handles input preparation for LangGraph agents in react-agent architecture."""
     
     @staticmethod
     async def prepare_input(
@@ -31,7 +32,10 @@ class InterruptHandler:
         run_id: UUID | None = None
     ) -> tuple[dict[str, Any], UUID]:
         """
-        Prepare input for agent invocation, handling interrupts if present.
+        Prepare input for agent invocation.
+        
+        With react-agent architecture, modules END when needing user input.
+        LangGraph automatically resumes from checkpoint when invoked with same thread_id.
         
         Args:
             user_input: User input message
@@ -44,7 +48,6 @@ class InterruptHandler:
             Tuple of (kwargs for agent invocation, run_id)
             
         Raises:
-            InterruptError: If there's an error checking for interrupts
             StateError: If there's an error accessing agent state
         """
         run_id = run_id or uuid4()
@@ -57,18 +60,9 @@ class InterruptHandler:
             run_id=run_id,
         )
         
-        # Check if there's an active module waiting for input (END pattern)
-        # With react-agent architecture, modules END when needing user input
-        # LangGraph automatically resumes from checkpoint when invoked with same thread_id
-        try:
-            has_active_module = await InterruptHandler.has_active_module_waiting(agent, config)
-        except Exception as e:
-            logger.error(f"Failed to check for active module: {e}", exc_info=True)
-            # Continue with normal input if state check fails
-            has_active_module = False
-        
         # Prepare input - always add as human message
         # LangGraph will automatically resume from checkpoint if there's an active module
+        # that ended waiting for user input (END pattern)
         input_data = {
             "messages": [HumanMessage(content=user_input)],
             "thread_id": thread_id,
@@ -114,24 +108,4 @@ class InterruptHandler:
             logger.error(f"Failed to access agent state: {e}", exc_info=True)
             # Return False on error - will start fresh
             return False
-    
-    @staticmethod
-    async def has_pending_interrupt(
-        agent: CompiledStateGraph,
-        config: RunnableConfig
-    ) -> bool:
-        """
-        Check if there are pending interrupts in the agent state.
-        
-        DEPRECATED: With react-agent architecture, we use END pattern instead of interrupts.
-        This method is kept for backward compatibility but checks for active modules instead.
-        
-        Args:
-            agent: The compiled state graph
-            config: The runnable config for state access
-            
-        Returns:
-            True if there's an active module waiting, False otherwise
-        """
-        return await InterruptHandler.has_active_module_waiting(agent, config)
 

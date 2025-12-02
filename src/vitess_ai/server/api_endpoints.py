@@ -6,7 +6,6 @@ and restarting agents with new configurations.
 """
 import json
 import logging
-import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -19,15 +18,14 @@ from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_agent, restart_ag
 from vitess_ai.schema.server import ChatMessage, StreamInput, UserInput
 from vitess_ai.core.config import global_config
 from vitess_ai.schema.llm_models import Provider, get_default_model_for_provider
-from vitess_ai.server.utils import langchain_to_chat_message
+from vitess_ai.server.utils import langchain_to_chat_message, set_thread_id_env
 from vitess_ai.server.errors import (
     AgentNotFoundError,
     StreamingError,
-    InterruptError,
     StateError,
     VitessServerError
 )
-from vitess_ai.server.interrupt_handler import InterruptHandler
+from vitess_ai.server.agent_input_handler import AgentInputHandler
 from vitess_ai.server.streaming import StreamEventProcessor
 
 logger = logging.getLogger(__name__)
@@ -73,16 +71,15 @@ async def message_generator(
     try:
         # Set thread_id as environment variable for MCP tools
         if user_input.thread_id:
-            os.environ["THREAD_ID"] = user_input.thread_id
-            os.environ["VITESS_THREAD_ID"] = user_input.thread_id
+            set_thread_id_env(user_input.thread_id)
         
-        kwargs, run_id = await InterruptHandler.prepare_input(
+        kwargs, run_id = await AgentInputHandler.prepare_input(
             user_input.message,
             agent,
             thread_id=user_input.thread_id,
             user_id=user_input.user_id
         )
-    except (InterruptError, StateError) as e:
+    except StateError as e:
         logger.error(f"Failed to prepare input: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': f'Failed to prepare input: {e.message}'})}\n\n"
         yield "data: [DONE]\n\n"
@@ -155,16 +152,15 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
     try:
         # Set thread_id as environment variable for MCP tools
         if user_input.thread_id:
-            os.environ["THREAD_ID"] = user_input.thread_id
-            os.environ["VITESS_THREAD_ID"] = user_input.thread_id
+            set_thread_id_env(user_input.thread_id)
         
-        kwargs, run_id = await InterruptHandler.prepare_input(
+        kwargs, run_id = await AgentInputHandler.prepare_input(
             user_input.message,
             agent,
             thread_id=user_input.thread_id,
             user_id=user_input.user_id
         )
-    except (InterruptError, StateError) as e:
+    except StateError as e:
         logger.error(f"Failed to prepare input: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to prepare input: {e.message}")
     except Exception as e:

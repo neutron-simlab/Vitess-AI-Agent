@@ -10,16 +10,14 @@ management and checkpoint-based resumption.
 import logging
 import json
 import time
-from typing import Dict, List, Any, Optional, Type
+from typing import Dict, List, Any, Optional
 from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.prebuilt import ToolNode
 
 from vitess_ai.schema.supervisor import (
-    SupervisorConfig, SupervisorStage, 
-    SupervisorStatus, ConfigurationExport
+    SupervisorConfig, SupervisorStage
 )
 from vitess_ai.schema.base import FillingStage
 from vitess_ai.core.registry import ModuleRegistry
@@ -149,28 +147,9 @@ class SupervisorAgent:
             self.logger.info("New module registered, graph will be rebuilt on next run")
             self.initialized = False
     
-    def unregister_module(self, module_name: str) -> bool:
-        """Unregister a module"""
-        result = self.registry.unregister_module(module_name)
-        
-        # Clean up agent instance
-        if module_name in self.agent_instances:
-            del self.agent_instances[module_name]
-        
-        # Invalidate graph
-        if self.initialized:
-            self.initialized = False
-            
-        return result
-    
     def list_modules(self) -> List[Dict[str, Any]]:
         """List all registered modules with their info"""
         return self.registry.get_modules_info()
-    
-    def get_execution_plan(self, requested_modules: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Get the execution plan for modules"""
-        plan = self.registry.get_execution_plan(requested_modules)
-        return plan.model_dump()
     
     # =================
     # BUILT-IN MODULE BUILDERS - Convenience methods
@@ -243,28 +222,6 @@ class SupervisorAgent:
             agent_class=Monitor2DModuleAgent,  # Use agent class
             config_path=config_path or global_config.MONITOR_MCP_PATH,
             order=5
-        )
-        self.register_module(module)
-    
-    def add_custom_module(
-        self,
-        name: str,
-        display_name: str,
-        description: str,
-        agent_class: Type[BaseModuleAgent],  # Use agent class
-        order: int,
-        config_path: str = None,
-        optional: bool = False
-    ) -> None:
-        """Add a custom module using the built-in builder"""
-        module = ModuleBuilder.create(
-            name=name,
-            display_name=display_name,
-            description=description,
-            agent_class=agent_class,
-            config_path=config_path,
-            optional=optional,
-            order=order
         )
         self.register_module(module)
     
@@ -380,13 +337,12 @@ class SupervisorAgent:
         self.initialized = True
         self.logger.info(f"Supervisor initialized with {len(execution_order)} modules and simulation tools")
     
-    async def restart_with_new_config(self, provider: str = None, model: str = None, requested_modules: Optional[List[str]] = None, clear_state: bool = True):
+    async def restart_with_new_config(self, provider: str = None, model: str = None, clear_state: bool = True):
         """Restart the supervisor graph with new provider/model configuration
         
         Args:
             provider: New provider to use (optional, uses current if not provided)
             model: New model to use (optional, uses current if not provided)
-            requested_modules: Optional list of module names to include
             clear_state: If True, clear all conversation state/memory (default: True)
         """
         self.logger.info(f"Restarting supervisor with new config: provider={provider}, model={model}, clear_state={clear_state}")
@@ -409,7 +365,7 @@ class SupervisorAgent:
             self.memory = InMemorySaver()
         
         # Force reinitialize the graph with new LLM config
-        await self.initialize(requested_modules=requested_modules, force_reinitialize=True)
+        await self.initialize(force_reinitialize=True)
         
         self.logger.info("Supervisor graph restarted successfully with new configuration")
     
@@ -1595,162 +1551,6 @@ Configuration is complete. The simulation parameters are ready for execution.
             'current_module': 'supervisor',
         }
     
-    # =================
-    # PUBLIC API
-    # =================
-    
-    async def run(self, user_id: str = "user-default", thread_id: str = "supervisor_default", 
-                  requested_modules: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Run the complete simulation configuration and execution process"""
-        
-        # Initialize if needed
-        if not self.initialized:
-            await self.initialize(requested_modules)
-        
-        self.logger.info(f"Starting configuration process with thread_id: {thread_id}")
-        
-        config = {"configurable": {"thread_id": thread_id}}
-        
-        input_state = UnifiedState(
-            messages=[],
-            current_stage=SupervisorStage.WELCOME,
-            module_results={},
-            execution_order=[],
-            pending_modules=[],
-            current_agent_thread="",
-            error_message=None,
-            user_preferences={},
-            thread_id=thread_id,
-            user_id=user_id,
-            cli_generation_ready=False,
-            cli_command=None,
-            current_module=None,
-            module_stage=None,
-            module_config_modes={},  # Module-specific config modes: {module_name: config_mode}
-            simulation_finish=None,
-            context={},
-        )
-        
-        try:
-            result = await self.app.ainvoke(input_state, config)
-            
-            if result['current_stage'] == SupervisorStage.COMPLETION:
-                # Extract successful results
-                module_results = result.get('module_results', {})
-                parameters = {}
-                cli_parameters = {}
-                
-                for name, result_obj in module_results.items():
-                    if result_obj.stage.stage == "completed":
-                        parameters[name] = result_obj.parameters
-                        cli_parameters[name] = result_obj.cli_parameters
-                
-                # Extract CLI command if generated
-                messages = result.get('messages', [])
-                cli_command = None
-                execution_results = None
-                
-                for msg in reversed(messages):
-                    if hasattr(msg, 'content'):
-                        content = str(msg.content)
-                        if 'cli_command' in content or 'simulation' in content.lower():
-                            # Try to extract execution info from message content
-                            break
-                
-                return {
-                    "status": "success",
-                    "simulation_config": parameters,
-                    "cli_parameters": cli_parameters,
-                    "cli_command": cli_command,
-                    "execution_results": execution_results,
-                    "completed_modules": list(parameters.keys()),
-                    "execution_order": result.get('execution_order', []),
-                    "simulation_tools_available": len(self.simulation_tools) > 0
-                }
-            else:
-                return {
-                    "status": "error",
-                    "error_message": result.get('error_message', 'Configuration incomplete'),
-                    "current_stage": result['current_stage'],
-                    "completed_modules": [
-                        name for name, res in result.get('module_results', {}).items()
-                        if res.stage.stage == "completed"
-                    ]
-                }
-                
-        except Exception as e:
-            self.logger.error(f"Configuration failed: {e}")
-            return {
-                "status": "error", 
-                "error_message": f"Configuration process failed: {str(e)}",
-                "current_stage": "unknown"
-            }
-    
-    def get_status(self, thread_id: str = "supervisor_default") -> SupervisorStatus:
-        """Get current configuration status"""
-        if not self.initialized:
-            return SupervisorStatus(
-                status="not_initialized",
-                current_stage="none",
-                available_modules=self.list_modules()
-            )
-        
-        config = {"configurable": {"thread_id": thread_id}}
-        state = self.app.get_state(config)
-        
-        if not state.values:
-            return SupervisorStatus(
-                status="not_started",
-                current_stage="none",
-                available_modules=self.list_modules()
-            )
-        
-        module_results = state.values.get('module_results', {})
-        completed = [
-            name for name, res in module_results.items() 
-            if res.stage.stage == "completed"
-        ]
-        total_modules = len(state.values.get('execution_order', []))
-        
-        return SupervisorStatus(
-            status="completed" if len(completed) == total_modules else "in_progress",
-            current_stage=state.values.get('current_stage', SupervisorStage.WELCOME),
-            completed_modules=completed,
-            execution_order=state.values.get('execution_order', []),
-            error_message=state.values.get('error_message')
-        )
-    
-    def export_config(self, thread_id: str = "supervisor_default") -> ConfigurationExport:
-        """Export final configuration"""
-        status = self.get_status(thread_id)
-        
-        if status.status != "completed":
-            raise ValueError(f"Configuration not complete. Status: {status.status}")
-        
-        config = {"configurable": {"thread_id": thread_id}}
-        state = self.app.get_state(config)
-        
-        module_results = state.values.get('module_results', {})
-        
-        return ConfigurationExport(
-            simulation_configuration={
-                f"{name}_parameters": result.parameters
-                for name, result in module_results.items()
-                if result.stage.stage == "completed"
-            },
-            metadata={
-                "thread_id": thread_id,
-                "supervisor_version": "3.0.0",
-                "execution_order": state.values.get('execution_order', []),
-                "completed_modules": status.completed_modules,
-                "total_modules": len(state.values.get('execution_order', [])),
-                "session_info": state.values.get('session_metadata', {}),
-                "cli_tools_enabled": len(self.simulation_tools) > 0,
-                "cli_generated": state.values.get('cli_command') is not None
-            }
-        )
-
-
 # =================
 # CONVENIENCE FACTORY FUNCTIONS
 # =================

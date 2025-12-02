@@ -8,15 +8,12 @@ into the supervisor graph as nodes.
 """
 
 import logging
-from typing import List, Type, TypeVar, Generic, Optional, Any
+from typing import List, Type, Optional, Any
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 from langchain.agents import create_agent
 from vitess_ai.core.llms_providers import create_llm_with_fallback
-
-# Type variables for generic parameter types
-R = TypeVar('R')  # For initial response types
 
 
 class ModuleMetadata(BaseModel):
@@ -69,7 +66,7 @@ class ModuleBuilder:
         )
 
 
-class BaseModuleAgent(ABC, Generic[R]):
+class BaseModuleAgent(ABC):
     """
     Abstract base class for module agents using react-agent architecture.
     
@@ -78,7 +75,6 @@ class BaseModuleAgent(ABC, Generic[R]):
     - Unified state management
     - Dynamic prompt handling with welcome and config mode selection
     - Template method pattern for customization
-    - Type safety with generics
     - Structured logging throughout
     """
     
@@ -167,11 +163,6 @@ class BaseModuleAgent(ABC, Generic[R]):
     @abstractmethod
     def custom_prompt(self) -> str:
         """Custom prompt for the module - used for customize flow"""
-        pass
-    
-    @abstractmethod
-    def get_initial_response_schema(self) -> Type[R]:
-        """Return the Pydantic schema for initial user response parsing"""
         pass
     
     @abstractmethod

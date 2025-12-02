@@ -3,7 +3,7 @@ Simple tool wrapper to inject thread_id from UnifiedState into tool calls.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Callable, Awaitable
 from langchain_core.messages import AIMessage
 from langgraph.prebuilt import ToolNode
 from langchain.tools import BaseTool
@@ -11,7 +11,7 @@ from langchain.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 
-def create_thread_id_tool_node(tools: List[BaseTool]) -> callable:
+def create_thread_id_tool_node(tools: List[BaseTool]) -> Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]:
     """
     Create a ToolNode wrapper that injects thread_id from UnifiedState into tool calls.
     
@@ -31,8 +31,6 @@ def create_thread_id_tool_node(tools: List[BaseTool]) -> callable:
                 schema = tool.args_schema
                 if hasattr(schema, 'model_fields'):
                     return 'thread_id' in schema.model_fields
-                elif hasattr(schema, '__fields__'):
-                    return 'thread_id' in schema.__fields__
         except Exception:
             pass
         return False
@@ -81,7 +79,7 @@ def create_thread_id_tool_node(tools: List[BaseTool]) -> callable:
             additional_kwargs=getattr(last_ai_message, 'additional_kwargs', {})
         )
         
-        # Replace message in state
+        # Replace message in state (find last occurrence)
         modified_messages = messages.copy()
         for i in range(len(modified_messages) - 1, -1, -1):
             if modified_messages[i] == last_ai_message:
