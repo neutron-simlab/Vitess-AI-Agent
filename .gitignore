@@ -33,7 +33,6 @@ env/
 
 # Local development
 .env
-.env.local
 tmp
 temp
 *.pyo

@@ -31,7 +31,7 @@ fi
 
 if [ -z "$VITESS_LOG_PATH" ]; then
     echo "⚠️  Warning: VITESS_LOG_PATH not set, using default"
-    export VITESS_LOG_PATH=${VITESS_LOG_PATH:-/data/logs}
+    export VITESS_LOG_PATH=${VITESS_LOG_PATH:-/data/logs/logfile.log}
 fi
 
 # Verify Vitess modules directory is accessible
@@ -54,6 +54,16 @@ if [ -f "/app/.venv/bin/activate" ]; then
     source /app/.venv/bin/activate
 fi
 
+# Set VITESS_ENV_PATH to production env file if it exists, otherwise use default
+# This allows the app to load from /etc/vitess-ai/.env in production
+# or from .env in project root in development
+if [ -f "/etc/vitess-ai/.env" ]; then
+    export VITESS_ENV_PATH=/etc/vitess-ai/.env
+    echo "✅ Using production environment file: /etc/vitess-ai/.env"
+else
+    echo "ℹ️  Production env file not found, using default .env location"
+fi
+
 # Start MCP servers if HTTP transport mode is enabled
 MCP_TRANSPORT_MODE=${MCP_TRANSPORT_MODE:-http}
 if [ "$MCP_TRANSPORT_MODE" = "http" ]; then
@@ -71,39 +81,46 @@ if [ "$MCP_TRANSPORT_MODE" = "http" ]; then
     export MCP_TRANSPORT_MODE=http
     export MCP_HOST=$MCP_HOST
     
+    # Set MCP tool paths (use env vars if provided, otherwise use defaults)
+    READIN_MCP_PATH=${READIN_MCP_PATH:-src/vitess_ai/mcp/readin_module_tools.py}
+    GUIDE_MCP_PATH=${GUIDE_MCP_PATH:-src/vitess_ai/mcp/guide_module_tools.py}
+    WRITEOUT_MCP_PATH=${WRITEOUT_MCP_PATH:-src/vitess_ai/mcp/writeout_module_tools.py}
+    MONITOR_MCP_PATH=${MONITOR_MCP_PATH:-src/vitess_ai/mcp/monitor_module_tools.py}
+    SUPERVISOR_MCP_PATH=${SUPERVISOR_MCP_PATH:-src/vitess_ai/mcp/supervisor_tools.py}
+    
     # Start Read-in MCP server
     echo "  Starting Read-in MCP server on port $MCP_READIN_PORT..."
     export MCP_READIN_PORT=$MCP_READIN_PORT
     cd /app
-    uv run python src/vitess_ai/mcp/readin_module_tools.py > /tmp/mcp_readin.log 2>&1 &
+    uv run python "$READIN_MCP_PATH" > /tmp/mcp_readin.log 2>&1 &
     MCP_PIDS+=($!)
     echo "    PID: $!"
     
     # Start Guide MCP server
     echo "  Starting Guide MCP server on port $MCP_GUIDE_PORT..."
     export MCP_GUIDE_PORT=$MCP_GUIDE_PORT
-    uv run python src/vitess_ai/mcp/guide_module_tools.py > /tmp/mcp_guide.log 2>&1 &
+    uv run python "$GUIDE_MCP_PATH" > /tmp/mcp_guide.log 2>&1 &
     MCP_PIDS+=($!)
     echo "    PID: $!"
     
     # Start Writeout MCP server
     echo "  Starting Writeout MCP server on port $MCP_WRITEOUT_PORT..."
     export MCP_WRITEOUT_PORT=$MCP_WRITEOUT_PORT
-    uv run python src/vitess_ai/mcp/writeout_module_tools.py > /tmp/mcp_writeout.log 2>&1 &
+    uv run python "$WRITEOUT_MCP_PATH" > /tmp/mcp_writeout.log 2>&1 &
     MCP_PIDS+=($!)
     echo "    PID: $!"
     
     # Start Monitor MCP server
     echo "  Starting Monitor MCP server on port $MCP_MONITOR_PORT..."
     export MCP_MONITOR_PORT=$MCP_MONITOR_PORT
-    uv run python src/vitess_ai/mcp/monitor_module_tools.py > /tmp/mcp_monitor.log 2>&1 &
+    uv run python "$MONITOR_MCP_PATH" > /tmp/mcp_monitor.log 2>&1 &
     MCP_PIDS+=($!)
     echo "    PID: $!"
     
     # Start Supervisor MCP server
     echo "  Starting Supervisor MCP server on port $MCP_SUPERVISOR_PORT..."
     export MCP_SUPERVISOR_PORT=$MCP_SUPERVISOR_PORT
-    uv run python src/vitess_ai/mcp/supervisor_tools.py > /tmp/mcp_supervisor.log 2>&1 &
+    uv run python "$SUPERVISOR_MCP_PATH" > /tmp/mcp_supervisor.log 2>&1 &
     MCP_PIDS+=($!)
     echo "    PID: $!"
     

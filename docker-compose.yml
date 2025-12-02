@@ -1,3 +1,21 @@
+# =============================================================================
+# DOCKER COMPOSE CONFIGURATION
+# =============================================================================
+# Single configuration file for both development and production.
+#
+# Environment Variables:
+#   - Development: Uses .env file in project root (auto-loaded by docker-compose)
+#   - Production: Uses /etc/vitess-ai/.env (set via env_file, created by CI/CD)
+#
+# Usage:
+#   docker-compose up -d
+#
+# Security:
+#   - Never commit .env files with actual secrets
+#   - Production secrets in /etc/vitess-ai/.env (600 permissions)
+#   - Use GitHub Secrets for CI/CD pipeline
+# =============================================================================
+
 version: '3.8'
 
 services:
@@ -12,12 +30,12 @@ services:
       - vitess-modules:/vitess/MODULES:ro
       # Shared project directory (read-write for both services)
       - vitess-projects:/data/projects
-      # Shared log directory
-      - vitess-logs:/data/logs
+      # Shared log file
+      - vitess-logs:/data/logs/logfile.log
     environment:
       - V=/vitess/MODULES
       - P=/data/projects
-      - L=/data/logs
+      - L=/data/logs/logfile.log
       - SUFFIX=_Linux_x86_64
     # Keep container running to provide volume access
     command: tail -f /dev/null
@@ -38,13 +56,18 @@ services:
       # Shared project directory (read-write)
       - vitess-projects:/data/projects
       # Shared log directory
-      - vitess-logs:/data/logs
+      - vitess-logs:/data/logs/logfile.log
+    # Environment variables are loaded from:
+    # - Production: /etc/vitess-ai/.env (handled by docker-entrypoint.sh)
+    # - Development: .env in project root (auto-loaded by docker-compose via ${VAR} syntax)
     environment:
-      # Vitess environment variables
+      # Vitess environment variables - automatically injected by Docker
+      # These point to container paths that match the volumes below
+      # No need to set these in .env when using Docker - they're hardcoded here
       - VITESS_MODULES_PATH=/vitess/modules
       - VITESS_PROJECT_PATH=/data/projects
-      - VITESS_LOG_PATH=/data/logs
-      # Load other environment variables from .env file
+      - VITESS_LOG_PATH=/data/logs/logfile.log
+      # Environment variables (loaded from .env in dev, /etc/vitess-ai/.env in prod)
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-openai}
       - FALLBACK_PROVIDER=${FALLBACK_PROVIDER:-blablador}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini-2024-07-18}
@@ -54,14 +77,15 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - BLABLADOR_API_KEY=${BLABLADOR_API_KEY:-}
       - BLABLADOR_BASE_URL=${BLABLADOR_BASE_URL:-https://api.helmholtz-blablador.fz-juelich.de/v1/}
-      - BLABLADOR_DEFAULT_MODEL=${BLABLADOR_DEFAULT_MODEL:-alias-fast-experiment}
+      - BLABLADOR_DEFAULT_MODEL=${BLABLADOR_DEFAULT_MODEL:-alias-fast-code}
       - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
-      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://eu.api.smith.langchain.com}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
       - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-Vitess-AI-Agent}
       - READIN_MCP_PATH=${READIN_MCP_PATH:-./src/vitess_ai/mcp/readin_module_tools.py}
       - GUIDE_MCP_PATH=${GUIDE_MCP_PATH:-./src/vitess_ai/mcp/guide_module_tools.py}
       - WRITEOUT_MCP_PATH=${WRITEOUT_MCP_PATH:-./src/vitess_ai/mcp/writeout_module_tools.py}
+      - MONITOR_MCP_PATH=${MONITOR_MCP_PATH:-./src/vitess_ai/mcp/monitor_module_tools.py}
       - FILTER_MCP_PATH=${FILTER_MCP_PATH:-./src/vitess_ai/mcp/filter_module_tools.py}
       - SUPERVISOR_MCP_PATH=${SUPERVISOR_MCP_PATH:-./src/vitess_ai/mcp/supervisor_tools.py}
       # MCP Transport Configuration
@@ -85,7 +109,31 @@ services:
       - "9005:9005"  # MCP Supervisor server
     networks:
       - vitess-network
-    restart: unless-stopped
+    # Production settings (safe for development too)
+    restart: always
+    # Resource limits (production)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    # Logging with rotation
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 volumes:
   # Named volume for Vitess modules (built by vitess service)
