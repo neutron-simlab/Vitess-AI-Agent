@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from vitess_ai.schema.llm_models import Provider
 from vitess_ai.schema.server import (
     ChatMessage,
     Feedback,
@@ -113,7 +114,11 @@ class AgentClient:
         if model:
             request.model = model  # type: ignore[assignment]
         if provider:
-            request.provider = provider  # type: ignore[assignment]
+            # Convert string to Provider enum if needed
+            if isinstance(provider, str):
+                request.provider = Provider(provider)
+            else:
+                request.provider = provider
         if agent_config:
             request.agent_config = agent_config
         if user_id:
@@ -163,7 +168,11 @@ class AgentClient:
         if model:
             request.model = model  # type: ignore[assignment]
         if provider:
-            request.provider = provider  # type: ignore[assignment]
+            # Convert string to Provider enum if needed
+            if isinstance(provider, str):
+                request.provider = Provider(provider)
+            else:
+                request.provider = provider
         if agent_config:
             request.agent_config = agent_config
         if user_id:
@@ -310,7 +319,11 @@ class AgentClient:
         if model:
             request.model = model  # type: ignore[assignment]
         if provider:
-            request.provider = provider  # type: ignore[assignment]
+            # Convert string to Provider enum if needed
+            if isinstance(provider, str):
+                request.provider = Provider(provider)
+            else:
+                request.provider = provider
         if agent_config:
             request.agent_config = agent_config
         try:
@@ -369,7 +382,11 @@ class AgentClient:
         if model:
             request.model = model  # type: ignore[assignment]
         if provider:
-            request.provider = provider  # type: ignore[assignment]
+            # Convert string to Provider enum if needed
+            if isinstance(provider, str):
+                request.provider = Provider(provider)
+            else:
+                request.provider = provider
         if agent_config:
             request.agent_config = agent_config
         if user_id:

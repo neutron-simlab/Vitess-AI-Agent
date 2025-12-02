@@ -2,8 +2,10 @@
 Agent registry for managing agent instances.
 
 This module provides functions for creating, retrieving, and restarting agents.
+Supports multiple agent types through a factory pattern.
 """
 import logging
+from typing import Any, Callable, Optional, Awaitable
 from langgraph.graph.state import CompiledStateGraph
 
 from vitess_ai.server_agents.supervisor import create_default_supervisor, SupervisorAgent
@@ -14,10 +16,72 @@ from vitess_ai.server.errors import AgentNotFoundError
 logger = logging.getLogger(__name__)
 
 # Simple in-memory agent registry
-# Key format: (agent_id, provider, model) -> tuple(SupervisorAgent, CompiledStateGraph)
-# Storing both supervisor instance and app allows us to restart the graph with new config
+# Key format: (agent_id, provider, model) -> tuple(AgentInstance, CompiledStateGraph)
+# Storing both agent instance and app allows us to restart the graph with new config
 DEFAULT_AGENT = "supervisor"
-_agent_registry: dict[tuple[str, str, str], tuple[SupervisorAgent, CompiledStateGraph]] = {}
+
+# Type alias for agent instance (currently SupervisorAgent, but could be extended)
+AgentInstance = Any
+
+# Registry storage: (agent_id, provider, model) -> (AgentInstance, CompiledStateGraph)
+_agent_registry: dict[tuple[str, str, str], tuple[AgentInstance, CompiledStateGraph]] = {}
+
+# Agent factory registry: agent_id -> async factory function
+# Factory function signature: async (provider: str, model: str) -> tuple[AgentInstance, CompiledStateGraph]
+_agent_factories: dict[str, Callable[[str, str], Awaitable[tuple[AgentInstance, CompiledStateGraph]]]] = {}
+
+
+def register_agent_factory(
+    agent_id: str, 
+    factory: Callable[[str, str], Awaitable[tuple[AgentInstance, CompiledStateGraph]]]
+) -> None:
+    """
+    Register a factory function for creating agents of a specific type.
+    
+    Args:
+        agent_id: Agent identifier (e.g., "supervisor")
+        factory: Async factory function that takes (provider, model) and returns (AgentInstance, CompiledStateGraph)
+    """
+    _agent_factories[agent_id] = factory
+    logger.info(f"Registered factory for agent type: {agent_id}")
+
+
+async def _create_supervisor_agent(provider: str, model: str) -> tuple[SupervisorAgent, CompiledStateGraph]:
+    """Factory function for creating supervisor agents."""
+    supervisor = await create_default_supervisor(provider=provider, model=model)
+    return (supervisor, supervisor.app)
+
+
+# Register default supervisor factory
+register_agent_factory("supervisor", _create_supervisor_agent)
+
+
+def _normalize_provider_model(provider: str | None, model: str | None) -> tuple[str, str]:
+    """
+    Normalize provider and model to default values if not provided.
+    
+    Args:
+        provider: LLM provider (optional)
+        model: LLM model name (optional)
+        
+    Returns:
+        Tuple of (provider, model)
+    """
+    # Determine provider (default to config default)
+    if provider is None:
+        provider = global_config.DEFAULT_PROVIDER
+    
+    # Determine model (default to provider's default)
+    if model is None:
+        try:
+            provider_enum = Provider(provider)
+            model = get_default_model_for_provider(provider_enum)
+        except ValueError:
+            # Invalid provider, fall back to config default
+            provider = global_config.DEFAULT_PROVIDER
+            model = global_config.DEFAULT_MODEL
+    
+    return provider, model
 
 
 async def get_agent(
@@ -35,20 +99,11 @@ async def get_agent(
     
     Returns:
         CompiledStateGraph for the agent
+        
+    Raises:
+        AgentNotFoundError: If agent_id is not registered or creation fails
     """
-    # Determine provider (default to config default)
-    if provider is None:
-        provider = global_config.DEFAULT_PROVIDER
-    
-    # Determine model (default to provider's default)
-    if model is None:
-        try:
-            provider_enum = Provider(provider)
-            model = get_default_model_for_provider(provider_enum)
-        except ValueError:
-            # Invalid provider, fall back to config default
-            provider = global_config.DEFAULT_PROVIDER
-            model = global_config.DEFAULT_MODEL
+    provider, model = _normalize_provider_model(provider, model)
     
     # Create composite key for registry
     # Note: Different provider/model combinations create separate agents
@@ -58,27 +113,29 @@ async def get_agent(
     logger.info(f"Getting agent: {agent_id} with provider={provider}, model={model}")
     
     if registry_key not in _agent_registry:
-        if agent_id == "supervisor":
-            try:
-                logger.info(f"Creating new supervisor agent with provider={provider}, model={model}")
-                # Create supervisor agent asynchronously with specified provider/model
-                supervisor = await create_default_supervisor(
-                    provider=provider,
-                    model=model
-                )
-                _agent_registry[registry_key] = (supervisor, supervisor.app)
-                logger.info("Supervisor agent created and registered")
-            except Exception as e:
-                logger.error(f"Failed to create supervisor agent: {e}")
-                raise AgentNotFoundError(
-                    agent_id,
-                    details={"error": str(e), "agent_type": "supervisor", "provider": provider, "model": model}
-                )
-        else:
+        # Check if factory is registered for this agent type
+        if agent_id not in _agent_factories:
             logger.error(f"Unknown agent requested: {agent_id}")
+            available_agents = list(_agent_factories.keys())
             raise AgentNotFoundError(
                 agent_id,
-                details={"available_agents": ["supervisor"]}
+                details={"available_agents": available_agents}
+            )
+        
+        try:
+            factory = _agent_factories[agent_id]
+            logger.info(f"Creating new {agent_id} agent with provider={provider}, model={model}")
+            
+            # Call factory function to create agent
+            agent_instance, compiled_graph = await factory(provider, model)
+            
+            _agent_registry[registry_key] = (agent_instance, compiled_graph)
+            logger.info(f"{agent_id} agent created and registered")
+        except Exception as e:
+            logger.error(f"Failed to create {agent_id} agent: {e}")
+            raise AgentNotFoundError(
+                agent_id,
+                details={"error": str(e), "agent_type": agent_id, "provider": provider, "model": model}
             )
     else:
         logger.info(f"Using existing agent: {agent_id} with provider={provider}, model={model}")
@@ -105,55 +162,78 @@ async def restart_agent(
     
     Returns:
         CompiledStateGraph for the restarted agent
+        
+    Raises:
+        AgentNotFoundError: If agent_id is not registered
     """
-    # Determine provider (default to config default)
-    if provider is None:
-        provider = global_config.DEFAULT_PROVIDER
-    
-    # Determine model (default to provider's default)
-    if model is None:
-        try:
-            provider_enum = Provider(provider)
-            model = get_default_model_for_provider(provider_enum)
-        except ValueError:
-            # Invalid provider, fall back to config default
-            provider = global_config.DEFAULT_PROVIDER
-            model = global_config.DEFAULT_MODEL
+    provider, model = _normalize_provider_model(provider, model)
     
     registry_key = (agent_id, provider, model)
     
     logger.info(f"Restarting agent: {agent_id} with provider={provider}, model={model}")
     
-    if agent_id == "supervisor":
-        # If agent exists, restart it with new config
-        if registry_key in _agent_registry:
-            supervisor, _ = _agent_registry[registry_key]
-            logger.info(f"Restarting existing supervisor with new config: provider={provider}, model={model}")
-            # Clear state to start fresh (clear_state=True by default)
-            await supervisor.restart_with_new_config(provider=provider, model=model, clear_state=True)
-            # Update the registry with the new app
-            _agent_registry[registry_key] = (supervisor, supervisor.app)
-            logger.info("Supervisor restarted successfully with cleared state")
-        else:
-            # Agent doesn't exist, create it
-            logger.info(f"Agent not found, creating new supervisor with provider={provider}, model={model}")
-            return await get_agent(agent_id, provider=provider, model=model)
-        
-        return _agent_registry[registry_key][1]
-    else:
+    # Check if factory is registered
+    if agent_id not in _agent_factories:
         logger.error(f"Unknown agent requested: {agent_id}")
+        available_agents = list(_agent_factories.keys())
         raise AgentNotFoundError(
             agent_id,
-            details={"available_agents": ["supervisor"]}
+            details={"available_agents": available_agents}
         )
-
-
-def get_supervisor_instance(agent_id: str = DEFAULT_AGENT) -> SupervisorAgent | None:
-    """
-    Get the supervisor agent instance from the registry.
     
-    This is useful for accessing supervisor methods like list_modules()
+    # If agent exists, try to restart it
+    if registry_key in _agent_registry:
+        agent_instance, _ = _agent_registry[registry_key]
+        
+        # Check if agent has restart_with_new_config method (supervisor-specific)
+        if hasattr(agent_instance, 'restart_with_new_config'):
+            logger.info(f"Restarting existing {agent_id} with new config: provider={provider}, model={model}")
+            await agent_instance.restart_with_new_config(provider=provider, model=model, clear_state=True)
+            # Update the registry with the new app
+            _agent_registry[registry_key] = (agent_instance, agent_instance.app)
+            logger.info(f"{agent_id} restarted successfully with cleared state")
+        else:
+            # Agent doesn't support restart, recreate it
+            logger.info(f"{agent_id} doesn't support restart, recreating with new config")
+            # Remove old entry
+            del _agent_registry[registry_key]
+            # Create new one
+            return await get_agent(agent_id, provider=provider, model=model)
+    else:
+        # Agent doesn't exist, create it
+        logger.info(f"Agent not found, creating new {agent_id} with provider={provider}, model={model}")
+        return await get_agent(agent_id, provider=provider, model=model)
+    
+    return _agent_registry[registry_key][1]
+
+
+def get_agent_instance(agent_id: str = DEFAULT_AGENT) -> Optional[AgentInstance]:
+    """
+    Get the agent instance from the registry.
+    
+    This is useful for accessing agent-specific methods (e.g., supervisor.list_modules())
     without needing to create a new agent.
+    
+    Args:
+        agent_id: Agent identifier (defaults to "supervisor")
+    
+    Returns:
+        Agent instance if found, None otherwise
+    """
+    # Search through registry for any instance with matching agent_id
+    # Returns the first match found (could be any provider/model combination)
+    for (reg_agent_id, _, _), (agent_instance, _) in _agent_registry.items():
+        if reg_agent_id == agent_id:
+            return agent_instance
+    return None
+
+
+# Backward compatibility alias
+def get_supervisor_instance(agent_id: str = DEFAULT_AGENT) -> Optional[SupervisorAgent]:
+    """
+    Get the supervisor agent instance from the registry (backward compatibility).
+    
+    DEPRECATED: Use get_agent_instance() instead for generic agent access.
     
     Args:
         agent_id: Agent identifier (defaults to "supervisor")
@@ -161,9 +241,7 @@ def get_supervisor_instance(agent_id: str = DEFAULT_AGENT) -> SupervisorAgent | 
     Returns:
         SupervisorAgent instance if found, None otherwise
     """
-    # Search through registry for any supervisor instance with matching agent_id
-    for (reg_agent_id, provider, model), (reg_supervisor, _) in _agent_registry.items():
-        if reg_agent_id == agent_id:
-            return reg_supervisor
+    instance = get_agent_instance(agent_id)
+    if instance is not None and isinstance(instance, SupervisorAgent):
+        return instance
     return None
-

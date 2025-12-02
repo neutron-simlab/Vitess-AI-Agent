@@ -25,6 +25,7 @@ __pycache__/
 # Virtual Environment
 ENV/
 env/
+.cursor/
 
 # IDE
 .idea

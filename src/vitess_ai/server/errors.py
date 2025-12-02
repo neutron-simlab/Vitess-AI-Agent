@@ -35,9 +35,22 @@ class StreamingError(VitessServerError):
 
 
 class InterruptError(VitessServerError):
-    """Raised when an error occurs during interrupt handling."""
+    """
+    Raised when an error occurs during interrupt handling.
+    
+    DEPRECATED: This exception is deprecated as of the react-agent architecture refactoring.
+    The react-agent architecture uses the END pattern instead of interrupts.
+    Use StateError instead for state-related errors.
+    """
     
     def __init__(self, message: str, thread_id: Optional[str] = None, details: dict[str, Any] | None = None):
+        import warnings
+        warnings.warn(
+            "InterruptError is deprecated. Use StateError instead. "
+            "The react-agent architecture uses END pattern, not interrupts.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         super().__init__(message, details)
         self.thread_id = thread_id
 

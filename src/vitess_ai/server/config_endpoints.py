@@ -10,7 +10,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from vitess_ai.core.config import global_config
 from vitess_ai.server.file_storage import get_file_storage_service
-from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_supervisor_instance
+from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_agent_instance
+from vitess_ai.server_agents.supervisor import SupervisorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -134,21 +135,30 @@ async def get_modules_config(agent_id: str = DEFAULT_AGENT) -> dict[str, Any]:
         - modules: List of module info dictionaries with name, display_name, description, order
     """
     try:
-        # Try to get supervisor agent from registry
-        supervisor = get_supervisor_instance(agent_id)
+        # Try to get agent instance from registry
+        agent_instance = get_agent_instance(agent_id)
         
-        if supervisor is None:
-            # If no supervisor exists yet, we can't get module info
+        if agent_instance is None:
+            # If no agent exists yet, we can't get module info
             # Return empty list - UI will use fallback values
-            logger.warning(f"Supervisor agent '{agent_id}' not found in registry. Returning empty module list.")
+            logger.warning(f"Agent '{agent_id}' not found in registry. Returning empty module list.")
             return {
                 "status": "success",
                 "modules": [],
-                "message": "Supervisor not initialized yet. Module info will be available after first agent call."
+                "message": "Agent not initialized yet. Module info will be available after first agent call."
+            }
+        
+        # Check if agent is a SupervisorAgent (has list_modules method)
+        if not isinstance(agent_instance, SupervisorAgent):
+            logger.warning(f"Agent '{agent_id}' is not a SupervisorAgent. Cannot get module info.")
+            return {
+                "status": "success",
+                "modules": [],
+                "message": f"Agent '{agent_id}' does not support module listing."
             }
         
         # Get module information from supervisor
-        modules_info = supervisor.list_modules()
+        modules_info = agent_instance.list_modules()
         
         logger.info(f"Retrieved {len(modules_info)} modules from supervisor")
         

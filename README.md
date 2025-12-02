@@ -8,6 +8,7 @@
 
 ## Key Features
 
+- **LangGraph-Based Architecture**: Multi-agent system built on LangGraph for orchestration
 - **Multi-Agent Architecture**: Specialized AI agents for different simulation modules
 - **RESTful API Server**: FastAPI-based server for programmatic access
 - **Web Interface**: Streamlit-based chat interface with comprehensive configuration options
@@ -15,6 +16,15 @@
 - **Multiple LLM Providers**: Support for OpenAI and Blablador (OpenAI-compatible API)
 - **File Management**: Upload and manage files for different VITESS modules
 - **Runtime Configuration**: Dynamic VITESS environment configuration
+
+## Architecture
+
+The system uses LangGraph to orchestrate specialized module agents in a unified workflow.
+
+<div align="center">
+  <img src="app/assets/vitess-ai-arch.png" alt="VITESS AI Agent Architecture" width="600"/>
+</div>
+
 
 ## Prerequisites
 
@@ -215,6 +225,7 @@ vitess-ai-agent/
 ├── src/vitess_ai/
 │   ├── clients/            # API client library
 │   ├── server/             # FastAPI server and endpoints
+│   │   └── streaming/      # Streaming event processors
 │   ├── server_agents/      # Server-optimized agents
 │   ├── mcp/                # MCP validation tools
 │   ├── prompts/            # Agent prompts

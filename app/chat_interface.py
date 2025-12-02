@@ -13,26 +13,9 @@ from ui_components import (
     render_module_badge,
     render_streaming_token,
     get_module_color,
-    get_module_info_from_server
+    get_module_info_from_server,
+    markdown_to_html
 )
-
-
-def is_message_duplicate(message: ChatMessage, messages: list[ChatMessage]) -> bool:
-    """Check if a message is a duplicate based on content and type.
-    
-    Args:
-        message: ChatMessage to check
-        messages: List of existing messages
-        
-    Returns:
-        True if duplicate found, False otherwise
-    """
-    for existing_msg in messages:
-        if (isinstance(existing_msg, ChatMessage) and 
-            existing_msg.type == message.type and
-            existing_msg.content == message.content):
-            return True
-    return False
 
 
 def process_stream_chunk(
@@ -71,8 +54,8 @@ def process_stream_chunk(
             return response_text, current_streaming_module, received_complete_message
         
         received_complete_message = True
-        if not is_message_duplicate(chunk, messages):
-            messages.append(chunk)
+        # Backend handles deduplication, so we can always append
+        messages.append(chunk)
         
         if chunk.type == "ai":
             message_placeholder.markdown(chunk.content)
@@ -164,21 +147,20 @@ def render_chat_interface() -> None:
                         dynamic_modules = get_module_info_from_server(st.session_state.server_url)
                     color = get_module_color(current_streaming_module, dynamic_modules)
                     badge_text = render_module_badge(current_streaming_module, dynamic_modules)
+                    # Convert markdown to HTML first, then wrap in styled div
+                    html_content = markdown_to_html(response_text)
                     message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                     message_placeholder.markdown(
-                        f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
+                        f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
                         unsafe_allow_html=True,
                     )
-                    if not is_message_duplicate(
-                        ChatMessage(type="ai", content=response_text),
-                        st.session_state.messages,
-                    ):
-                        ai_message = ChatMessage(
-                            type="ai",
-                            content=response_text,
-                            custom_data={"module_name": current_streaming_module},
-                        )
-                        st.session_state.messages.append(ai_message)
+                    # Backend handles deduplication, so we can always append
+                    ai_message = ChatMessage(
+                        type="ai",
+                        content=response_text,
+                        custom_data={"module_name": current_streaming_module},
+                    )
+                    st.session_state.messages.append(ai_message)
                 st.rerun()
 
     # Display chat history (filter out system messages unless debug mode is enabled)
@@ -240,22 +222,20 @@ def render_chat_interface() -> None:
                                     dynamic_modules = get_module_info_from_server(st.session_state.server_url)
                                 color = get_module_color(current_streaming_module, dynamic_modules)
                                 badge_text = render_module_badge(current_streaming_module, dynamic_modules)
+                                # Convert markdown to HTML first, then wrap in styled div
+                                html_content = markdown_to_html(response_text)
                                 message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                                 message_placeholder.markdown(
-                                    f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
+                                    f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
                                     unsafe_allow_html=True,
                                 )
-                                # Add as AI message if not already added (avoid duplicates)
-                                if not is_message_duplicate(
-                                    ChatMessage(type="ai", content=response_text),
-                                    st.session_state.messages
-                                ):
-                                    ai_message = ChatMessage(
-                                        type="ai",
-                                        content=response_text,
-                                        custom_data={"module_name": current_streaming_module}
-                                    )
-                                    st.session_state.messages.append(ai_message)
+                                # Backend handles deduplication, so we can always append
+                                ai_message = ChatMessage(
+                                    type="ai",
+                                    content=response_text,
+                                    custom_data={"module_name": current_streaming_module}
+                                )
+                                st.session_state.messages.append(ai_message)
                         
                         st.session_state.current_interrupt = None
                         st.rerun()
@@ -316,25 +296,23 @@ def render_chat_interface() -> None:
                             color = get_module_color(current_streaming_module, dynamic_modules)
                             badge_text = render_module_badge(current_streaming_module, dynamic_modules)
                             
+                            # Convert markdown to HTML first, then wrap in styled div
+                            html_content = markdown_to_html(response_text)
+                            
                             # Display final message with color and badge
                             message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
                             message_placeholder.markdown(
-                                f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}</div>',
+                                f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
                                 unsafe_allow_html=True
                             )
                             
-                            # Ensure message is in history (avoid duplicates)
-                            if not is_message_duplicate(
-                                ChatMessage(type="ai", content=response_text),
-                                st.session_state.messages
-                            ):
-                                # Create AI message with module info for proper display in history
-                                ai_message = ChatMessage(
-                                    type="ai", 
-                                    content=response_text,
-                                    custom_data={"module_name": current_streaming_module}
-                                )
-                                st.session_state.messages.append(ai_message)
+                            # Backend handles deduplication, so we can always append
+                            ai_message = ChatMessage(
+                                type="ai", 
+                                content=response_text,
+                                custom_data={"module_name": current_streaming_module}
+                            )
+                            st.session_state.messages.append(ai_message)
                         elif not response_text and st.session_state.messages:
                             # If no response text accumulated, check for last message
                             last_msg = st.session_state.messages[-1]
