@@ -320,4 +320,12 @@ async def get_file(thread_id: str | None = None) -> dict[str, Any] | str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    # Support both stdio (development) and http (production) transports
+    transport_mode = os.getenv("MCP_TRANSPORT_MODE", "http").lower()
+    
+    if transport_mode == "http":
+        port = int(os.getenv("MCP_GUIDE_PORT", "9002"))
+        host = os.getenv("MCP_HOST", "0.0.0.0")
+        mcp.run(transport="http", host=host, port=port)
+    else:
+        mcp.run(transport="stdio")

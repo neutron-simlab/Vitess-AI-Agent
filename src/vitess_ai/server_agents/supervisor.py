@@ -106,20 +106,37 @@ class SupervisorAgent:
             from langchain_mcp_adapters.client import MultiServerMCPClient
             import os
             
-            # Prepare environment variables for MCP subprocess
-            env = os.environ.copy()
+            # Check transport mode
+            if global_config.is_mcp_http_mode():
+                # Use HTTP transport (streamable-http for FastMCP compatibility)
+                supervisor_url = global_config.get_mcp_url("supervisor")
+                client = MultiServerMCPClient({
+                    "simulation_runner": {
+                        "url": supervisor_url,
+                        "transport": "streamable_http",
+                        "headers": {
+                            "Content-Type": "application/json",
+                            "Accept": "application/json,text/event-stream",
+                            "MCP-Protocol-Version": "2024-11-05"
+                        }
+                    }
+                })
+                self.logger.info(f"Connecting to simulation MCP server via HTTP: {supervisor_url}")
+            else:
+                # Use stdio transport (development mode)
+                env = os.environ.copy()
+                client = MultiServerMCPClient({
+                    "simulation_runner": {
+                        "command": "python",
+                        "args": [self.simulation_tools_path],
+                        "transport": "stdio",
+                        "env": env  # Pass environment variables to subprocess
+                    }
+                })
+                self.logger.debug(f"Simulation MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
             
-            client = MultiServerMCPClient({
-                "simulation_runner": {
-                    "command": "python",
-                    "args": [self.simulation_tools_path],
-                    "transport": "stdio",
-                    "env": env  # Pass environment variables to subprocess
-                }
-            })
             self.simulation_tools = await client.get_tools()
             self.logger.info(f"Loaded {len(self.simulation_tools)} simulation tools")
-            self.logger.debug(f"Simulation MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
             
             # Bind tools to LLM
             if self.simulation_tools:
@@ -289,24 +306,43 @@ class SupervisorAgent:
                 from langchain_mcp_adapters.client import MultiServerMCPClient
                 import os
                 
-                # Prepare environment variables for MCP subprocess
-                # Include current environment plus THREAD_ID and VITESS_THREAD_ID if available
-                env = os.environ.copy()
-                # Note: thread_id will be set dynamically when tools are called via service.py
-                # The environment variables are passed at subprocess creation time
-                # We'll pass current env vars, and service.py will update them before tool calls
+                # Check transport mode
+                if global_config.is_mcp_http_mode():
+                    # Use HTTP transport (streamable-http for FastMCP compatibility)
+                    mcp_url = global_config.get_mcp_url(module_name)
+                    client = MultiServerMCPClient({
+                        "validation": {
+                            "url": mcp_url,
+                            "transport": "streamable_http",
+                            "headers": {
+                                "Content-Type": "application/json",
+                                "Accept": "application/json,text/event-stream",
+                                "MCP-Protocol-Version": "2024-11-05"
+                            }
+                        }
+                    })
+                    self.logger.info(f"Connecting to {module_name} MCP server via HTTP: {mcp_url}")
+                else:
+                    # Use stdio transport (development mode)
+                    # Prepare environment variables for MCP subprocess
+                    # Include current environment plus THREAD_ID and VITESS_THREAD_ID if available
+                    env = os.environ.copy()
+                    # Note: thread_id will be set dynamically when tools are called via service.py
+                    # The environment variables are passed at subprocess creation time
+                    # We'll pass current env vars, and service.py will update them before tool calls
+                    
+                    client = MultiServerMCPClient({
+                        "validation": {
+                            "command": "python",
+                            "args": [module_metadata.config_path],
+                            "transport": "stdio",
+                            "env": env  # Pass environment variables to subprocess
+                        }
+                    })
+                    self.logger.debug(f"MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
                 
-                client = MultiServerMCPClient({
-                    "validation": {
-                        "command": "python",
-                        "args": [module_metadata.config_path],
-                        "transport": "stdio",
-                        "env": env  # Pass environment variables to subprocess
-                    }
-                })
                 tools = await client.get_tools()
                 self.logger.info(f"Loaded {len(tools)} MCP tools for {module_name}")
-                self.logger.debug(f"MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
             except Exception as e:
                 self.logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
         

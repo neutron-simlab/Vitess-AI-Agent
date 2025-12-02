@@ -597,5 +597,13 @@ async def generate_plot_2d(monitor_file_path: str) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    # Support both stdio (development) and http (production) transports
+    transport_mode = os.getenv("MCP_TRANSPORT_MODE", "http").lower()
+    
+    if transport_mode == "http":
+        port = int(os.getenv("MCP_MONITOR_PORT", "9004"))
+        host = os.getenv("MCP_HOST", "0.0.0.0")
+        mcp.run(transport="http", host=host, port=port)
+    else:
+        mcp.run(transport="stdio")
 

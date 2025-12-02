@@ -799,4 +799,12 @@ async def validate_readin_module(parameters: str) -> dict:
 # ============================================================================
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    # Support both stdio (development) and http (production) transports
+    transport_mode = os.getenv("MCP_TRANSPORT_MODE", "http").lower()
+    
+    if transport_mode == "http":
+        port = int(os.getenv("MCP_READIN_PORT", "9001"))
+        host = os.getenv("MCP_HOST", "0.0.0.0")
+        mcp.run(transport="http", host=host, port=port)
+    else:
+        mcp.run(transport="stdio")
