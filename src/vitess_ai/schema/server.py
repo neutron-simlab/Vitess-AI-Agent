@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, SerializeAsAny, validator
 from typing_extensions import TypedDict
 
 from vitess_ai.schema.llm_models import AllModelEnum, BlabladorModelName, OpenAIModelName, Provider
+from vitess_ai.schema.base import FillingStage
 
 
 # =================
@@ -244,15 +245,6 @@ class SupervisorStage(str, Enum):
     ERROR = "error"
 
 
-class ModuleStatus(str, Enum):
-    """Status of module execution."""
-    PENDING = "pending"
-    RUNNING = "running"
-    INTERRUPTED = "interrupted"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
 class ModuleResult(BaseModel):
     """Result from a module execution."""
     
@@ -260,8 +252,8 @@ class ModuleResult(BaseModel):
         description="Name of the module.",
         examples=["readin", "guide", "writeout"],
     )
-    status: ModuleStatus = Field(
-        description="Status of the module execution.",
+    stage: FillingStage = Field(
+        description="Stage of the module execution (processing, completed, or error).",
     )
     parameters: Optional[Dict[str, Any]] = Field(
         description="Parameters configured for the module.",

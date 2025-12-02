@@ -6,13 +6,11 @@ architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
-from typing import Type
 from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
 from vitess_ai.prompts.readin_module import READIN_AGENT_WELCOME, READIN_AGENT_DEFAULT_PROMPT, READIN_AGENT_CUSTOM_PROMPT
-from vitess_ai.schema.readin_module import InitialResponseReadIn
 
 
-class ReadInModuleAgent(BaseModuleAgent[InitialResponseReadIn]):
+class ReadInModuleAgent(BaseModuleAgent):
     """
     Readin module agent.
     
@@ -45,47 +43,9 @@ class ReadInModuleAgent(BaseModuleAgent[InitialResponseReadIn]):
         """Custom prompt for the readin module"""
         return READIN_AGENT_CUSTOM_PROMPT
     
-    def get_initial_response_schema(self) -> Type[InitialResponseReadIn]:
-        """Return the schema for initial response parsing"""
-        return InitialResponseReadIn
-    
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
         return "readin_params"
-    
-    def get_default_setup_message(self) -> str:
-        """Message shown when user chooses default setup"""
-        return """
-        You have chosen the default setup configuration for readin parameters. 
-        We will use optimal default values for most neutron input parameters. 
-        You'll only need to specify essential parameters that require manual input.
-        
-        Default readin parameters include:
-        - Standard neutron source configuration
-        - Typical energy range settings
-        - Common beam geometry parameters
-        - Standard time-of-flight settings
-        
-        The system will guide you through any parameters that need customization.
-        """
-    
-    def get_customize_setup_message(self) -> str:
-        """Message shown when user chooses customization"""
-        return """
-        You have chosen the customize configuration for readin parameters. 
-        I'll help you configure the neutron input parameters step by step. 
-        We'll go through each parameter category and you can choose which ones 
-        to modify from the defaults.
-        
-        Configuration categories include:
-        - Neutron source parameters (energy, flux, etc.)
-        - Beam geometry (divergence, size, etc.)
-        - Time-of-flight settings
-        - Sample environment parameters
-        - Data acquisition settings
-        
-        Let's start with the neutron source configuration.
-        """
     
     def get_completion_message(self, state: dict = None) -> str:
         """Message shown on successful completion"""

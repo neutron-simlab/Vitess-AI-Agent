@@ -8,6 +8,7 @@ import json
 import streamlit as st
 from pathlib import Path
 from typing import Dict, Any, Optional
+import markdown
 
 from vitess_ai.schema.server import ChatMessage
 
@@ -165,6 +166,24 @@ def render_module_badge(module_name: str, dynamic_modules: Optional[Dict[str, An
     return module_badge_html(module_info['name'])
 
 
+def markdown_to_html(markdown_text: str) -> str:
+    """
+    Convert markdown text to HTML.
+    
+    Args:
+        markdown_text: Markdown-formatted text string
+        
+    Returns:
+        HTML string with markdown converted to HTML
+    """
+    if not markdown_text:
+        return ""
+    
+    # Convert markdown to HTML
+    html = markdown.markdown(str(markdown_text), extensions=['fenced_code', 'nl2br'])
+    return html
+
+
 def render_plotly_figure(plot_json: Dict[str, Any], title: str, expanded: bool = True) -> None:
     """
     Render a Plotly figure in an expandable section.
@@ -241,8 +260,10 @@ def render_content(content: any, color: str, custom_data: Optional[Dict[str, Any
             # Render as markdown with color styling
             content_str = str(content) if content else ""
             if content_str.strip():
+                # Convert markdown to HTML first, then wrap in styled div
+                html_content = markdown_to_html(content_str)
                 st.markdown(
-                    f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{content_str}</div>',
+                    f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
                     unsafe_allow_html=True
                 )
 
@@ -382,10 +403,13 @@ def render_streaming_token(
     color = get_module_color(module_name, dynamic_modules)
     badge_text = render_module_badge(module_name, dynamic_modules)
     
+    # Convert markdown to HTML first, then wrap in styled div
+    html_content = markdown_to_html(response_text)
+    
     # Display badge and content with cursor
     message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
     message_placeholder.markdown(
-        f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{response_text}▌</div>',
+        f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}▌</div>',
         unsafe_allow_html=True,
     )
 

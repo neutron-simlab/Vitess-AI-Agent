@@ -18,15 +18,7 @@ class SupervisorConfig(BaseModel):
     """Configuration for the supervisor agent"""
     provider:str = Field(default='openai')
     model: str = Field(default='gpt-4o-mini-2024-07-18')
-    welcome_message: str = Field(
-        default="""
-        **Neutron Simulation Configuration System**\n
-\n
-Welcome! I'm your configurable Simulation Supervisor. I'll guide you through 
-setting up your neutron simulation with the registered modules.
-        """,
-        description="Welcome message shown to users"
-    )
+    # Note: Welcome message is now handled by get_supervisor_welcome_message() in prompts/supervisor.py
 
 
 class ExecutionPlan(BaseModel):
