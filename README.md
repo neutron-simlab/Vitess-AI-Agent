@@ -22,7 +22,7 @@
 The system uses LangGraph to orchestrate specialized module agents in a unified workflow.
 
 <div align="center">
-  <img src="app/assets/vitess-ai-arch.png" alt="VITESS AI Agent Architecture" width="800"/>
+  <img src="app/assets/vitess-ai-arch.png" alt="VITESS AI Agent Architecture" width="600"/>
 </div>
 
 
