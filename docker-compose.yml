@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  vitess:
+    build:
+      context: ./vitess
+      dockerfile: Dockerfile
+    image: vitess:latest
+    container_name: vitess-builder
+    volumes:
+      # Export Vitess modules for use by AI Agent
+      - vitess-modules:/vitess/MODULES:ro
+      # Shared project directory (read-write for both services)
+      - vitess-projects:/data/projects
+      # Shared log directory
+      - vitess-logs:/data/logs
+    environment:
+      - V=/vitess/MODULES
+      - P=/data/projects
+      - L=/data/logs
+      - SUFFIX=_Linux_x86_64
+    # Keep container running to provide volume access
+    command: tail -f /dev/null
+    networks:
+      - vitess-network
+
+  vitess-ai-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vitess-ai-agent:latest
+    container_name: vitess-ai-agent
+    depends_on:
+      - vitess
+    volumes:
+      # Mount Vitess modules from vitess container
+      - vitess-modules:/vitess/modules:ro
+      # Shared project directory (read-write)
+      - vitess-projects:/data/projects
+      # Shared log directory
+      - vitess-logs:/data/logs
+    environment:
+      # Vitess environment variables
+      - VITESS_MODULES_PATH=/vitess/modules
+      - VITESS_PROJECT_PATH=/data/projects
+      - VITESS_LOG_PATH=/data/logs
+      # Load other environment variables from .env file
+      - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-openai}
+      - FALLBACK_PROVIDER=${FALLBACK_PROVIDER:-blablador}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini-2024-07-18}
+      - MAX_TOKENS=${MAX_TOKENS:-4000}
+      - TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-60}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - BLABLADOR_API_KEY=${BLABLADOR_API_KEY:-}
+      - BLABLADOR_BASE_URL=${BLABLADOR_BASE_URL:-https://api.helmholtz-blablador.fz-juelich.de/v1/}
+      - BLABLADOR_DEFAULT_MODEL=${BLABLADOR_DEFAULT_MODEL:-alias-fast-experiment}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-Vitess-AI-Agent}
+      - READIN_MCP_PATH=${READIN_MCP_PATH:-./src/vitess_ai/mcp/readin_module_tools.py}
+      - GUIDE_MCP_PATH=${GUIDE_MCP_PATH:-./src/vitess_ai/mcp/guide_module_tools.py}
+      - WRITEOUT_MCP_PATH=${WRITEOUT_MCP_PATH:-./src/vitess_ai/mcp/writeout_module_tools.py}
+      - FILTER_MCP_PATH=${FILTER_MCP_PATH:-./src/vitess_ai/mcp/filter_module_tools.py}
+      - SUPERVISOR_MCP_PATH=${SUPERVISOR_MCP_PATH:-./src/vitess_ai/mcp/supervisor_tools.py}
+      # MCP Transport Configuration
+      - MCP_TRANSPORT_MODE=${MCP_TRANSPORT_MODE:-http}
+      - MCP_HOST=${MCP_HOST:-0.0.0.0}
+      - MCP_READIN_PORT=${MCP_READIN_PORT:-9001}
+      - MCP_GUIDE_PORT=${MCP_GUIDE_PORT:-9002}
+      - MCP_WRITEOUT_PORT=${MCP_WRITEOUT_PORT:-9003}
+      - MCP_MONITOR_PORT=${MCP_MONITOR_PORT:-9004}
+      - MCP_SUPERVISOR_PORT=${MCP_SUPERVISOR_PORT:-9005}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - RELOAD=${RELOAD:-false}
+    ports:
+      - "8000:8000"  # FastAPI
+      - "8501:8501"  # Streamlit
+      - "9001:9001"  # MCP Read-in server
+      - "9002:9002"  # MCP Guide server
+      - "9003:9003"  # MCP Writeout server
+      - "9004:9004"  # MCP Monitor server
+      - "9005:9005"  # MCP Supervisor server
+    networks:
+      - vitess-network
+    restart: unless-stopped
+
+volumes:
+  # Named volume for Vitess modules (built by vitess service)
+  vitess-modules:
+    driver: local
+  # Named volume for project data (shared between services)
+  vitess-projects:
+    driver: local
+  # Named volume for logs
+  vitess-logs:
+    driver: local
+
+networks:
+  vitess-network:
+    driver: bridge
+

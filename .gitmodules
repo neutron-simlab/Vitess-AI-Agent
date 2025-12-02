@@ -1,0 +1,3 @@
+[submodule "vitess"]
+	path = vitess
+	url = https://iffgit.fz-juelich.de/vitess/vitess.git

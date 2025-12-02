@@ -60,6 +60,49 @@ class Config:
     SUPERVISOR_MCP_PATH = os.getenv("SUPERVISOR_MCP_PATH", "src/vitess_ai/mcp/supervisor_tools.py")
     
     # =============================================================================
+    # MCP TRANSPORT CONFIGURATION
+    # =============================================================================
+    
+    # Transport mode: "stdio" for development, "http" for production
+    MCP_TRANSPORT_MODE = os.getenv("MCP_TRANSPORT_MODE", "http").lower()
+    
+    # MCP server host (for client connections, use "localhost" in Docker, "127.0.0.1" for local)
+    MCP_HOST = os.getenv("MCP_HOST", "localhost")
+    
+    # MCP server ports (defaults match the ports configured in server files)
+    MCP_READIN_PORT = int(os.getenv("MCP_READIN_PORT", "9001"))
+    MCP_GUIDE_PORT = int(os.getenv("MCP_GUIDE_PORT", "9002"))
+    MCP_WRITEOUT_PORT = int(os.getenv("MCP_WRITEOUT_PORT", "9003"))
+    MCP_MONITOR_PORT = int(os.getenv("MCP_MONITOR_PORT", "9004"))
+    MCP_SUPERVISOR_PORT = int(os.getenv("MCP_SUPERVISOR_PORT", "9005"))
+    
+    # MCP server URLs (constructed from host and ports)
+    @classmethod
+    def get_mcp_url(cls, module_name: str) -> str:
+        """Get MCP server URL for a module"""
+        port_map = {
+            "readin": cls.MCP_READIN_PORT,
+            "guide": cls.MCP_GUIDE_PORT,
+            "writeout": cls.MCP_WRITEOUT_PORT,
+            "monitor1d": cls.MCP_MONITOR_PORT,
+            "monitor2d": cls.MCP_MONITOR_PORT,
+            "supervisor": cls.MCP_SUPERVISOR_PORT,
+        }
+        
+        port = port_map.get(module_name)
+        if port is None:
+            raise ValueError(f"No MCP port configured for module: {module_name}")
+        
+        # Allow override via environment variable
+        url_env_key = f"MCP_{module_name.upper()}_URL"
+        url_override = os.getenv(url_env_key)
+        if url_override:
+            return url_override
+        
+        # FastMCP HTTP servers use /mcp as the endpoint path
+        return f"http://{cls.MCP_HOST}:{port}/mcp"
+    
+    # =============================================================================
     # VITESS SIMULATION ENVIRONMENT
     # =============================================================================
     
@@ -189,6 +232,11 @@ class Config:
             raise ValueError(f"No MCP path configured for module: {module_name}")
         
         return path
+    
+    @classmethod
+    def is_mcp_http_mode(cls) -> bool:
+        """Check if MCP is configured to use HTTP transport"""
+        return cls.MCP_TRANSPORT_MODE == "http"
     
     @classmethod
     def get_vitess_variables(cls) -> dict:

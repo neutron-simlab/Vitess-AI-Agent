@@ -1,8 +1,9 @@
 FROM python:3.13-slim
 
-# Install system dependencies
+# Install system dependencies including bash for entrypoint script
 RUN apt-get update && apt-get install -y \
     curl \
+    bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -18,14 +19,17 @@ COPY src/ ./src/
 # Install dependencies using uv
 RUN uv sync --frozen
 
-# Copy the rest of the application
+# Copy the rest of the application (excluding vitess/ which is handled separately)
 COPY . .
 
 # Make entrypoint script executable
 RUN chmod +x docker-entrypoint.sh
 
+# Create directories for shared data (will be mounted as volumes in docker-compose)
+RUN mkdir -p /data/projects /data/logs /vitess/modules
+
 # Expose ports
-EXPOSE 8000 8501
+EXPOSE 8000 8501 9001 9002 9003 9004 9005
 
 # Set entrypoint
 ENTRYPOINT ["./docker-entrypoint.sh"]

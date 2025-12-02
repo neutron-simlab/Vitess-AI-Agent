@@ -1,8 +1,7 @@
-# Environment files - NEVER copy these to Docker image
-.env
-.env.local
-.env.*.local
-env.example
+# Git
+.git
+.gitignore
+.gitmodules
 
 # Python
 __pycache__/
@@ -11,48 +10,60 @@ __pycache__/
 *.so
 .Python
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-venv/
-.venv/
-ENV/
-env/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Git
-.git/
-.gitignore
-.gitattributes
-
-# Testing
+dist/
+build/
 .pytest_cache/
 .coverage
 htmlcov/
+.tox/
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+tests/
+*.test.py
+*_test.py
+
+# Vitess submodule (handled separately in vitess/Dockerfile)
+vitess/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Logs
 *.log
+logs/
 
-# Documentation (optional - uncomment if you don't want docs in image)
-# README.md
-# docs/
-
-# Local development files
-tmp/
-temp/
-*.pyo
+# OS
 .DS_Store
 Thumbs.db
 
-# Build artifacts
-build/
-dist/
-*.whl
-
-# Lock files (keep uv.lock, but ignore others if any)
-# uv.lock  # Keep this - it's needed for dependency resolution
-
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
