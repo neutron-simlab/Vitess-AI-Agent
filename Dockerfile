@@ -26,7 +26,7 @@ COPY . .
 RUN chmod +x docker-entrypoint.sh
 
 # Create directories for shared data (will be mounted as volumes in docker-compose)
-RUN mkdir -p /data/projects /data/logs /vitess/modules
+RUN mkdir -p /data/projects /data/logs /vitess/MODULES
 
 # Expose ports
 EXPOSE 8000 8501 9001 9002 9003 9004 9005

@@ -18,10 +18,10 @@ cleanup() {
 # Trap signals for graceful shutdown
 trap cleanup SIGTERM SIGINT EXIT
 
-# Verify Vitess environment variables are set (from docker-compose)
+# Verify Vitess environment variables are set
 if [ -z "$VITESS_MODULES_PATH" ]; then
     echo "⚠️  Warning: VITESS_MODULES_PATH not set, using default"
-    export VITESS_MODULES_PATH=${VITESS_MODULES_PATH:-/vitess/modules}
+    export VITESS_MODULES_PATH=${VITESS_MODULES_PATH:-/vitess/MODULES}
 fi
 
 if [ -z "$VITESS_PROJECT_PATH" ]; then
@@ -43,10 +43,14 @@ else
     echo "   Make sure the vitess service is running and volumes are properly mounted"
 fi
 
-# Ensure project and log directories exist
-mkdir -p "$VITESS_PROJECT_PATH" "$VITESS_LOG_PATH"
+# Create required directories
+# Note: VITESS_LOG_PATH is a file path, not a directory
+VITESS_LOG_DIR=$(dirname "$VITESS_LOG_PATH")
+mkdir -p "$VITESS_PROJECT_PATH" "$VITESS_LOG_DIR"
+# Create the log file if it doesn't exist
+touch "$VITESS_LOG_PATH"
 echo "✅ Project directory: $VITESS_PROJECT_PATH"
-echo "✅ Log directory: $VITESS_LOG_PATH"
+echo "✅ Log file: $VITESS_LOG_PATH"
 
 # Activate virtual environment if it exists
 if [ -f "/app/.venv/bin/activate" ]; then
@@ -54,9 +58,7 @@ if [ -f "/app/.venv/bin/activate" ]; then
     source /app/.venv/bin/activate
 fi
 
-# Set VITESS_ENV_PATH to production env file if it exists, otherwise use default
-# This allows the app to load from /etc/vitess-ai/.env in production
-# or from .env in project root in development
+# Load environment file (production: /etc/vitess-ai/.env, development: .env in project root)
 if [ -f "/etc/vitess-ai/.env" ]; then
     export VITESS_ENV_PATH=/etc/vitess-ai/.env
     echo "✅ Using production environment file: /etc/vitess-ai/.env"

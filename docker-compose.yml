@@ -26,12 +26,8 @@ services:
     image: vitess:latest
     container_name: vitess-builder
     volumes:
-      # Export Vitess modules for use by AI Agent
       - vitess-modules:/vitess/MODULES:ro
-      # Shared project directory (read-write for both services)
       - vitess-projects:/data/projects
-      # Shared log file
-      - vitess-logs:/data/logs/logfile.log
     environment:
       - V=/vitess/MODULES
       - P=/data/projects
@@ -51,23 +47,14 @@ services:
     depends_on:
       - vitess
     volumes:
-      # Mount Vitess modules from vitess container
-      - vitess-modules:/vitess/modules:ro
-      # Shared project directory (read-write)
+      - vitess-modules:/vitess/MODULES:ro
       - vitess-projects:/data/projects
-      # Shared log directory
-      - vitess-logs:/data/logs/logfile.log
-    # Environment variables are loaded from:
-    # - Production: /etc/vitess-ai/.env (handled by docker-entrypoint.sh)
-    # - Development: .env in project root (auto-loaded by docker-compose via ${VAR} syntax)
     environment:
-      # Vitess environment variables - automatically injected by Docker
-      # These point to container paths that match the volumes below
-      # No need to set these in .env when using Docker - they're hardcoded here
-      - VITESS_MODULES_PATH=/vitess/modules
+      # Vitess paths (automatically set by Docker, no need to configure in .env)
+      - VITESS_MODULES_PATH=/vitess/MODULES
       - VITESS_PROJECT_PATH=/data/projects
       - VITESS_LOG_PATH=/data/logs/logfile.log
-      # Environment variables (loaded from .env in dev, /etc/vitess-ai/.env in prod)
+      # Application configuration (loaded from .env in dev, /etc/vitess-ai/.env in prod)
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-openai}
       - FALLBACK_PROVIDER=${FALLBACK_PROVIDER:-blablador}
       - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini-2024-07-18}
@@ -88,7 +75,6 @@ services:
       - MONITOR_MCP_PATH=${MONITOR_MCP_PATH:-./src/vitess_ai/mcp/monitor_module_tools.py}
       - FILTER_MCP_PATH=${FILTER_MCP_PATH:-./src/vitess_ai/mcp/filter_module_tools.py}
       - SUPERVISOR_MCP_PATH=${SUPERVISOR_MCP_PATH:-./src/vitess_ai/mcp/supervisor_tools.py}
-      # MCP Transport Configuration
       - MCP_TRANSPORT_MODE=${MCP_TRANSPORT_MODE:-http}
       - MCP_HOST=${MCP_HOST:-0.0.0.0}
       - MCP_READIN_PORT=${MCP_READIN_PORT:-9001}
@@ -100,18 +86,16 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - RELOAD=${RELOAD:-false}
     ports:
-      - "8000:8000"  # FastAPI
-      - "8501:8501"  # Streamlit
-      - "9001:9001"  # MCP Read-in server
-      - "9002:9002"  # MCP Guide server
-      - "9003:9003"  # MCP Writeout server
-      - "9004:9004"  # MCP Monitor server
-      - "9005:9005"  # MCP Supervisor server
+      - "8000:8000"
+      - "8501:8501"
+      - "9001:9001"
+      - "9002:9002"
+      - "9003:9003"
+      - "9004:9004"
+      - "9005:9005"
     networks:
       - vitess-network
-    # Production settings (safe for development too)
     restart: always
-    # Resource limits (production)
     deploy:
       resources:
         limits:
@@ -120,14 +104,12 @@ services:
         reservations:
           cpus: '1'
           memory: 2G
-    # Logging with rotation
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
         compress: "true"
-    # Health check
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -136,14 +118,9 @@ services:
       start_period: 40s
 
 volumes:
-  # Named volume for Vitess modules (built by vitess service)
   vitess-modules:
     driver: local
-  # Named volume for project data (shared between services)
   vitess-projects:
-    driver: local
-  # Named volume for logs
-  vitess-logs:
     driver: local
 
 networks:

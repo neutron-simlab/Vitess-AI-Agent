@@ -1,0 +1,169 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - production
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual triggers
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      
+      - name: Install dependencies
+        run: uv sync
+      
+      - name: Run tests
+        run: uv run pytest
+        env:
+          # Use test API keys or mocks
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ENVIRONMENT: test
+
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Vitess image
+        run: |
+          docker build -t vitess:latest -f vitess/Dockerfile ./vitess
+      
+      - name: Build Vitess AI Agent image
+        run: |
+          docker build -t vitess-ai-agent:latest -f Dockerfile .
+
+  deploy:
+    name: Deploy to Digital Ocean
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/production'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DIGITALOCEAN_SSH_KEY }}
+      
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ secrets.DIGITALOCEAN_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Create production environment file
+        run: |
+          cat > /tmp/prod.env << EOF
+          # Core API Keys
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          BLABLADOR_API_KEY=${{ secrets.BLABLADOR_API_KEY }}
+          LANGSMITH_API_KEY=${{ secrets.LANGSMITH_API_KEY }}
+          
+          # LLM Configuration
+          DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-openai}
+          FALLBACK_PROVIDER=${FALLBACK_PROVIDER:-blablador}
+          DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini-2024-07-18}
+          MAX_TOKENS=${MAX_TOKENS:-4000}
+          TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-60}
+          MAX_RETRIES=${MAX_RETRIES:-3}
+          
+          # Blablador Settings
+          BLABLADOR_BASE_URL=${BLABLADOR_BASE_URL:-https://api.helmholtz-blablador.fz-juelich.de/v1/}
+          BLABLADOR_DEFAULT_MODEL=${BLABLADOR_DEFAULT_MODEL:-alias-fast-experiment}
+          
+          # LangSmith Settings
+          LANGSMITH_TRACING=${LANGSMITH_TRACING:-true}
+          LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+          LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-Vitess-AI-Agent}
+          
+          # MCP Configuration
+          MCP_TRANSPORT_MODE=http
+          MCP_HOST=0.0.0.0
+          MCP_READIN_PORT=9001
+          MCP_GUIDE_PORT=9002
+          MCP_WRITEOUT_PORT=9003
+          MCP_MONITOR_PORT=9004
+          MCP_SUPERVISOR_PORT=9005
+          
+          # Environment
+          ENVIRONMENT=production
+          LOG_LEVEL=INFO
+          EOF
+      
+      - name: Deploy to droplet
+        run: |
+          # Copy environment file to droplet
+          scp /tmp/prod.env ${{ secrets.DIGITALOCEAN_USER }}@${{ secrets.DIGITALOCEAN_HOST }}:/etc/vitess-ai/.env
+          
+          # SSH into droplet and deploy
+          ssh ${{ secrets.DIGITALOCEAN_USER }}@${{ secrets.DIGITALOCEAN_HOST }} << 'EOF'
+            set -e
+            
+            # Navigate to application directory
+            cd /opt/vitess-ai
+            
+            # Pull latest code
+            git pull origin main
+            
+            # Set permissions on .env file
+            sudo chmod 600 /etc/vitess-ai/.env
+            sudo chown root:root /etc/vitess-ai/.env
+            
+            # Build and start services
+            docker-compose down
+            docker-compose build --no-cache
+            docker-compose up -d
+            
+            # Wait for services to be healthy
+            sleep 10
+            
+            # Health check
+            if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+              echo "✅ Deployment successful - health check passed"
+            else
+              echo "❌ Deployment failed - health check failed"
+              docker-compose logs --tail=50
+              exit 1
+            fi
+            
+            # Clean up old images
+            docker image prune -f
+          EOF
+      
+      - name: Verify deployment
+        run: |
+          sleep 5
+          curl -f http://${{ secrets.DIGITALOCEAN_HOST }}:8000/health || exit 1
+

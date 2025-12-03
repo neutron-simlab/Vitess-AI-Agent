@@ -106,11 +106,11 @@ class Config:
     # VITESS SIMULATION ENVIRONMENT
     # =============================================================================
     
-    # Default Vitess environment variables (from your script)
-    # These can be updated at runtime via update_vitess_config()
+    # Vitess environment variables (can be updated at runtime via update_vitess_config())
     VITESS_MODULES_PATH = os.getenv("VITESS_MODULES_PATH", "/usr/local/vitess/bin")
     VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH", "/tmp/vitess_project")
-    VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess_logs")
+    # VITESS_LOG_PATH must be a file path, not a directory
+    VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess.log")
     
     @classmethod
     def update_vitess_config(
@@ -125,7 +125,7 @@ class Config:
         Args:
             modules_path: New path for Vitess modules (V)
             project_path: New path for Vitess project (P)
-            log_path: New path for Vitess logs (L)
+            log_path: New file path for Vitess log file (L) - must be a file path, not a directory
             
         Returns:
             Dictionary with updated Vitess environment variables
@@ -149,7 +149,7 @@ class Config:
         """
         cls.VITESS_MODULES_PATH = os.getenv("VITESS_MODULES_PATH", "/usr/local/vitess/bin")
         cls.VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH", "/tmp/vitess_project")
-        cls.VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess_logs")
+        cls.VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess.log")
         
         return cls.get_vitess_variables()
     

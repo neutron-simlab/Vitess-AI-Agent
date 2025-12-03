@@ -161,11 +161,12 @@ def generate_cli_command(
        pipeline_command = "\n".join(cli_command_lines)
        
        # Add post-processing commands on separate lines
+       # Use error suppression for cat/rm commands in case log files don't exist
        post_processing_lines = [
            f"rm -f {project_path}/result.txt",
-           f"cat ${{L}}?? >> {project_path}/result.txt",
+           f"cat ${{L}}?? >> {project_path}/result.txt 2>/dev/null || true",
            f"echo {project_path}",
-           f"rm ${{L}}*"
+           f"rm -f ${{L}}*"
        ]
        post_processing = "\n".join(post_processing_lines)
        
