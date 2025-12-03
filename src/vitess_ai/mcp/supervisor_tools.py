@@ -44,13 +44,14 @@ def coerce_json_to_list(value: Any) -> Optional[List[str]]:
             pass
     return None
 
+
 # Module to executable mapping (configurable)
 MODULE_EXECUTABLES = {
-    "readin": "$V/read_in${SUFFIX}",
-    "guide": "$V/guide_parallel${SUFFIX}",
-    "writeout": "$V/writeout${SUFFIX}",
-    "monitor1d": "$V/monitor1D${SUFFIX}",
-    "monitor2d": "$V/monitor2D${SUFFIX}",
+    "readin": "$V/read_in",
+    "guide": "$V/guide_parallel",
+    "writeout": "$V/writeout",
+    "monitor1d": "$V/monitor1D",
+    "monitor2d": "$V/monitor2D",
 }
 
 # Common parameters that appear in all modules (base, without --P)
@@ -280,12 +281,10 @@ async def run_simulation(
 unset V
 unset P  
 unset L
-unset SUFFIX
 
 [ -z "$V" ] && V={global_config.VITESS_MODULES_PATH}
 [ -z "$P" ] && P={project_path_for_script}
 [ -z "$L" ] && L={global_config.VITESS_LOG_PATH}
-[ -z "${{SUFFIX}}" ] && SUFFIX="_`uname -s`_`uname -m`"
 
 # Execute simulation pipeline (includes post-processing)
 {cli_command}

@@ -15,9 +15,6 @@
 #   - Production secrets in /etc/vitess-ai/.env (600 permissions)
 #   - Use GitHub Secrets for CI/CD pipeline
 # =============================================================================
-
-version: '3.8'
-
 services:
   vitess:
     build:
@@ -32,7 +29,6 @@ services:
       - V=/vitess/MODULES
       - P=/data/projects
       - L=/data/logs/logfile.log
-      - SUFFIX=_Linux_x86_64
     # Keep container running to provide volume access
     command: tail -f /dev/null
     networks:
