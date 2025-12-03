@@ -14,7 +14,7 @@ class ReadInParameters(BaseModel):
     # Program format
     ePrgFormat: Annotated[VtPrgFormat, Field(
         default=VtPrgFormat.VT_VITESS_FMT,
-        description="-f [-] Data format of the program (VT_VITESS_FMT: Vitess, VT_MCSTAS_FMT: McStas, VT_MCPL_FMT: MCPL, VT_MCNPX_FMT and VT_MCNP6_FMT: MCNP)",
+        description="-f [-] Data format of the program (VT_VITESS_FMT: Vitess, VT_MCSTAS_FMT: McStas, VT_MCPL_FMT: MCPL, VT_MCNPX_FMT and VT_MCNP6_FMT: MCNP). NOTE: VT_KDS_FMT is deprecated - use the separate 'kdsource' module instead.",
         json_schema_extra={"flag": "-f"}
     )]
     
@@ -83,13 +83,6 @@ class ReadInParameters(BaseModel):
         json_schema_extra={"flag": "-J"}
     )]
     
-    # KDE usage flag
-    use_kde: Annotated[int, Field(
-        default=1,
-        description="-K [-] Whether to use KDE or just read the particles from the MCPL file referred in the xml file",
-        json_schema_extra={"flag": "-K"}
-    )]
-    
     # External variables (extern in C++)
     sInstrInfIn: Annotated[str | None, Field(
         default='instrument.inf',
@@ -134,8 +127,7 @@ if __name__ == "__main__":
         iSurface=5,
         nRep=3,
         maxEv=1000000,
-        sample=1,
-        use_kde=0
+        sample=1
     )
     
     print(f"\nCustom config created with ePrgFormat: {custom_config.ePrgFormat}")

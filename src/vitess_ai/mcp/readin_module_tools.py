@@ -11,7 +11,7 @@ from typing import Any
 
 # Import our modules
 from vitess_ai.schema.readin_module import NF_MAX, ReadInParameters
-from vitess_ai.schema.base import get_field_flag
+from vitess_ai.schema.base import get_field_flag, VtPrgFormat
 
 
 # Initialize FastMCP server
@@ -776,6 +776,15 @@ async def validate_readin_module(parameters: str) -> dict:
                 "validation_status": False,
                 "errors": f"Weight length ({len(weights_list)}) does not match sInputFileName count ({len(files_list)}).",
                 "message": "Provide a weight for each input file."
+            }
+
+        # Check if VT_KDS_FMT is being used (deprecated - moved to separate kdsource module)
+        eprg_format = params.get("ePrgFormat")
+        if eprg_format == VtPrgFormat.VT_KDS_FMT or (isinstance(eprg_format, int) and eprg_format == 7):
+            return {
+                "validation_status": False,
+                "errors": "VT_KDS_FMT format is no longer supported in the read_in module.",
+                "message": "ERROR: KDSource functionality has been moved to module 'kdsource'! Please use the separate 'kdsource' module instead of read_in for KDSource functionality."
             }
 
         validated = ReadInParameters(**params)

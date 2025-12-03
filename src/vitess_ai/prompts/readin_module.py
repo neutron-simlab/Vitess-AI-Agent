@@ -39,7 +39,6 @@ Here are the default values that work for most neutron simulations:
   "nRep": 1,                 # Read input once
   "maxEv": -1,               # Unlimited events
   "sample": 0,               # No random sampling
-  "use_kde": 1,              # Use KDE
   "sInstrInfIn": null,       # No instrument file
   "sTraceFileName": null,    # No trajectory file
   "eTraceMode": 0            # NO_TRACING
