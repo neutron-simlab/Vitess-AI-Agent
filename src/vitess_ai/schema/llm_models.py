@@ -29,9 +29,8 @@ class BlabladorModelName(StrEnum):
     # Models with function calling and structured output support
     ALIAS_FUNCTION_CALL = "alias-function-call"
     ALIAS_CODE = "alias-code"
-
-
-# Type alias for all supported models
+    GPT_OSS = "1 - GPT-OSS-120b - an open model released by OpenAI in August 2025"
+    # Type alias for all supported models
 AllModelEnum: TypeAlias = OpenAIModelName | BlabladorModelName
 
 

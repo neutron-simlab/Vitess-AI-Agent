@@ -80,11 +80,10 @@ def generate_cli_command(
        Dictionary with CLI command and metadata
    """
    try:
-       # Get thread_id from environment if not provided
-       if not thread_id:
-           thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
-       
-       # If still no thread_id, try to extract it from file paths in CLI parameters
+       # If no thread_id provided (should be auto-injected by tool wrapper), try to extract it from file paths
+       # WARNING: This is a fallback and may extract an old thread_id from previous sessions
+       # Only use this if thread_id is not available from parameter
+       extracted_thread_id = None
        if not thread_id and module_results:
            # Look for UUID pattern in file paths (thread_id is typically a UUID)
            # Pattern: {VITESS_PROJECT_PATH}/{thread_id}/uploads/... or .../outputs/...
@@ -97,9 +96,17 @@ def generate_cli_command(
                if cli_params:
                    match = re.search(thread_id_pattern, cli_params)
                    if match:
-                       thread_id = match.group(1)
-                       logger.info(f"Extracted thread_id from file paths: {thread_id}")
+                       extracted_thread_id = match.group(1)
+                       logger.warning(
+                           f"⚠️ Extracted thread_id from file paths (fallback): {extracted_thread_id}. "
+                           f"This may be an old thread_id from a previous session."
+                       )
                        break
+       
+       # Use extracted thread_id only if we still don't have one from parameter
+       if not thread_id and extracted_thread_id:
+           thread_id = extracted_thread_id
+           logger.warning(f"Using extracted thread_id from file paths: {thread_id}")
        
        # Build project path with thread_id if available
        if thread_id:
@@ -200,7 +207,8 @@ def generate_cli_command(
 async def run_simulation(
     module_results: Optional[Any] = None,
     execution_order: Optional[Any] = None,
-    execute: bool = False
+    execute: bool = False,
+    thread_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Generate and optionally execute simulation using CLI parameters from agent state.
@@ -211,6 +219,7 @@ async def run_simulation(
         execution_order: List of module names in execution order
             (can be passed as list or JSON string)
         execute: Whether to actually run the command
+        thread_id: Optional thread ID to use for project path. If not provided, will try to get from environment.
         
     Returns:
         Dictionary with command, execution results, and status
@@ -231,9 +240,6 @@ async def run_simulation(
         return str(data)
     
     try:
-        # Get thread_id early for use in command generation and script template
-        thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
-        
         # Parse inputs if they're JSON strings (common when LLM passes complex data)
         # Use coercion functions that handle both dict/list and JSON strings
         parsed_module_results = coerce_json_to_dict(module_results) or {}
