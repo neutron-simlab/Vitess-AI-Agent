@@ -2,10 +2,10 @@
 registry.py - Simplified Module Registry (No Dependencies)
 Handles module registration and simple execution planning
 """
-import logging
 from typing import Dict, List, Optional, Any
 from vitess_ai.schema.supervisor import ExecutionPlan
 from vitess_ai.server_agents.base_module_agent import ModuleMetadata
+from vitess_ai.core.log import get_logger
 
 
 class ModuleRegistry:
@@ -13,7 +13,7 @@ class ModuleRegistry:
     
     def __init__(self):
         self._modules: Dict[str, ModuleMetadata] = {}
-        self._logger = logging.getLogger(__name__)
+        self._logger = get_logger(__name__)
     
     def register_module(self, module_metadata: ModuleMetadata) -> None:
         """Register a new module"""

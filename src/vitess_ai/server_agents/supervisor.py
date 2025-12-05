@@ -6,12 +6,11 @@ pattern. Module agents are created using LangChain's create_agent
 and integrated as nodes in the supervisor graph, enabling unified state
 management and checkpoint-based resumption.
 """
-
-import logging
 import json
 import time
 from typing import Dict, List, Any, Optional
 from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import InMemorySaver
@@ -21,12 +20,14 @@ from vitess_ai.schema.supervisor import (
 )
 from vitess_ai.schema.base import FillingStage
 from vitess_ai.core.registry import ModuleRegistry
+from vitess_ai.core.log import get_logger
 from vitess_ai.server_agents.base_module_agent import (
     BaseModuleAgent,
     ModuleBuilder, 
     ModuleMetadata,
 )
 from vitess_ai.server_agents.unified_state import UnifiedState, ModuleResult
+from vitess_ai.server_agents.module_middleware import MessageFilterMiddleware, ThreadIdMiddleware
 from vitess_ai.core.config import global_config
 from vitess_ai.prompts.supervisor import (
     get_simulation_execution_prompt, 
@@ -66,8 +67,7 @@ class SupervisorAgent:
         self.initialized = False
         
         # Setup logging
-        self.logger = logging.getLogger(__name__)
-        self._setup_logging()
+        self.logger = get_logger(__name__)
         self.logger.info("Supervisor agent initialized with logging enabled")
     
     def _create_default_config(self) -> SupervisorConfig:
@@ -76,30 +76,6 @@ class SupervisorAgent:
             provider=global_config.DEFAULT_PROVIDER,
             model=global_config.DEFAULT_MODEL
         )
-    
-    def _setup_logging(self):
-        """Setup logging for the supervisor agent"""
-        logger_name = f"vitess_ai.server_agents.supervisor"
-        self.logger = logging.getLogger(logger_name)
-        # Only add handler if logger doesn't have one (avoid duplicates)
-        if not self.logger.handlers:
-            # Create console handler
-            handler = logging.StreamHandler()
-            handler.setLevel(logging.INFO)
-            
-            # Create formatter
-            formatter = logging.Formatter(
-                fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            handler.setFormatter(formatter)
-            
-            # Add handler to logger
-            self.logger.addHandler(handler)
-            self.logger.setLevel(logging.INFO)
-            
-            # Prevent propagation to avoid duplicate logs
-            self.logger.propagate = False
     
     # =================
     # CLI TOOLS SETUP
@@ -443,9 +419,16 @@ class SupervisorAgent:
         # Add module react-agents as nodes with wrapper for state management
         for module_name in execution_order:
             agent = self.agent_instances[module_name]
+            # Create middleware for this module
+            message_filter = MessageFilterMiddleware(module_name=module_name)
+            thread_id_middleware = ThreadIdMiddleware()
             # Create react-agent with comprehensive prompt (includes both default and custom modes)
-            react_agent = agent.create_module_react_agent(config_mode=None)  # None = handle dynamically
-            # Wrap react-agent to handle state updates, welcome messages, and thread_id injection via system message
+            # Pass middleware to filter messages and inject thread_id context
+            react_agent = agent.create_module_react_agent(
+                config_mode=None,  # None = handle dynamically
+                middleware=[message_filter, thread_id_middleware]
+            )
+            # Wrap react-agent to handle state updates and welcome messages
             wrapped_agent = self._create_module_wrapper(module_name, react_agent)
             workflow.add_node(f"{module_name}_agent", wrapped_agent)
             
@@ -1036,10 +1019,6 @@ Configuration is complete. The simulation parameters are ready for execution.
             if is_new_module:
                 self.logger.info(f"[MODULE ENTRY] New module entry detected for {module_name} (previous active: {current_active})")
                 # Reset module-specific state when entering a new module
-                # Initialize module_config_modes if not exists
-                module_config_modes = state.get('module_config_modes', {}).copy()
-                # Don't set config_mode for new module - it will be detected or set by the module agent
-                
                 state_updates = {
                     'current_active_module': module_name,
                     'current_module': module_name,
@@ -1048,19 +1027,6 @@ Configuration is complete. The simulation parameters are ready for execution.
             else:
                 self.logger.info(f"[MODULE RESUME] Resuming module: {module_name}")
                 state_updates = {'current_module': module_name}
-            
-            # Add thread_id to system message so LLM passes it to tools
-            thread_id = state.get('thread_id')
-            if thread_id:
-                # Add system message with thread_id context at the beginning
-                thread_id_context = SystemMessage(
-                    content=f"**CONTEXT: Current thread_id is {thread_id}. When calling tools that require file access (such as file_status, get_files, etc.), you MUST pass thread_id={thread_id} as a parameter.**"
-                )
-                messages = [thread_id_context] + messages
-                self.logger.debug(f"Added thread_id={thread_id} to system message")
-            
-            # Update state with messages (including thread_id context if added)
-            state = {**state, 'messages': messages}
             
             # Check if this is the first time entering this module
             # If no messages from this module yet, add welcome message
@@ -1099,17 +1065,14 @@ Configuration is complete. The simulation parameters are ready for execution.
             # If config_mode is not set but we have messages, try to detect it from CURRENT module only
             if not config_mode:
                 all_messages = invoke_state.get('messages', [])
-                # Filter to only messages from the current module
-                module_messages = []
-                for msg in all_messages:
-                    # Include messages explicitly tagged with this module_name
-                    if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == module_name:
-                        module_messages.append(msg)
-                    # Also include user messages that come after this module's welcome message
-                    # (heuristic: user messages after module welcome are likely for that module)
-                    elif not hasattr(msg, 'additional_kwargs') or not msg.additional_kwargs.get('module_name'):
-                        # This is a user message or system message, include it if we're in this module's context
-                        module_messages.append(msg)
+                # Filter to only messages from the current module (simplified logic)
+                module_messages = [
+                    msg for msg in all_messages
+                    if (hasattr(msg, 'additional_kwargs') and 
+                        msg.additional_kwargs.get('module_name') == module_name) or
+                       (not hasattr(msg, 'additional_kwargs') or 
+                        not msg.additional_kwargs.get('module_name'))
+                ]
                 
                 self.logger.debug(f"[CONFIG_MODE] Searching for config_mode in {len(module_messages)} messages from module {module_name}")
                 
@@ -1139,13 +1102,27 @@ Configuration is complete. The simulation parameters are ready for execution.
             
             # Invoke react-agent
             try:
+                # Filter out supervisor welcome message from messages before passing to react-agent
+                # The supervisor welcome message should only appear at the start of the chat, not in module conversations
+                filtered_messages = []
+                for msg in invoke_state.get('messages', []):
+                    # Skip supervisor welcome message
+                    if (hasattr(msg, 'additional_kwargs') and 
+                        msg.additional_kwargs.get('module_name') == 'supervisor' and
+                        hasattr(msg, 'content') and 
+                        'Neutron Simulation Configuration System' in str(msg.content)):
+                        continue
+                    filtered_messages.append(msg)
+                
+                # Create filtered invoke_state without supervisor welcome message
+                filtered_invoke_state = {**invoke_state, 'messages': filtered_messages}
+                
                 # React-agent expects messages in state
                 # invoke_state already includes welcome message and config_mode if detected
-                # Get config_mode for logging
-                module_config_modes = invoke_state.get('module_config_modes', {})
-                current_config_mode = module_config_modes.get(module_name, '')
-                self.logger.debug(f"[REACT_AGENT] Invoking react-agent for module {module_name} with config_mode='{current_config_mode}'")
-                result = await react_agent.ainvoke(invoke_state)
+                self.logger.debug(f"[REACT_AGENT] Invoking react-agent for module {module_name} with config_mode='{config_mode}' (filtered {len(invoke_state.get('messages', [])) - len(filtered_messages)} supervisor welcome messages)")
+                # Set recursion_limit to 50 to allow more iterations before hitting limit
+                config = RunnableConfig(recursion_limit=50)
+                result = await react_agent.ainvoke(filtered_invoke_state, config=config)
                 
                 # Check if module is complete by examining tool results in messages
                 # IMPORTANT: Only check result_messages (from current invocation) to avoid picking up validation from previous modules

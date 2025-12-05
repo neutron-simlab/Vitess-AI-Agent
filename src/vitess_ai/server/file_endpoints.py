@@ -4,13 +4,13 @@ File upload and download endpoints.
 This module provides endpoints for uploading files, managing file metadata,
 and handling output files for simulation threads.
 """
-import logging
 from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
+from vitess_ai.core.log import get_logger
 from vitess_ai.server.file_storage import get_file_storage_service
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 

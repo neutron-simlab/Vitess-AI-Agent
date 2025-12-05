@@ -5,12 +5,13 @@ This module provides utilities for extracting module information from LangGraph
 state and node paths, enabling proper module labeling for color coding in the UI.
 """
 
-import logging
 from typing import Any, Optional
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.runnables import RunnableConfig
 
-logger = logging.getLogger(__name__)
+from vitess_ai.core.log import get_logger
+
+logger = get_logger(__name__)
 
 
 class ModuleTracker:

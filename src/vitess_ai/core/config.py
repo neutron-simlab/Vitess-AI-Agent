@@ -178,6 +178,10 @@ class Config:
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     
+    # Application log directory (for date-based log files)
+    # In Docker: /data/logs, in local dev: can be set via environment variable
+    LOG_DIR = os.getenv("LOG_DIR", os.getenv("VITESS_LOG_DIR", "/data/logs"))
+    
     @classmethod
     def validate_required(cls):
         """Validate that required environment variables are set"""

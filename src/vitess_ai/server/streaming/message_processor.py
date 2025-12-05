@@ -7,19 +7,19 @@ deduplication and filtering.
 
 import inspect
 import json
-import logging
 from typing import Any, AsyncGenerator, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.runnables import RunnableConfig
 
+from vitess_ai.core.log import get_logger
 from vitess_ai.server.utils import langchain_to_chat_message
 from vitess_ai.server.module_tracker import ModuleTracker
 from vitess_ai.server.errors import MessageProcessingError
 from vitess_ai.server.streaming.deduplication import get_message_identifier
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MessageProcessor:

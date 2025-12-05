@@ -5,7 +5,6 @@ This module provides endpoints for invoking agents, streaming responses,
 and restarting agents with new configurations.
 """
 import json
-import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -14,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage
 from langgraph.graph.state import CompiledStateGraph
 
+from vitess_ai.core.log import get_logger
 from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_agent, restart_agent
 from vitess_ai.schema.server import ChatMessage, StreamInput, UserInput
 from vitess_ai.core.config import global_config
@@ -28,7 +28,7 @@ from vitess_ai.server.errors import (
 from vitess_ai.server.agent_input_handler import AgentInputHandler
 from vitess_ai.server.streaming import StreamEventProcessor
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 

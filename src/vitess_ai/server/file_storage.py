@@ -7,14 +7,14 @@ Files are stored persistently and associated with thread_id for reuse across con
 
 import os
 import uuid
-import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+from vitess_ai.core.log import get_logger
 from vitess_ai.core.config import global_config
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FileStorageService:

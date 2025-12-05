@@ -10,6 +10,7 @@ from fastmcp import FastMCP
 from typing import Any
 
 # Import our modules
+from vitess_ai.core.log import get_logger
 from vitess_ai.schema.readin_module import NF_MAX, ReadInParameters
 from vitess_ai.schema.base import get_field_flag, VtPrgFormat
 
@@ -32,8 +33,7 @@ def _try_load_files_from_storage(thread_id: str | None = None) -> bool:
         thread_id: Optional thread ID to use (takes priority over environment variables)
     """
     global _current_files, _thread_id
-    import logging
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     
     # Use provided thread_id first, then try environment variable, then global
     if thread_id:
@@ -72,8 +72,7 @@ def _try_load_instrument_file_from_storage(thread_id: str | None = None) -> bool
         thread_id: Optional thread ID to use (takes priority over environment variables)
     """
     global _current_instrument_file, _thread_id
-    import logging
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     
     # Use provided thread_id first, then try environment variable, then global
     if thread_id:
@@ -362,8 +361,7 @@ async def file_status(thread_id: str | None = None) -> dict:
         Dictionary with current file status and information
     """
     global _current_files, _thread_id
-    import logging
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
     
     # If no files in memory, try loading from file storage
     if not _current_files:

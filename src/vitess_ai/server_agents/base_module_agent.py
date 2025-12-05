@@ -7,13 +7,13 @@ as react-agents using LangChain's create_agent and integrated
 into the supervisor graph as nodes.
 """
 
-import logging
 from typing import List, Type, Optional, Any
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 from langchain.agents import create_agent
 from vitess_ai.core.llms_providers import create_llm_with_fallback
+from vitess_ai.core.log import get_logger
 
 
 class ModuleMetadata(BaseModel):
@@ -93,7 +93,7 @@ class BaseModuleAgent(ABC):
         self.llm = create_llm_with_fallback(provider=self.provider, model=self.model)
         
         # Setup logging
-        self._setup_logging()
+        self.logger = get_logger(f"vitess_ai.server_agents.{self.module_name}")
         
         # Log initialization
         self.logger.info(f"Initializing {self.name} agent with model {model}")
@@ -104,32 +104,6 @@ class BaseModuleAgent(ABC):
         self._setup_llm()
         
         self.logger.info(f"{self.name} agent initialization completed")
-    
-    def _setup_logging(self):
-        """Setup logging for the agent"""
-        # Create logger specific to this agent instance
-        logger_name = f"vitess_ai.server_agents.{self.module_name}"
-        self.logger = logging.getLogger(logger_name)
-        
-        # Only add handler if logger doesn't have one (avoid duplicates)
-        if not self.logger.handlers:
-            # Create console handler
-            handler = logging.StreamHandler()
-            handler.setLevel(logging.INFO)
-            
-            # Create formatter
-            formatter = logging.Formatter(
-                fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            handler.setFormatter(formatter)
-            
-            # Add handler to logger
-            self.logger.addHandler(handler)
-            self.logger.setLevel(logging.INFO)
-            
-            # Prevent propagation to avoid duplicate logs
-            self.logger.propagate = False
     
     # =================
     # ABSTRACT PROPERTIES & METHODS
@@ -327,7 +301,7 @@ Based on the user's response to the welcome message, use the appropriate section
         
         return final_prompt
     
-    def create_module_react_agent(self, config_mode: str = None):
+    def create_module_react_agent(self, config_mode: str = None, middleware: Optional[List[Any]] = None):
         """
         Create a react-agent for this module using LangChain's create_agent.
         
@@ -340,6 +314,8 @@ Based on the user's response to the welcome message, use the appropriate section
         Args:
             config_mode: Optional configuration mode. If provided, uses that mode.
                         If None, the prompt will handle mode selection from conversation.
+            middleware: Optional list of middleware to apply to the agent.
+                       Middleware can filter messages, add logging, etc.
         
         Returns:
             Compiled react-agent graph
@@ -353,15 +329,22 @@ Based on the user's response to the welcome message, use the appropriate section
         tool_names = [tool.name if hasattr(tool, 'name') else str(type(tool).__name__) for tool in self.tools]
         self.logger.debug(f"[REACT_AGENT] Tools for {self.module_name}: {tool_names}")
         
-        # Create react-agent with LLM, tools, and module-specific prompt
+        # Prepare middleware list
+        middleware_list = list(middleware) if middleware else []
+        if middleware_list:
+            middleware_names = [m.__class__.__name__ if hasattr(m, '__class__') else str(type(m).__name__) for m in middleware_list]
+            self.logger.debug(f"[REACT_AGENT] Middleware for {self.module_name}: {middleware_names}")
+        
+        # Create react-agent with LLM, tools, module-specific prompt, and middleware
         react_agent = create_agent(
             model=self.llm,
             tools=self.tools,
             system_prompt=prompt,
-            name=f"{self.module_name}_agent"
+            name=f"{self.module_name}_agent",
+            middleware=middleware_list if middleware_list else None
         )
         
-        self.logger.info(f"[REACT_AGENT] React-agent created successfully for {self.module_name}: {len(self.tools)} tools, prompt_length={len(prompt)}")
+        self.logger.info(f"[REACT_AGENT] React-agent created successfully for {self.module_name}: {len(self.tools)} tools, prompt_length={len(prompt)}, middleware_count={len(middleware_list)}")
         return react_agent
     
 

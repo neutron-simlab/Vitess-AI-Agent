@@ -2,13 +2,14 @@
 Simple tool wrapper to inject thread_id from UnifiedState into tool calls.
 """
 
-import logging
 from typing import Dict, Any, List, Callable, Awaitable
 from langchain_core.messages import AIMessage
 from langgraph.prebuilt import ToolNode
 from langchain.tools import BaseTool
 
-logger = logging.getLogger(__name__)
+from vitess_ai.core.log import get_logger
+
+logger = get_logger(__name__)
 
 
 def create_thread_id_tool_node(tools: List[BaseTool]) -> Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]:

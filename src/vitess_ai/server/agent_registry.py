@@ -4,16 +4,16 @@ Agent registry for managing agent instances.
 This module provides functions for creating, retrieving, and restarting agents.
 Supports multiple agent types through a factory pattern.
 """
-import logging
 from typing import Any, Callable, Optional, Awaitable
 from langgraph.graph.state import CompiledStateGraph
 
+from vitess_ai.core.log import get_logger
 from vitess_ai.server_agents.supervisor import create_default_supervisor, SupervisorAgent
 from vitess_ai.core.config import global_config
 from vitess_ai.schema.llm_models import Provider, get_default_model_for_provider
 from vitess_ai.server.errors import AgentNotFoundError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Simple in-memory agent registry
 # Key format: (agent_id, provider, model) -> tuple(AgentInstance, CompiledStateGraph)

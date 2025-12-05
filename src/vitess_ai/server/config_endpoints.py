@@ -4,16 +4,16 @@ Vitess configuration endpoints.
 This module provides endpoints for managing Vitess environment configuration
 at runtime, including paths for modules, project, and logs.
 """
-import logging
 from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
+from vitess_ai.core.log import get_logger
 from vitess_ai.core.config import global_config
 from vitess_ai.server.file_storage import get_file_storage_service
 from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_agent_instance
 from vitess_ai.server_agents.supervisor import SupervisorAgent
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 

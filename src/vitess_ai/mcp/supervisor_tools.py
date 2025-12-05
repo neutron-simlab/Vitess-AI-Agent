@@ -5,14 +5,14 @@ FastMCP tools for converting collected module parameters to CLI commands
 from fastmcp import FastMCP
 from typing import Any, Dict, List, Optional
 from vitess_ai.core.config import global_config
+from vitess_ai.core.log import get_logger
 from datetime import datetime
-import logging
 import json
 import os
 import re
 
 mcp = FastMCP("Supervisor CLI Generation Server")
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def coerce_json_to_dict(value: Any) -> Optional[dict]:
     """Coerce value to dict, parsing JSON strings if needed."""
@@ -385,9 +385,7 @@ async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]
     Returns:
         Dictionary with complete folder structure
     """
-    import logging
     from pathlib import Path
-    logger = logging.getLogger(__name__)
     
     # Get thread_id
     if not thread_id:

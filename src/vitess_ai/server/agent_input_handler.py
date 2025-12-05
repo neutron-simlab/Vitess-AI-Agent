@@ -7,7 +7,6 @@ END pattern (ending when user input is needed) rather than interrupts.
 LangGraph automatically resumes from checkpoint when invoked with the same thread_id.
 """
 
-import logging
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -15,9 +14,10 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
+from vitess_ai.core.log import get_logger
 from vitess_ai.server.errors import StateError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentInputHandler:
