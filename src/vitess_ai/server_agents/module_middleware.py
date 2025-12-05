@@ -17,6 +17,139 @@ from vitess_ai.core.llms_providers import create_llm_with_fallback
 from vitess_ai.core.config import global_config
 
 
+def filter_module_messages(
+    messages: list[BaseMessage],
+    module_name: str,
+    logger: logging.Logger
+) -> list[BaseMessage]:
+    """
+    Filter messages to only include those relevant to a specific module.
+    
+    This shared filtering logic:
+    1. Always includes SystemMessages
+    2. Finds the module's welcome message (tagged with module_name)
+    3. Includes all messages after the welcome until hitting another module's message
+    4. Includes ToolMessages that are responses to this module's tool calls
+    5. Tracks tool_call_ids from this module's AIMessages to include their ToolMessages
+    
+    Args:
+        messages: List of all messages in the conversation
+        module_name: The name of the module to filter for
+        logger: Logger instance for debug messages
+        
+    Returns:
+        Filtered list of messages relevant to this module
+    """
+    filtered = []
+    in_module_context = False
+    module_tool_call_ids: Set[str] = set()
+    
+    for msg in messages:
+        # Always include system messages (thread_id context, etc.)
+        if isinstance(msg, SystemMessage):
+            filtered.append(msg)
+            logger.debug(f"Including SystemMessage: {str(msg.content)[:50]}...")
+            continue
+        
+        # Check if message is explicitly tagged with a module_name
+        msg_module = None
+        if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs:
+            msg_module = msg.additional_kwargs.get('module_name')
+        
+        # If message is explicitly tagged with this module, include it
+        if msg_module == module_name:
+            filtered.append(msg)
+            in_module_context = True
+            
+            # Check if this is a welcome message
+            if isinstance(msg, AIMessage) and hasattr(msg, 'content'):
+                content_lower = str(msg.content).lower()
+                if 'welcome' in content_lower or module_name in content_lower:
+                    logger.debug(f"Found welcome message for {module_name}")
+            
+            # Track tool_call_ids from this module's AIMessages
+            if isinstance(msg, AIMessage):
+                # Handle different formats of tool_calls
+                tool_calls = getattr(msg, 'tool_calls', None) or []
+                for tool_call in tool_calls:
+                    # Handle both dict and object formats
+                    if isinstance(tool_call, dict):
+                        tool_call_id = tool_call.get('id')
+                    else:
+                        tool_call_id = getattr(tool_call, 'id', None)
+                    if tool_call_id:
+                        module_tool_call_ids.add(str(tool_call_id))
+                        logger.debug(f"Tracking tool_call_id {tool_call_id} for module {module_name}")
+            
+            logger.debug(f"Including module-tagged message: {type(msg).__name__}")
+            continue
+        
+        # Exclude messages explicitly tagged with other modules
+        if msg_module and msg_module != module_name:
+            # This message belongs to another module - exclude it
+            # But don't reset in_module_context if we're already in a conversation chain
+            # Only reset if this is a clear boundary (like a supervisor message or another module's welcome)
+            if isinstance(msg, AIMessage):
+                # Another module's AIMessage - this is a clear boundary
+                in_module_context = False
+                logger.debug(f"Excluding message from other module: {msg_module}, resetting context")
+            else:
+                # Other module's non-AI message - exclude but keep context for tool messages
+                logger.debug(f"Excluding message from other module: {msg_module}")
+            continue
+        
+        # Handle ToolMessages - include if they're responses to this module's tool calls
+        if isinstance(msg, ToolMessage):
+            tool_call_id = getattr(msg, 'tool_call_id', None)
+            tool_call_id_str = str(tool_call_id) if tool_call_id else None
+            if tool_call_id_str and tool_call_id_str in module_tool_call_ids:
+                # This ToolMessage is a response to this module's tool call
+                filtered.append(msg)
+                in_module_context = True  # Keep context active
+                logger.debug(f"Including ToolMessage for tool_call_id {tool_call_id}")
+                continue
+            elif in_module_context:
+                # In module context but tool_call_id not tracked - might be from a previous iteration
+                # Include it to maintain conversation flow (important for react-agent to see tool results)
+                filtered.append(msg)
+                logger.debug(f"Including ToolMessage in module context (tool_call_id={tool_call_id}, not in tracked set)")
+                continue
+            else:
+                # Not in module context and not a tracked tool call - exclude
+                logger.debug(f"Excluding ToolMessage outside module context (tool_call_id={tool_call_id})")
+                continue
+        
+        # For other messages (AIMessage, HumanMessage) without explicit module tags:
+        # If we're in this module's context (found welcome), include them
+        # This handles user messages and AI responses that are part of this module's conversation
+        if in_module_context:
+            filtered.append(msg)
+            
+            # Track tool_call_ids from AIMessages in this context
+            if isinstance(msg, AIMessage):
+                tool_calls = getattr(msg, 'tool_calls', None) or []
+                for tool_call in tool_calls:
+                    # Handle both dict and object formats
+                    if isinstance(tool_call, dict):
+                        tool_call_id = tool_call.get('id')
+                    else:
+                        tool_call_id = getattr(tool_call, 'id', None)
+                    if tool_call_id:
+                        module_tool_call_ids.add(str(tool_call_id))
+                        logger.debug(f"Tracking tool_call_id {tool_call_id} for module {module_name}")
+            
+            logger.debug(f"Including message in module context (no tag): {type(msg).__name__}")
+        else:
+            # Not in module context and no explicit tag - exclude
+            logger.debug(f"Excluding message outside module context: {type(msg).__name__}")
+    
+    logger.info(
+        f"Filtered {len(messages)} messages to {len(filtered)} "
+        f"messages for module {module_name} (tracked {len(module_tool_call_ids)} tool_call_ids)"
+    )
+    return filtered
+
+
 class MessageFilterMiddleware(AgentMiddleware):
     """
     Middleware that filters messages to only include those relevant to a specific module.
@@ -46,12 +179,7 @@ class MessageFilterMiddleware(AgentMiddleware):
         """
         Filter messages to only include those relevant to this module.
         
-        This improved filtering logic:
-        1. Always includes SystemMessages
-        2. Finds the module's welcome message (tagged with module_name)
-        3. Includes all messages after the welcome until hitting another module's message
-        4. Includes ToolMessages that are responses to this module's tool calls
-        5. Tracks tool_call_ids from this module's AIMessages to include their ToolMessages
+        Delegates to the shared filter_module_messages function.
         
         Args:
             messages: List of all messages in the conversation
@@ -59,117 +187,7 @@ class MessageFilterMiddleware(AgentMiddleware):
         Returns:
             Filtered list of messages relevant to this module
         """
-        filtered = []
-        welcome_found = False
-        in_module_context = False
-        module_tool_call_ids: Set[str] = set()
-        
-        for msg in messages:
-            # Always include system messages (thread_id context, etc.)
-            if isinstance(msg, SystemMessage):
-                filtered.append(msg)
-                self.logger.debug(f"[FILTER] Including SystemMessage: {str(msg.content)[:50]}...")
-                continue
-            
-            # Check if message is explicitly tagged with a module_name
-            msg_module = None
-            if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs:
-                msg_module = msg.additional_kwargs.get('module_name')
-            
-            # If message is explicitly tagged with this module, include it
-            if msg_module == self.module_name:
-                filtered.append(msg)
-                welcome_found = True
-                in_module_context = True
-                
-                # Check if this is a welcome message
-                if isinstance(msg, AIMessage) and hasattr(msg, 'content'):
-                    content_lower = str(msg.content).lower()
-                    if 'welcome' in content_lower or self.module_name in content_lower:
-                        self.logger.debug(f"[FILTER] Found welcome message for {self.module_name}")
-                
-                # Track tool_call_ids from this module's AIMessages
-                if isinstance(msg, AIMessage):
-                    # Handle different formats of tool_calls
-                    tool_calls = getattr(msg, 'tool_calls', None) or []
-                    for tool_call in tool_calls:
-                        # Handle both dict and object formats
-                        if isinstance(tool_call, dict):
-                            tool_call_id = tool_call.get('id')
-                        else:
-                            tool_call_id = getattr(tool_call, 'id', None)
-                        if tool_call_id:
-                            module_tool_call_ids.add(str(tool_call_id))
-                            self.logger.debug(f"[FILTER] Tracking tool_call_id {tool_call_id} for module {self.module_name}")
-                
-                self.logger.debug(f"[FILTER] Including module-tagged message: {type(msg).__name__}")
-                continue
-            
-            # Exclude messages explicitly tagged with other modules
-            if msg_module and msg_module != self.module_name:
-                # This message belongs to another module - exclude it
-                # But don't reset in_module_context if we're already in a conversation chain
-                # Only reset if this is a clear boundary (like a supervisor message or another module's welcome)
-                if isinstance(msg, AIMessage):
-                    # Another module's AIMessage - this is a clear boundary
-                    in_module_context = False
-                    welcome_found = False
-                    self.logger.debug(f"[FILTER] Excluding message from other module: {msg_module}, resetting context")
-                else:
-                    # Other module's non-AI message - exclude but keep context for tool messages
-                    self.logger.debug(f"[FILTER] Excluding message from other module: {msg_module}")
-                continue
-            
-            # Handle ToolMessages - include if they're responses to this module's tool calls
-            if isinstance(msg, ToolMessage):
-                tool_call_id = getattr(msg, 'tool_call_id', None)
-                tool_call_id_str = str(tool_call_id) if tool_call_id else None
-                if tool_call_id_str and tool_call_id_str in module_tool_call_ids:
-                    # This ToolMessage is a response to this module's tool call
-                    filtered.append(msg)
-                    in_module_context = True  # Keep context active
-                    self.logger.debug(f"[FILTER] Including ToolMessage for tool_call_id {tool_call_id}")
-                    continue
-                elif in_module_context:
-                    # In module context but tool_call_id not tracked - might be from a previous iteration
-                    # Include it to maintain conversation flow (important for react-agent to see tool results)
-                    filtered.append(msg)
-                    self.logger.debug(f"[FILTER] Including ToolMessage in module context (tool_call_id={tool_call_id}, not in tracked set)")
-                    continue
-                else:
-                    # Not in module context and not a tracked tool call - exclude
-                    self.logger.debug(f"[FILTER] Excluding ToolMessage outside module context (tool_call_id={tool_call_id})")
-                    continue
-            
-            # For other messages (AIMessage, HumanMessage) without explicit module tags:
-            # If we're in this module's context (found welcome), include them
-            # This handles user messages and AI responses that are part of this module's conversation
-            if in_module_context:
-                filtered.append(msg)
-                
-                # Track tool_call_ids from AIMessages in this context
-                if isinstance(msg, AIMessage):
-                    tool_calls = getattr(msg, 'tool_calls', None) or []
-                    for tool_call in tool_calls:
-                        # Handle both dict and object formats
-                        if isinstance(tool_call, dict):
-                            tool_call_id = tool_call.get('id')
-                        else:
-                            tool_call_id = getattr(tool_call, 'id', None)
-                        if tool_call_id:
-                            module_tool_call_ids.add(str(tool_call_id))
-                            self.logger.debug(f"[FILTER] Tracking tool_call_id {tool_call_id} for module {self.module_name}")
-                
-                self.logger.debug(f"[FILTER] Including message in module context (no tag): {type(msg).__name__}")
-            else:
-                # Not in module context and no explicit tag - exclude
-                self.logger.debug(f"[FILTER] Excluding message outside module context: {type(msg).__name__}")
-        
-        self.logger.info(
-            f"[FILTER] Filtered {len(messages)} messages to {len(filtered)} "
-            f"messages for module {self.module_name} (tracked {len(module_tool_call_ids)} tool_call_ids)"
-        )
-        return filtered
+        return filter_module_messages(messages, self.module_name, self.logger)
     
     def before_model(self, state: AgentState, runtime: Runtime) -> Optional[dict[str, Any]]:
         """
@@ -313,29 +331,48 @@ class RelevanceGuardrailMiddleware(AgentMiddleware):
     they reach the agent, saving processing time and providing clear feedback to users.
     
     The evaluation uses an LLM to understand context and determine relevance, making
-    it more flexible than simple keyword matching.
+    it more flexible than simple keyword matching. It considers the full conversation
+    context of the module to avoid false positives when users respond to agent questions.
     """
     
-    def __init__(self, provider: str = None, model: str = None):
+    def __init__(self, module_name: str, provider: str = None, model: str = None):
         """
         Initialize the relevance guardrail middleware.
         
         Args:
+            module_name: The name of the module this guardrail is protecting
             provider: LLM provider for evaluation (defaults to global config)
             model: Model name for evaluation (defaults to global config, can use cheaper model)
         """
         super().__init__()
+        self.module_name = module_name
         self.provider = provider or global_config.DEFAULT_PROVIDER
         self.model = model or global_config.DEFAULT_MODEL
         # Create a lightweight LLM for evaluation
         # Using same provider/model but could be optimized to use cheaper model
+        # Explicitly disable streaming to prevent evaluation results from appearing in UI
         self.evaluation_llm = create_llm_with_fallback(
             provider=self.provider,
             model=self.model,
-            temperature=0.0  # Low temperature for consistent evaluation
+            temperature=0.0,  # Low temperature for consistent evaluation
+            streaming=False  # Disable streaming for internal evaluation
         )
-        self.logger = get_logger("vitess_ai.server_agents.module_middleware.RelevanceGuardrailMiddleware", level=logging.INFO)
-        self.logger.info(f"Initialized relevance guardrail with provider={self.provider}, model={self.model}")
+        self.logger = get_logger(f"vitess_ai.server_agents.module_middleware.RelevanceGuardrailMiddleware.{module_name}", level=logging.INFO)
+        self.logger.info(f"Initialized relevance guardrail for module {module_name} with provider={self.provider}, model={self.model}")
+    
+    def _filter_module_messages(self, messages: list[BaseMessage]) -> list[BaseMessage]:
+        """
+        Filter messages to only include those relevant to this module.
+        
+        Delegates to the shared filter_module_messages function.
+        
+        Args:
+            messages: List of all messages in the conversation
+            
+        Returns:
+            Filtered list of messages relevant to this module
+        """
+        return filter_module_messages(messages, self.module_name, self.logger)
     
     def _get_latest_user_message(self, messages: list[BaseMessage]) -> Optional[HumanMessage]:
         """
@@ -353,17 +390,54 @@ class RelevanceGuardrailMiddleware(AgentMiddleware):
                 return msg
         return None
     
-    def _evaluate_relevance(self, user_message: str) -> bool:
+    def _format_conversation_context(self, conversation_context: list[BaseMessage]) -> str:
+        """
+        Format conversation context into a readable string for the evaluation prompt.
+        
+        Args:
+            conversation_context: List of messages in the conversation context
+            
+        Returns:
+            Formatted string representation of the conversation
+        """
+        formatted_messages = []
+        for msg in conversation_context:
+            if isinstance(msg, SystemMessage):
+                formatted_messages.append(f"System: {str(msg.content)[:200]}...")
+            elif isinstance(msg, HumanMessage):
+                formatted_messages.append(f"User: {str(msg.content)}")
+            elif isinstance(msg, AIMessage):
+                # Truncate long AI messages for context
+                content = str(msg.content)
+                if len(content) > 300:
+                    content = content[:300] + "..."
+                formatted_messages.append(f"Assistant: {content}")
+            elif isinstance(msg, ToolMessage):
+                # Include tool messages but keep them brief
+                formatted_messages.append(f"Tool: {str(msg.content)[:150]}...")
+        
+        return "\n".join(formatted_messages) if formatted_messages else "No previous conversation context."
+    
+    def _evaluate_relevance(self, conversation_context: list[BaseMessage], latest_user_message: str) -> bool:
         """
         Use LLM to evaluate if the user's question is relevant to Vitess/neutron experiments.
         
+        This evaluation considers the full conversation context to avoid false positives
+        when users respond to agent questions (e.g., "yes", "no", "keep default").
+        
         Args:
-            user_message: The user's question/input
+            conversation_context: The full conversation context for this module
+            latest_user_message: The latest user message to evaluate
             
         Returns:
             True if relevant, False if unrelated
         """
-        evaluation_prompt = f"""You are evaluating whether a user's question is relevant to Vitess simulation software or neutron experiment simulations.
+        # Format conversation context for the prompt
+        context_str = self._format_conversation_context(conversation_context)
+        
+        evaluation_prompt = f"""You are evaluating whether a user's latest message is relevant to Vitess simulation software or neutron experiment simulations.
+
+IMPORTANT: Consider the FULL CONVERSATION CONTEXT when evaluating. Short responses like "yes", "no", "keep default", or parameter values are often valid responses to agent questions and should be considered RELEVANT if they occur in the context of a Vitess/neutron experiment conversation.
 
 RELEVANT TOPICS INCLUDE:
 - Vitess software usage, configuration, parameters, and simulation setup
@@ -373,6 +447,8 @@ RELEVANT TOPICS INCLUDE:
 - Parameter configuration for physics simulations
 - File management for simulation data
 - Simulation execution and monitoring
+- Responses to agent questions about configuration, parameters, or simulation setup
+- Short confirmations or answers in the context of an ongoing Vitess/neutron conversation
 
 UNRELATED TOPICS (should be rejected):
 - General questions about unrelated software
@@ -381,10 +457,15 @@ UNRELATED TOPICS (should be rejected):
 - Questions about unrelated scientific domains
 - Personal questions or casual conversation
 - Questions about other simulation software (unless comparing to Vitess)
+- Topics completely unrelated to the conversation context
 
-User's question: "{user_message}"
+CONVERSATION CONTEXT:
+{context_str}
 
-Evaluate if this question is relevant to Vitess or neutron experiment simulations.
+User's latest message: "{latest_user_message}"
+
+Evaluate if this message is relevant to Vitess or neutron experiment simulations, considering the conversation context.
+If the message is a response to an agent question in the context of Vitess/neutron experiments, it should be considered RELEVANT.
 Respond with ONLY one word: "RELEVANT" or "UNRELATED"."""
 
         try:
@@ -396,7 +477,8 @@ Respond with ONLY one word: "RELEVANT" or "UNRELATED"."""
             
             self.logger.debug(
                 f"[GUARDRAIL] Evaluation result: {result}, is_relevant={is_relevant} "
-                f"for message: {user_message[:100]}..."
+                f"for message: {latest_user_message[:100]}... "
+                f"(context: {len(conversation_context)} messages)"
             )
             
             return is_relevant
@@ -414,7 +496,8 @@ Respond with ONLY one word: "RELEVANT" or "UNRELATED"."""
         Check user input relevance before agent processes it.
         
         This hook is called before the agent processes the input. It evaluates
-        if the user's question is related to Vitess or neutron experiments.
+        if the user's question is related to Vitess or neutron experiments,
+        considering the full conversation context of the module.
         If unrelated, it blocks execution and returns a polite rejection message.
         
         Args:
@@ -431,11 +514,18 @@ Respond with ONLY one word: "RELEVANT" or "UNRELATED"."""
             self.logger.debug("[GUARDRAIL] No messages to evaluate")
             return None
         
-        # Get the latest user message
-        user_message = self._get_latest_user_message(messages)
+        # Filter messages to get this module's conversation context
+        filtered_messages = self._filter_module_messages(messages)
+        
+        if not filtered_messages:
+            self.logger.debug("[GUARDRAIL] No filtered messages found, allowing processing")
+            return None
+        
+        # Get the latest user message from the filtered context
+        user_message = self._get_latest_user_message(filtered_messages)
         
         if not user_message:
-            self.logger.debug("[GUARDRAIL] No user message found, allowing processing")
+            self.logger.debug("[GUARDRAIL] No user message found in filtered context, allowing processing")
             return None
         
         user_content = str(user_message.content).strip()
@@ -445,8 +535,9 @@ Respond with ONLY one word: "RELEVANT" or "UNRELATED"."""
             self.logger.debug("[GUARDRAIL] Message too short, allowing through")
             return None
         
-        # Evaluate relevance
-        is_relevant = self._evaluate_relevance(user_content)
+        # Evaluate relevance with full conversation context
+        # Pass all filtered messages as context, including the latest user message
+        is_relevant = self._evaluate_relevance(filtered_messages, user_content)
         
         if not is_relevant:
             # Block execution and return polite rejection message
@@ -462,7 +553,8 @@ Respond with ONLY one word: "RELEVANT" or "UNRELATED"."""
             )
             
             self.logger.info(
-                f"[GUARDRAIL] Blocked unrelated question: {user_content[:100]}..."
+                f"[GUARDRAIL] Blocked unrelated question: {user_content[:100]}... "
+                f"(context: {len(filtered_messages)} messages)"
             )
             
             return {

@@ -426,6 +426,7 @@ class SupervisorAgent:
             # Create middleware for this module
             # Relevance guardrail first to catch unrelated questions early
             relevance_guardrail = RelevanceGuardrailMiddleware(
+                module_name=module_name,
                 provider=self.config.provider,
                 model=self.config.model
             )

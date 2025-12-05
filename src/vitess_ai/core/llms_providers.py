@@ -44,14 +44,18 @@ class LLMFactory:
     @staticmethod
     def _create_openai(model: str, temperature: float, **kwargs) -> ChatOpenAI:
         """Create OpenAI LLM"""
-        return ChatOpenAI(
-            api_key=global_config.OPENAI_API_KEY,
-            model=model,
-            temperature=temperature,
-            max_tokens=kwargs.get('max_tokens', global_config.MAX_TOKENS),
-            timeout=kwargs.get('timeout', global_config.TIMEOUT_SECONDS),
-            max_retries=kwargs.get('max_retries', global_config.MAX_RETRIES)
-        )
+        llm_kwargs = {
+            'api_key': global_config.OPENAI_API_KEY,
+            'model': model,
+            'temperature': temperature,
+            'max_tokens': kwargs.get('max_tokens', global_config.MAX_TOKENS),
+            'timeout': kwargs.get('timeout', global_config.TIMEOUT_SECONDS),
+            'max_retries': kwargs.get('max_retries', global_config.MAX_RETRIES),
+        }
+        # Only set streaming if explicitly provided in kwargs
+        if 'streaming' in kwargs:
+            llm_kwargs['streaming'] = kwargs['streaming']
+        return ChatOpenAI(**llm_kwargs)
     
     @staticmethod
     def _create_blablador(model: str, temperature: float, **kwargs) -> ChatOpenAI:
@@ -62,15 +66,19 @@ class LLMFactory:
         is passed to ChatOpenAI which will raise a timeout error if exceeded.
         """
         timeout = kwargs.get('timeout', global_config.TIMEOUT_SECONDS)
-        return ChatOpenAI(
-            api_key=global_config.BLABLADOR_API_KEY,
-            base_url=global_config.BLABLADOR_BASE_URL,
-            model=model,
-            temperature=temperature,
-            max_tokens=kwargs.get('max_tokens', global_config.MAX_TOKENS),
-            timeout=timeout,  # Timeout in seconds - prevents hanging on Blablador
-            max_retries=kwargs.get('max_retries', global_config.MAX_RETRIES)
-        )
+        llm_kwargs = {
+            'api_key': global_config.BLABLADOR_API_KEY,
+            'base_url': global_config.BLABLADOR_BASE_URL,
+            'model': model,
+            'temperature': temperature,
+            'max_tokens': kwargs.get('max_tokens', global_config.MAX_TOKENS),
+            'timeout': timeout,  # Timeout in seconds - prevents hanging on Blablador
+            'max_retries': kwargs.get('max_retries', global_config.MAX_RETRIES),
+        }
+        # Only set streaming if explicitly provided in kwargs
+        if 'streaming' in kwargs:
+            llm_kwargs['streaming'] = kwargs['streaming']
+        return ChatOpenAI(**llm_kwargs)
 
 
 def create_llm_with_fallback(
