@@ -8,11 +8,13 @@ only sees its own conversation context, maintaining independence between modules
 import logging
 import os
 from typing import Any, Optional, Set
-from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 from vitess_ai.core.log import get_logger
+from vitess_ai.core.llms_providers import create_llm_with_fallback
+from vitess_ai.core.config import global_config
 
 
 class MessageFilterMiddleware(AgentMiddleware):
@@ -300,3 +302,173 @@ class ThreadIdMiddleware(AgentMiddleware):
         self.logger.info(f"[THREAD_ID] Added thread_id={thread_id} context to messages")
         
         return {'messages': updated_messages}
+
+
+class RelevanceGuardrailMiddleware(AgentMiddleware):
+    """
+    Middleware that guards against unrelated questions using LLM-based evaluation.
+    
+    This guardrail ensures that only questions related to Vitess or neutron experiment
+    simulations are processed by the agents. Unrelated questions are blocked before
+    they reach the agent, saving processing time and providing clear feedback to users.
+    
+    The evaluation uses an LLM to understand context and determine relevance, making
+    it more flexible than simple keyword matching.
+    """
+    
+    def __init__(self, provider: str = None, model: str = None):
+        """
+        Initialize the relevance guardrail middleware.
+        
+        Args:
+            provider: LLM provider for evaluation (defaults to global config)
+            model: Model name for evaluation (defaults to global config, can use cheaper model)
+        """
+        super().__init__()
+        self.provider = provider or global_config.DEFAULT_PROVIDER
+        self.model = model or global_config.DEFAULT_MODEL
+        # Create a lightweight LLM for evaluation
+        # Using same provider/model but could be optimized to use cheaper model
+        self.evaluation_llm = create_llm_with_fallback(
+            provider=self.provider,
+            model=self.model,
+            temperature=0.0  # Low temperature for consistent evaluation
+        )
+        self.logger = get_logger("vitess_ai.server_agents.module_middleware.RelevanceGuardrailMiddleware", level=logging.INFO)
+        self.logger.info(f"Initialized relevance guardrail with provider={self.provider}, model={self.model}")
+    
+    def _get_latest_user_message(self, messages: list[BaseMessage]) -> Optional[HumanMessage]:
+        """
+        Extract the latest user message from the message list.
+        
+        Args:
+            messages: List of messages in the conversation
+            
+        Returns:
+            The latest HumanMessage, or None if not found
+        """
+        # Iterate backwards to find the most recent user message
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                return msg
+        return None
+    
+    def _evaluate_relevance(self, user_message: str) -> bool:
+        """
+        Use LLM to evaluate if the user's question is relevant to Vitess/neutron experiments.
+        
+        Args:
+            user_message: The user's question/input
+            
+        Returns:
+            True if relevant, False if unrelated
+        """
+        evaluation_prompt = f"""You are evaluating whether a user's question is relevant to Vitess simulation software or neutron experiment simulations.
+
+RELEVANT TOPICS INCLUDE:
+- Vitess software usage, configuration, parameters, and simulation setup
+- Neutron experiment setup, analysis, simulation, and data processing
+- Physics simulations related to neutron experiments
+- Scientific computing workflows for these domains
+- Parameter configuration for physics simulations
+- File management for simulation data
+- Simulation execution and monitoring
+
+UNRELATED TOPICS (should be rejected):
+- General questions about unrelated software
+- Questions about other physics experiments (unless clearly related to neutrons)
+- General programming questions not related to simulations
+- Questions about unrelated scientific domains
+- Personal questions or casual conversation
+- Questions about other simulation software (unless comparing to Vitess)
+
+User's question: "{user_message}"
+
+Evaluate if this question is relevant to Vitess or neutron experiment simulations.
+Respond with ONLY one word: "RELEVANT" or "UNRELATED"."""
+
+        try:
+            response = self.evaluation_llm.invoke([HumanMessage(content=evaluation_prompt)])
+            result = response.content.strip().upper()
+            
+            # Check if response indicates relevance
+            is_relevant = "RELEVANT" in result and "UNRELATED" not in result
+            
+            self.logger.debug(
+                f"[GUARDRAIL] Evaluation result: {result}, is_relevant={is_relevant} "
+                f"for message: {user_message[:100]}..."
+            )
+            
+            return is_relevant
+            
+        except Exception as e:
+            self.logger.error(f"[GUARDRAIL] Error during relevance evaluation: {e}", exc_info=True)
+            # On error, allow the message through to avoid blocking legitimate questions
+            # This is a fail-open approach for better user experience
+            self.logger.warning("[GUARDRAIL] Evaluation failed, allowing message through (fail-open)")
+            return True
+    
+    @hook_config(can_jump_to=["end"])
+    def before_agent(self, state: AgentState, runtime: Runtime) -> Optional[dict[str, Any]]:
+        """
+        Check user input relevance before agent processes it.
+        
+        This hook is called before the agent processes the input. It evaluates
+        if the user's question is related to Vitess or neutron experiments.
+        If unrelated, it blocks execution and returns a polite rejection message.
+        
+        Args:
+            state: The agent state containing messages
+            runtime: The runtime context
+            
+        Returns:
+            Dictionary with rejection message and jump_to="end" if unrelated,
+            None if relevant (allows normal processing)
+        """
+        messages = state.get('messages', [])
+        
+        if not messages:
+            self.logger.debug("[GUARDRAIL] No messages to evaluate")
+            return None
+        
+        # Get the latest user message
+        user_message = self._get_latest_user_message(messages)
+        
+        if not user_message:
+            self.logger.debug("[GUARDRAIL] No user message found, allowing processing")
+            return None
+        
+        user_content = str(user_message.content).strip()
+        
+        # Skip evaluation for very short messages or system messages
+        if len(user_content) < 3:
+            self.logger.debug("[GUARDRAIL] Message too short, allowing through")
+            return None
+        
+        # Evaluate relevance
+        is_relevant = self._evaluate_relevance(user_content)
+        
+        if not is_relevant:
+            # Block execution and return polite rejection message
+            rejection_message = (
+                "I'm specialized in helping with Vitess simulation software and neutron experiment simulations. "
+                "Your question seems to be outside my area of expertise. "
+                "Please ask questions related to:\n"
+                "- Vitess software configuration and parameters\n"
+                "- Neutron experiment setup and simulation\n"
+                "- Physics simulation workflows\n"
+                "- Scientific computing for these domains\n\n"
+                "How can I help you with your Vitess or neutron experiment simulation?"
+            )
+            
+            self.logger.info(
+                f"[GUARDRAIL] Blocked unrelated question: {user_content[:100]}..."
+            )
+            
+            return {
+                "messages": [AIMessage(content=rejection_message)],
+                "jump_to": "end"
+            }
+        
+        self.logger.debug(f"[GUARDRAIL] Question is relevant, allowing processing")
+        return None
