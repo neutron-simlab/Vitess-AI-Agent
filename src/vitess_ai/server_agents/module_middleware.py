@@ -196,8 +196,8 @@ class MessageFilterMiddleware(AgentMiddleware):
         # Only return update if filtering actually changed the message list
         if len(filtered_messages) != len(messages):
             self.logger.info(
-                f"[FILTER] Filtering messages: {len(messages)} -> {len(filtered_messages)} "
-                f"for module {self.module_name}"
+                f"[FILTER] Filtered {len(messages)} messages to {len(filtered_messages)} "
+                f"messages for module {self.module_name}"
             )
             # Return filtered messages - the middleware system will use these for the model call
             # Note: We're modifying the messages that will be passed to the model,

@@ -429,7 +429,8 @@ class SupervisorAgent:
                 middleware=[message_filter, thread_id_middleware]
             )
             # Wrap react-agent to handle state updates and welcome messages
-            wrapped_agent = self._create_module_wrapper(module_name, react_agent)
+            # Pass message_filter so wrapper can use same filtering logic for pre-filtering
+            wrapped_agent = self._create_module_wrapper(module_name, react_agent, message_filter)
             workflow.add_node(f"{module_name}_agent", wrapped_agent)
             
         # Routing edges
@@ -994,16 +995,22 @@ Configuration is complete. The simulation parameters are ready for execution.
         self.logger.info(f"[ROUTING] Module {module_name} ENDed waiting for input, ending graph to wait for user")
         return END
     
-    def _create_module_wrapper(self, module_name: str, react_agent):
+    def _create_module_wrapper(self, module_name: str, react_agent, message_filter: MessageFilterMiddleware):
         """
         Create a wrapper around react-agent to handle state updates.
         
         This wrapper:
         - Checks if welcome message needs to be shown
-        - Invokes the react-agent
+        - Pre-filters messages using the same middleware logic (for consistency)
+        - Invokes the react-agent (middleware will also filter during LLM calls)
         - Checks for module completion from tool results
         - Updates ModuleResult in state when complete
         - Manages current_active_module
+        
+        Args:
+            module_name: Name of the module
+            react_agent: The react-agent instance
+            message_filter: MessageFilterMiddleware instance to use for pre-filtering
         """
         async def wrapper_node(state: UnifiedState):
             """Wrapper node that invokes react-agent and handles state updates"""
@@ -1102,24 +1109,23 @@ Configuration is complete. The simulation parameters are ready for execution.
             
             # Invoke react-agent
             try:
-                # Filter out supervisor welcome message from messages before passing to react-agent
-                # The supervisor welcome message should only appear at the start of the chat, not in module conversations
-                filtered_messages = []
-                for msg in invoke_state.get('messages', []):
-                    # Skip supervisor welcome message
-                    if (hasattr(msg, 'additional_kwargs') and 
-                        msg.additional_kwargs.get('module_name') == 'supervisor' and
-                        hasattr(msg, 'content') and 
-                        'Neutron Simulation Configuration System' in str(msg.content)):
-                        continue
-                    filtered_messages.append(msg)
+                # Pre-filter messages using the same MessageFilterMiddleware logic that will be used
+                # during LLM calls. This ensures consistency - we use the middleware's filter method
+                # to pre-filter, and the middleware will also filter during execution.
+                # This way, the react-agent sees filtered messages from the start, and the middleware
+                # provides an additional safety filter during LLM calls.
+                all_messages = invoke_state.get('messages', [])
+                filtered_messages = message_filter._filter_module_messages(all_messages)
                 
-                # Create filtered invoke_state without supervisor welcome message
+                self.logger.info(f"[PRE_FILTER] Using middleware filter: {len(all_messages)} -> {len(filtered_messages)} messages for module {module_name}")
+                
+                # Create filtered invoke_state with pre-filtered messages
                 filtered_invoke_state = {**invoke_state, 'messages': filtered_messages}
                 
-                # React-agent expects messages in state
-                # invoke_state already includes welcome message and config_mode if detected
-                self.logger.debug(f"[REACT_AGENT] Invoking react-agent for module {module_name} with config_mode='{config_mode}' (filtered {len(invoke_state.get('messages', [])) - len(filtered_messages)} supervisor welcome messages)")
+                # React-agent expects messages in state (already pre-filtered by MessageFilterMiddleware)
+                # The middleware will also filter during LLM calls as an additional safety measure
+                messages_to_agent = filtered_invoke_state.get('messages', [])
+                self.logger.info(f"[REACT_AGENT] Invoking react-agent for module {module_name} with {len(messages_to_agent)} pre-filtered messages")
                 # Set recursion_limit to 50 to allow more iterations before hitting limit
                 config = RunnableConfig(recursion_limit=50)
                 result = await react_agent.ainvoke(filtered_invoke_state, config=config)
@@ -1127,6 +1133,21 @@ Configuration is complete. The simulation parameters are ready for execution.
                 # Check if module is complete by examining tool results in messages
                 # IMPORTANT: Only check result_messages (from current invocation) to avoid picking up validation from previous modules
                 result_messages = result.get('messages', [])
+                
+                # Annotate the last AIMessage with module_name for MessageFilterMiddleware
+                # This allows the middleware to properly filter inactive modules
+                if (result_messages and 
+                    isinstance(result_messages, list) and 
+                    result_messages != '_end_' and
+                    len(result_messages) > 0):
+                    last_message = result_messages[-1]
+                    if isinstance(last_message, AIMessage):
+                        # Ensure additional_kwargs exists
+                        if not hasattr(last_message, 'additional_kwargs') or last_message.additional_kwargs is None:
+                            last_message.additional_kwargs = {}
+                        # Annotate with module_name for MessageFilterMiddleware
+                        last_message.additional_kwargs['module_name'] = module_name
+                        self.logger.debug(f"[ANNOTATION] Annotated last AIMessage with module_name={module_name}")
                 
                 self.logger.debug(f"[VALIDATION] Checking validation status for module {module_name}: {len(result_messages)} new messages from current invocation")
                 
