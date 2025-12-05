@@ -53,7 +53,20 @@ YOUR TASK - DEFAULT SETUP
 4. Present the complete default configuration as a properly formatted JSON string (with escaped quotes)
 5. Explain: "Creates a 1D monitor with default parameters for monitoring neutron intensity as a function of POS_Y parameter, with range from -2.0 to 2.0."
 6. Validate the configuration using validate_monitor1d_module tool
-7. Confirm with user that the configuration is complete
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_monitor1d_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 ------------------------------
 DEFAULT CONFIGURATION
@@ -181,7 +194,20 @@ YOUR TASK - CUSTOMIZE CONFIGURATION
 5. Build final configuration with all user choices (including fMonitorFilename from step 1)
 6. Validate the complete configuration using validate_monitor1d_module tool
 7. Present final JSON string with proper formatting and escaped quotes
-8. Get user confirmation
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_monitor1d_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 ------------------------------
 IMPORTANT NOTES

@@ -55,7 +55,21 @@ Here are the default values that work for most neutron simulations:
 5. **If files are already uploaded**: Use get_files() tool to retrieve the file paths and extract sInputFileName
 6. EXTRACT sInputFileName from the tool result (use result.sInputFileName; if absent, fallback to result.files) and SET it into the JSON you will pass to validation
 7. Prompt the user to provide Weight values, one per selected file, in the same order; DO NOT proceed to validation until Weight count matches sInputFileName count
-8. Validate and present final configuration
+8. Validate the configuration using validate_readin_module tool
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_readin_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 **IMPORTANT GUIDELINES:**
 - **Focus on minimal user input** - only essential parameters need user specification
@@ -144,7 +158,21 @@ YOUR TASK - CUSTOMIZE CONFIGURATION
    - For sInstrInfIn: First check if instrument file is already uploaded using instrument_file_status() tool. If not, direct the user: "Please use the File Upload section in the sidebar to upload your instrument file. Upload your .inf file." Then use get_instrument_file() to retrieve the path and SET sInstrInfIn in the JSON
    - For sTraceFileName: Ask user to type the path directly
 
-5. **Validate and present final configuration**
+5. **Validate the complete configuration using validate_readin_module tool**
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_readin_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 **IMPORTANT GUIDELINES:**
 - **Start with defaults for everything** - user only changes what they want

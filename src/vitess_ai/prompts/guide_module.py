@@ -56,7 +56,20 @@ Optimal default values for most neutron guide simulations:
 6. Extract ShapeFileName from the tool result and SET it into the JSON you will pass to validation
 7. Present final JSON configuration as a properly formatted JSON string (with escaped quotes)
 8. Validate the configuration using validate_guide_module tool
-9. Confirm with user that the configuration is complete
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_guide_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 ------------------------------
 IMPORTANT NOTES
@@ -134,7 +147,20 @@ YOUR TASK - CUSTOMIZE CONFIGURATION
 8. Build final configuration with all user choices
 9. Validate the complete configuration using validate_guide_module tool
 10. Present final JSON string with proper formatting and escaped quotes
-11. Get user confirmation
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_guide_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 ------------------------------
 IMPORTANT NOTES

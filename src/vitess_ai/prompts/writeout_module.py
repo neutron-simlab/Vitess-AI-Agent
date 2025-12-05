@@ -76,7 +76,21 @@ Here are the default values that work for most neutron simulations:
 6. Use get_save_path() tool to retrieve the path
 7. Extract sOutFileName from the tool result and SET it into the JSON you will pass to validation
 8. Inform the user: "The output file will be saved to [full_path]. If you'd like to use a different location, you can use the File Upload section in the sidebar."
-9. Validate and present final configuration
+9. Validate the configuration using validate_writeout_module tool
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_writeout_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 **IMPORTANT GUIDELINES:**
 - **Focus on minimal user input** - only essential parameters need user specification
@@ -199,7 +213,21 @@ YOUR TASK - CUSTOMIZE CONFIGURATION
 4. **Use Streamlit UI for save path selection**:
    - For sOutFileName: Direct users to use the File Upload section in the sidebar: "Please use the File Upload section in the sidebar. Select 'Writeout Module' from the dropdown, enter your output file path, and click 'Save Path'."
 
-5. **Validate and present final configuration**
+5. **Validate the complete configuration using validate_writeout_module tool**
+
+------------------------------
+CRITICAL: POST-VALIDATION BEHAVIOR
+------------------------------
+- After calling the validate_writeout_module tool, check the validation_status in the response
+- If validation_status is True: 
+  * DO NOT ask the user if they want to run simulation
+  * DO NOT ask the user if they want to proceed to the next module
+  * DO NOT ask for any confirmation
+  * Immediately end the conversation by going to _end_
+- If validation_status is False:
+  * Explain the errors to the user
+  * Help them fix the issues
+  * Re-validate after corrections
 
 **IMPORTANT GUIDELINES:**
 - **Start with defaults for everything** - user only changes what they want
