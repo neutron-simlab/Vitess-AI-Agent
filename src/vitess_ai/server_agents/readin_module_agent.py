@@ -6,8 +6,9 @@ architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
-from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
+from vitess_ai.server_agents.base_module_agent import BaseModuleAgent, ModuleBuilder
 from vitess_ai.prompts.readin_module import READIN_AGENT_WELCOME, READIN_AGENT_DEFAULT_PROMPT, READIN_AGENT_CUSTOM_PROMPT
+from vitess_ai.core.config import global_config
 
 
 class ReadInModuleAgent(BaseModuleAgent):
@@ -46,6 +47,19 @@ class ReadInModuleAgent(BaseModuleAgent):
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
         return "readin_params"
+    
+    @classmethod
+    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+        """Register the readin module with the supervisor"""
+        module = ModuleBuilder.create(
+            name="readin",
+            display_name="Read-in Parameters",
+            description="Configure neutron input parameters and initial conditions",
+            agent_class=cls,
+            config_path=config_path or global_config.READIN_MCP_PATH,
+            order=1
+        )
+        supervisor.register_module(module)
     
     def get_completion_message(self, state: dict = None) -> str:
         """Message shown on successful completion"""

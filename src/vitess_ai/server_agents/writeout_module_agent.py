@@ -6,8 +6,9 @@ architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
-from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
+from vitess_ai.server_agents.base_module_agent import BaseModuleAgent, ModuleBuilder
 from vitess_ai.prompts.writeout_module import WRITEOUT_AGENT_WELCOME, WRITEOUT_AGENT_DEFAULT_PROMPT, WRITEOUT_AGENT_CUSTOM_PROMPT
+from vitess_ai.core.config import global_config
 
 
 class WriteoutModuleAgent(BaseModuleAgent):
@@ -46,6 +47,19 @@ class WriteoutModuleAgent(BaseModuleAgent):
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
         return "writeout_params"
+    
+    @classmethod
+    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+        """Register the writeout module with the supervisor"""
+        module = ModuleBuilder.create(
+            name="writeout",
+            display_name="Writeout Parameters",
+            description="Configure output settings and data formats",
+            agent_class=cls,
+            config_path=config_path or global_config.WRITEOUT_MCP_PATH,
+            order=3
+        )
+        supervisor.register_module(module)
     
     def get_completion_message(self, state: dict = None) -> str:
         """Message shown on successful completion"""

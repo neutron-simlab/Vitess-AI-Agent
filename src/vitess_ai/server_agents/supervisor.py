@@ -10,7 +10,6 @@ import json
 import time
 from typing import Dict, List, Any, Optional
 from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import InMemorySaver
@@ -18,15 +17,13 @@ from langgraph.checkpoint.memory import InMemorySaver
 from vitess_ai.schema.supervisor import (
     SupervisorConfig, SupervisorStage
 )
-from vitess_ai.schema.base import FillingStage
 from vitess_ai.core.registry import ModuleRegistry
 from vitess_ai.core.log import get_logger
 from vitess_ai.server_agents.base_module_agent import (
     BaseModuleAgent,
-    ModuleBuilder, 
     ModuleMetadata,
 )
-from vitess_ai.server_agents.unified_state import UnifiedState, ModuleResult
+from vitess_ai.server_agents.unified_state import UnifiedState
 from vitess_ai.server_agents.module_middleware import (
     MessageFilterMiddleware, 
     ThreadIdMiddleware,
@@ -155,72 +152,27 @@ class SupervisorAgent:
     def add_readin_module(self, config_path: str = None) -> None:
         """Add the standard readin module"""
         from vitess_ai.server_agents.readin_module_agent import ReadInModuleAgent
-        
-        module = ModuleBuilder.create(
-            name="readin",
-            display_name="Read-in Parameters",
-            description="Configure neutron input parameters and initial conditions",
-            agent_class=ReadInModuleAgent,  # Use agent class
-            config_path=config_path or global_config.READIN_MCP_PATH,
-            order=1
-        )
-        self.register_module(module)
+        ReadInModuleAgent.register_with_supervisor(self, config_path)
     
     def add_guide_module(self, config_path: str = None) -> None:
         """Add the standard guide module"""  
         from vitess_ai.server_agents.guide_module_agent import GuideModuleAgent
-        
-        module = ModuleBuilder.create(
-            name="guide",
-            display_name="Guide Parameters", 
-            description="Configure neutron guide specifications and geometry",
-            agent_class=GuideModuleAgent,  # Use agent class
-            config_path=config_path or global_config.GUIDE_MCP_PATH,
-            order=2
-        )
-        self.register_module(module)
+        GuideModuleAgent.register_with_supervisor(self, config_path)
     
     def add_writeout_module(self, config_path: str = None) -> None:
         """Add the standard writeout module"""
         from vitess_ai.server_agents.writeout_module_agent import WriteoutModuleAgent
-        
-        module = ModuleBuilder.create(
-            name="writeout",
-            display_name="Writeout Parameters",
-            description="Configure output settings and data formats", 
-            agent_class=WriteoutModuleAgent,  # Use agent class
-            config_path=config_path or global_config.WRITEOUT_MCP_PATH,
-            order=3
-        )
-        self.register_module(module)
+        WriteoutModuleAgent.register_with_supervisor(self, config_path)
     
     def add_monitor1d_module(self, config_path: str = None) -> None:
         """Add the Monitor1D module"""
         from vitess_ai.server_agents.monitor1d_module_agent import Monitor1DModuleAgent
-        
-        module = ModuleBuilder.create(
-            name="monitor1d",
-            display_name="Monitor1D Parameters",
-            description="Configure 1D monitor parameters for neutron detection",
-            agent_class=Monitor1DModuleAgent,  # Use agent class
-            config_path=config_path or global_config.MONITOR_MCP_PATH,
-            order=4
-        )
-        self.register_module(module)
+        Monitor1DModuleAgent.register_with_supervisor(self, config_path)
     
     def add_monitor2d_module(self, config_path: str = None) -> None:
         """Add the Monitor2D module"""
         from vitess_ai.server_agents.monitor2d_module_agent import Monitor2DModuleAgent
-        
-        module = ModuleBuilder.create(
-            name="monitor2d",
-            display_name="Monitor2D Parameters",
-            description="Configure 2D monitor parameters for neutron detection",
-            agent_class=Monitor2DModuleAgent,  # Use agent class
-            config_path=config_path or global_config.MONITOR_MCP_PATH,
-            order=5
-        )
-        self.register_module(module)
+        Monitor2DModuleAgent.register_with_supervisor(self, config_path)
     
     def add_default_modules(self) -> None:
         """Add all default modules (readin, guide, writeout)"""
@@ -243,63 +195,15 @@ class SupervisorAgent:
         if not module_metadata:
             raise ValueError(f"Module '{module_name}' not registered")
         
-        # Setup MCP tools if config path provided
-        tools = []
-        if module_metadata.config_path:
-            try:
-                from langchain_mcp_adapters.client import MultiServerMCPClient
-                import os
-                
-                # Check transport mode
-                if global_config.is_mcp_http_mode():
-                    # Use HTTP transport (streamable-http for FastMCP compatibility)
-                    mcp_url = global_config.get_mcp_url(module_name)
-                    client = MultiServerMCPClient({
-                        "validation": {
-                            "url": mcp_url,
-                            "transport": "streamable_http",
-                            "headers": {
-                                "Content-Type": "application/json",
-                                "Accept": "application/json,text/event-stream",
-                                "MCP-Protocol-Version": "2024-11-05"
-                            }
-                        }
-                    })
-                    self.logger.info(f"Connecting to {module_name} MCP server via HTTP: {mcp_url}")
-                else:
-                    # Use stdio transport (development mode)
-                    # Prepare environment variables for MCP subprocess
-                    # Include current environment plus THREAD_ID and VITESS_THREAD_ID if available
-                    env = os.environ.copy()
-                    # Note: thread_id will be set dynamically when tools are called via service.py
-                    # The environment variables are passed at subprocess creation time
-                    # We'll pass current env vars, and service.py will update them before tool calls
-                    
-                    client = MultiServerMCPClient({
-                        "validation": {
-                            "command": "python",
-                            "args": [module_metadata.config_path],
-                            "transport": "stdio",
-                            "env": env  # Pass environment variables to subprocess
-                        }
-                    })
-                    self.logger.debug(f"MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
-                
-                tools = await client.get_tools()
-                self.logger.info(f"Loaded {len(tools)} MCP tools for {module_name}")
-            except Exception as e:
-                self.logger.warning(f"Failed to load MCP tools for {module_name}: {e}")
-        
-        # Create agent instance
-        agent = module_metadata.agent_class(
-            provider=self.config.provider, 
-            model=self.config.model, 
-            tools=tools
+        # Use BaseModuleAgent.setup_agent_instance to create the agent
+        agent = await BaseModuleAgent.setup_agent_instance(
+            module_metadata=module_metadata,
+            provider=self.config.provider,
+            model=self.config.model,
+            logger=self.logger
         )
         
         self.agent_instances[module_name] = agent
-        
-        self.logger.info(f"Initialized agent for module: {module_name}")
         return agent
     
     async def initialize(self, requested_modules: Optional[List[str]] = None, force_reinitialize: bool = False):
@@ -441,7 +345,7 @@ class SupervisorAgent:
             )
             # Wrap react-agent to handle state updates and welcome messages
             # Pass message_filter so wrapper can use same filtering logic for pre-filtering
-            wrapped_agent = self._create_module_wrapper(module_name, react_agent, message_filter)
+            wrapped_agent = agent.create_module_wrapper_node(react_agent, message_filter)
             workflow.add_node(f"{module_name}_agent", wrapped_agent)
             
         # Routing edges
@@ -1005,319 +909,6 @@ Configuration is complete. The simulation parameters are ready for execution.
         # and supervisor will route back to this active module
         self.logger.info(f"[ROUTING] Module {module_name} ENDed waiting for input, ending graph to wait for user")
         return END
-    
-    def _create_module_wrapper(self, module_name: str, react_agent, message_filter: MessageFilterMiddleware):
-        """
-        Create a wrapper around react-agent to handle state updates.
-        
-        This wrapper:
-        - Checks if welcome message needs to be shown
-        - Pre-filters messages using the same middleware logic (for consistency)
-        - Invokes the react-agent (middleware will also filter during LLM calls)
-        - Checks for module completion from tool results
-        - Updates ModuleResult in state when complete
-        - Manages current_active_module
-        
-        Args:
-            module_name: Name of the module
-            react_agent: The react-agent instance
-            message_filter: MessageFilterMiddleware instance to use for pre-filtering
-        """
-        async def wrapper_node(state: UnifiedState):
-            """Wrapper node that invokes react-agent and handles state updates"""
-            self.logger.info(f"[MODULE ENTRY] Entering module: {module_name}")
-            
-            agent = self.agent_instances[module_name]
-            messages = state.get('messages', [])
-            current_active = state.get('current_active_module')
-            
-            # Determine if this is a new module entry or resuming the same module
-            is_new_module = not current_active or current_active != module_name
-            
-            if is_new_module:
-                self.logger.info(f"[MODULE ENTRY] New module entry detected for {module_name} (previous active: {current_active})")
-                # Reset module-specific state when entering a new module
-                state_updates = {
-                    'current_active_module': module_name,
-                    'current_module': module_name,
-                }
-                self.logger.info(f"[STATE RESET] Reset module-specific state for {module_name} (config_mode will be module-specific)")
-            else:
-                self.logger.info(f"[MODULE RESUME] Resuming module: {module_name}")
-                state_updates = {'current_module': module_name}
-            
-            # Check if this is the first time entering this module
-            # If no messages from this module yet, add welcome message
-            if is_new_module:
-                has_module_welcome = False
-                for msg in messages:
-                    if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == module_name:
-                        has_module_welcome = True
-                        break
-                    # Also check if welcome message content is present
-                    if hasattr(msg, 'content') and agent.welcome_message in str(msg.content):
-                        has_module_welcome = True
-                        break
-                
-                # Add welcome message if not present
-                if not has_module_welcome:
-                    welcome_msg = AIMessage(
-                        content=agent.welcome_message,
-                        additional_kwargs={"module_name": module_name}
-                    )
-                    state_updates['messages'] = messages + [welcome_msg]
-                    self.logger.info(f"[WELCOME] Added welcome message for module: {module_name}")
-            
-            # Get module-specific config_mode from module_config_modes dict
-            # Prepare invoke state (with any updates we've made)
-            invoke_state = {**state, **state_updates} if state_updates else state
-            
-            # Get or initialize module_config_modes
-            module_config_modes = invoke_state.get('module_config_modes', {})
-            if not isinstance(module_config_modes, dict):
-                module_config_modes = {}
-            
-            # Get config_mode for this specific module
-            config_mode = module_config_modes.get(module_name, '')
-            
-            # If config_mode is not set but we have messages, try to detect it from CURRENT module only
-            if not config_mode:
-                all_messages = invoke_state.get('messages', [])
-                # Filter to only messages from the current module (simplified logic)
-                module_messages = [
-                    msg for msg in all_messages
-                    if (hasattr(msg, 'additional_kwargs') and 
-                        msg.additional_kwargs.get('module_name') == module_name) or
-                       (not hasattr(msg, 'additional_kwargs') or 
-                        not msg.additional_kwargs.get('module_name'))
-                ]
-                
-                self.logger.debug(f"[CONFIG_MODE] Searching for config_mode in {len(module_messages)} messages from module {module_name}")
-                
-                # Look for user responses indicating config mode choice in module-specific messages
-                for msg in reversed(module_messages):
-                    if hasattr(msg, 'content'):
-                        content = str(msg.content).lower()
-                        if 'default' in content and 'setup' in content:
-                            config_mode = 'Default Setup'
-                            module_config_modes[module_name] = config_mode
-                            state_updates['module_config_modes'] = module_config_modes
-                            invoke_state['module_config_modes'] = module_config_modes
-                            self.logger.info(f"[CONFIG_MODE] Detected config_mode='{config_mode}' for module {module_name}")
-                            break
-                        elif 'customize' in content or 'custom' in content:
-                            config_mode = 'Customize'
-                            module_config_modes[module_name] = config_mode
-                            state_updates['module_config_modes'] = module_config_modes
-                            invoke_state['module_config_modes'] = module_config_modes
-                            self.logger.info(f"[CONFIG_MODE] Detected config_mode='{config_mode}' for module {module_name}")
-                            break
-                
-                if not config_mode:
-                    self.logger.debug(f"[CONFIG_MODE] No config_mode detected for module {module_name}, will use dynamic detection in prompt")
-            else:
-                self.logger.info(f"[CONFIG_MODE] Using existing config_mode='{config_mode}' for module {module_name}")
-            
-            # Invoke react-agent
-            try:
-                # Pre-filter messages using the same MessageFilterMiddleware logic that will be used
-                # during LLM calls. This ensures consistency - we use the middleware's filter method
-                # to pre-filter, and the middleware will also filter during execution.
-                # This way, the react-agent sees filtered messages from the start, and the middleware
-                # provides an additional safety filter during LLM calls.
-                all_messages = invoke_state.get('messages', [])
-                filtered_messages = message_filter._filter_module_messages(all_messages)
-                
-                self.logger.info(f"[PRE_FILTER] Using middleware filter: {len(all_messages)} -> {len(filtered_messages)} messages for module {module_name}")
-                
-                # Create filtered invoke_state with pre-filtered messages
-                filtered_invoke_state = {**invoke_state, 'messages': filtered_messages}
-                
-                # React-agent expects messages in state (already pre-filtered by MessageFilterMiddleware)
-                # The middleware will also filter during LLM calls as an additional safety measure
-                messages_to_agent = filtered_invoke_state.get('messages', [])
-                self.logger.info(f"[REACT_AGENT] Invoking react-agent for module {module_name} with {len(messages_to_agent)} pre-filtered messages")
-                # Set recursion_limit to 50 to allow more iterations before hitting limit
-                config = RunnableConfig(recursion_limit=50)
-                result = await react_agent.ainvoke(filtered_invoke_state, config=config)
-                
-                # Check if module is complete by examining tool results in messages
-                # IMPORTANT: Only check result_messages (from current invocation) to avoid picking up validation from previous modules
-                result_messages = result.get('messages', [])
-                
-                # Annotate the last AIMessage with module_name for MessageFilterMiddleware
-                # This allows the middleware to properly filter inactive modules
-                if (result_messages and 
-                    isinstance(result_messages, list) and 
-                    result_messages != '_end_' and
-                    len(result_messages) > 0):
-                    last_message = result_messages[-1]
-                    if isinstance(last_message, AIMessage):
-                        # Ensure additional_kwargs exists
-                        if not hasattr(last_message, 'additional_kwargs') or last_message.additional_kwargs is None:
-                            last_message.additional_kwargs = {}
-                        # Annotate with module_name for MessageFilterMiddleware
-                        last_message.additional_kwargs['module_name'] = module_name
-                        self.logger.debug(f"[ANNOTATION] Annotated last AIMessage with module_name={module_name}")
-                
-                self.logger.debug(f"[VALIDATION] Checking validation status for module {module_name}: {len(result_messages)} new messages from current invocation")
-                
-                module_complete = False
-                validated_params = {}
-                cli_params = ""
-                validation_source = None
-                validation_tool_name = None
-                
-                # Map module names to their validation tool name patterns
-                module_validation_tools = {
-                    'readin': 'validate_readin_module',
-                    'guide': 'validate_guide_parameters',
-                    'writeout': 'validate_writeout_module',
-                    'monitor1d': 'validate_monitor1d_module',
-                    'monitor2d': 'validate_monitor2d_module',
-                }
-                expected_tool_pattern = module_validation_tools.get(module_name, '')
-                
-                # Look for validation tool results indicating completion
-                # Only check result_messages from current invocation to ensure we're checking the right module
-                for msg in reversed(result_messages):
-                    if isinstance(msg, ToolMessage):
-                        try:
-                            # Parse tool result to check for validation success
-                            tool_result = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
-                            if isinstance(tool_result, dict):
-                                validation_status = tool_result.get('validation_status', False)
-                                
-                                # Log all validation attempts for debugging
-                                if 'validation_status' in tool_result:
-                                    # Try to identify the tool name from the tool_call_id
-                                    # Find the corresponding AIMessage with this tool_call_id
-                                    tool_name = None
-                                    tool_call_id = getattr(msg, 'tool_call_id', None)
-                                    if tool_call_id:
-                                        # Look for the AIMessage that has this tool_call_id
-                                        for ai_msg in reversed(result_messages):
-                                            if hasattr(ai_msg, 'tool_calls') and ai_msg.tool_calls:
-                                                for tc in ai_msg.tool_calls:
-                                                    if tc.get('id') == tool_call_id:
-                                                        tool_name = tc.get('name', '')
-                                                        break
-                                                if tool_name:
-                                                    break
-                                    
-                                    self.logger.debug(f"[VALIDATION] Found validation_status={validation_status} for tool '{tool_name}' (expected pattern: '{expected_tool_pattern}')")
-                                    
-                                    # Only accept validation if:
-                                    # 1. validation_status is True
-                                    # 2. Tool name matches expected pattern for this module (or pattern is empty if unknown)
-                                    # 3. validated_params is not empty
-                                    if validation_status:
-                                        validated_params_raw = tool_result.get('validated_params', {})
-                                        cli_params_raw = tool_result.get('cli_parameters', '')
-                                        
-                                        # Convert validated_params to dict if it's a Pydantic model
-                                        if hasattr(validated_params_raw, 'model_dump'):
-                                            validated_params = validated_params_raw.model_dump()
-                                        elif isinstance(validated_params_raw, dict):
-                                            validated_params = validated_params_raw
-                                        else:
-                                            validated_params = validated_params_raw
-                                        
-                                        cli_params = cli_params_raw if cli_params_raw else ''
-                                        
-                                        # Check if tool belongs to this module
-                                        tool_matches = (not expected_tool_pattern or 
-                                                       (tool_name and expected_tool_pattern in tool_name))
-                                        
-                                        # Check if parameters are actually present
-                                        has_params = False
-                                        if isinstance(validated_params, dict):
-                                            has_params = len(validated_params) > 0
-                                        elif validated_params:
-                                            has_params = True
-                                        
-                                        if tool_matches and has_params:
-                                            # Module validation succeeded - module is complete
-                                            module_complete = True
-                                            validation_source = "result"
-                                            validation_tool_name = tool_name or 'unknown'
-                                            self.logger.info(f"[VALIDATION] Module {module_name} validation succeeded (tool: {validation_tool_name}, params_count: {len(validated_params) if isinstance(validated_params, dict) else 'N/A'}, cli_length: {len(cli_params) if cli_params else 0})")
-                                            break
-                                        else:
-                                            if not tool_matches:
-                                                self.logger.debug(f"[VALIDATION] Validation result found but tool '{tool_name}' doesn't match expected pattern '{expected_tool_pattern}' for module {module_name}")
-                                            if not has_params:
-                                                self.logger.debug(f"[VALIDATION] Validation result found but validated_params is empty for module {module_name}")
-                        except (json.JSONDecodeError, AttributeError, TypeError) as e:
-                            # Not a validation result, continue
-                            self.logger.debug(f"[VALIDATION] Skipping non-validation tool message: {type(e).__name__}")
-                            continue
-                
-                if not module_complete:
-                    self.logger.debug(f"[VALIDATION] Module {module_name} validation not yet complete - no valid validation_status=True found in current invocation results")
-                
-                # Update module result if complete
-                if module_complete:
-                    # Convert validated_params to dict if it's a Pydantic model
-                    if hasattr(validated_params, 'model_dump'):
-                        validated_params_dict = validated_params.model_dump()
-                    elif isinstance(validated_params, dict):
-                        validated_params_dict = validated_params
-                    else:
-                        validated_params_dict = validated_params
-                    
-                    module_result = ModuleResult(
-                        module_name=module_name,
-                        stage=FillingStage(stage='completed'),
-                        parameters=validated_params_dict,
-                        cli_parameters=cli_params,
-                        thread_id=state.get('thread_id'),
-                        user_id=state.get('user_id')
-                    )
-                    updated_results = state.get('module_results', {}).copy()
-                    updated_results[module_name] = module_result
-                    
-                    params_count = len(validated_params_dict) if isinstance(validated_params_dict, dict) else 0
-                    self.logger.info(f"[MODULE COMPLETE] Module {module_name} completed successfully: {params_count} parameters validated, cli_parameters length={len(cli_params)}, validation_source={validation_source}")
-                    
-                    state_updates.update({
-                        'module_results': updated_results,
-                        'current_active_module': None,  # Clear active module
-                        'module_stage': FillingStage(stage='completed')
-                    })
-                    self.logger.info(f"[STATE UPDATE] Cleared current_active_module, set module_stage=completed for {module_name}")
-                else:
-                    # Module still processing
-                    state_updates['module_stage'] = FillingStage(stage='processing')
-                    self.logger.debug(f"[MODULE PROCESSING] Module {module_name} still processing, module_stage=processing")
-                
-                # Merge react-agent result with state updates
-                self.logger.debug(f"[MODULE EXIT] Exiting module {module_name}, module_complete={module_complete}")
-                return {**result, **state_updates}
-            except Exception as e:
-                self.logger.error(f"[MODULE ERROR] Error in react-agent for {module_name}: {e}", exc_info=True)
-                # Return error state
-                error_result = ModuleResult(
-                    module_name=module_name,
-                    stage=FillingStage(stage='error'),
-                    error_message=str(e),
-                    thread_id=state.get('thread_id'),
-                    user_id=state.get('user_id')
-                )
-                updated_results = state.get('module_results', {}).copy()
-                updated_results[module_name] = error_result
-                
-                self.logger.error(f"[STATE UPDATE] Set module {module_name} to error state, cleared current_active_module")
-                
-                return {
-                    **state_updates,
-                    'module_results': updated_results,
-                    'module_stage': FillingStage(stage='error'),
-                    'error_message': str(e),
-                    'current_active_module': None
-                }
-        
-        return wrapper_node
     
     def _route_from_simulation(self, state: UnifiedState) -> str:
         """Route from simulation execution based on tools availability"""

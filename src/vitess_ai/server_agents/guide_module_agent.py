@@ -6,8 +6,9 @@ architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
-from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
+from vitess_ai.server_agents.base_module_agent import BaseModuleAgent, ModuleBuilder
 from vitess_ai.prompts.guide_module import GUIDE_AGENT_WELCOME, GUIDE_AGENT_DEFAULT_PROMPT, GUIDE_AGENT_CUSTOM_PROMPT
+from vitess_ai.core.config import global_config
 
 
 class GuideModuleAgent(BaseModuleAgent):
@@ -46,6 +47,19 @@ class GuideModuleAgent(BaseModuleAgent):
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
         return "guide_params"
+    
+    @classmethod
+    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+        """Register the guide module with the supervisor"""
+        module = ModuleBuilder.create(
+            name="guide",
+            display_name="Guide Parameters",
+            description="Configure neutron guide specifications and geometry",
+            agent_class=cls,
+            config_path=config_path or global_config.GUIDE_MCP_PATH,
+            order=2
+        )
+        supervisor.register_module(module)
     
     def get_completion_message(self, state: dict = None) -> str:
         """Message shown on successful completion"""

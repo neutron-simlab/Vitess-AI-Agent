@@ -6,8 +6,9 @@ architecture, enabling unified state management and
 centralized interrupt handling.
 """
 
-from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
+from vitess_ai.server_agents.base_module_agent import BaseModuleAgent, ModuleBuilder
 from vitess_ai.prompts.monitor2d_module import MONITOR2D_AGENT_WELCOME, MONITOR2D_AGENT_DEFAULT_PROMPT, MONITOR2D_AGENT_CUSTOM_PROMPT
+from vitess_ai.core.config import global_config
 
 
 class Monitor2DModuleAgent(BaseModuleAgent):
@@ -46,6 +47,19 @@ class Monitor2DModuleAgent(BaseModuleAgent):
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
         return "monitor2d_params"
+    
+    @classmethod
+    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+        """Register the Monitor2D module with the supervisor"""
+        module = ModuleBuilder.create(
+            name="monitor2d",
+            display_name="Monitor2D Parameters",
+            description="Configure 2D monitor parameters for neutron detection",
+            agent_class=cls,
+            config_path=config_path or global_config.MONITOR_MCP_PATH,
+            order=5
+        )
+        supervisor.register_module(module)
     
     def get_completion_message(self, state: dict = None) -> str:
         """Message shown on successful completion"""
