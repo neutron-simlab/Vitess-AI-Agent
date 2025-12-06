@@ -15,7 +15,8 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import InMemorySaver
 
 from vitess_ai.schema.supervisor import (
-    SupervisorConfig, SupervisorStage
+    SupervisorConfig, SupervisorStage,
+    create_routing_decision_model
 )
 from vitess_ai.core.registry import ModuleRegistry
 from vitess_ai.core.log import get_logger
@@ -33,7 +34,8 @@ from vitess_ai.core.config import global_config
 from vitess_ai.prompts.supervisor import (
     get_simulation_execution_prompt, 
     get_post_simulation_response_prompt,
-    get_supervisor_welcome_message
+    get_supervisor_welcome_message,
+    get_supervisor_routing_prompt
 )
 from vitess_ai.server_agents.tool_wrapper import create_thread_id_tool_node
 
@@ -51,7 +53,7 @@ class SupervisorAgent:
     def __init__(self, config: SupervisorConfig = None, simulation_tools_path: str = None):
         """Initialize the supervisor agent"""
         self.config = config or self._create_default_config()
-        self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
+        self.llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model, streaming=False)
         # Create unbound LLM for post-simulation responses (no tools needed)
         self.response_llm = create_llm_with_fallback(provider=self.config.provider, model=self.config.model)
         self.registry = ModuleRegistry()
@@ -70,6 +72,9 @@ class SupervisorAgent:
         # Setup logging
         self.logger = get_logger(__name__)
         self.logger.info("Supervisor agent initialized with logging enabled")
+        
+        # Cache for routing decision model (created dynamically based on registered modules)
+        self._routing_decision_model = None
     
     def _create_default_config(self) -> SupervisorConfig:
         """Create default supervisor configuration"""
@@ -588,6 +593,21 @@ Configuration is complete. The simulation parameters are ready for execution.
                 completed.append(name)
         return completed
     
+    def get_routing_decision_model(self):
+        """
+        Get or create the RoutingDecision Pydantic model based on registered modules.
+        
+        Returns:
+            RoutingDecision model class with Literal types for available modules
+        """
+        if self._routing_decision_model is None:
+            # Get all registered module names
+            module_names = self.registry.list_modules()
+            # Create the model dynamically
+            self._routing_decision_model = create_routing_decision_model(module_names)
+            self.logger.info(f"Created routing decision model with modules: {module_names}")
+        return self._routing_decision_model
+    
     def _are_all_modules_completed(self, execution_order: List[str], module_results: dict) -> bool:
         """
         Verify that ALL modules in execution_order have been validated and completed.
@@ -629,130 +649,247 @@ Configuration is complete. The simulation parameters are ready for execution.
     
     def _supervisor_routing_node(self, state: UnifiedState) -> dict:
         """
-        Supervisor routing node - determines which module to route to.
+        Supervisor routing node - determines which module to route to using LLM.
         
-        This node:
-        - Shows welcome message on first invocation (if current_stage == WELCOME)
-        - Checks for active module that needs continuation
-        - Finds next pending module
-        - Routes to simulation if all modules complete
+        This node uses LLM-based routing that can:
+        - Understand conversation context and user intent
+        - Handle complex requests like changing previous modules
+        - Provide natural greetings instead of formal welcome messages
+        - Route intelligently based on state and messages
+        
+        Falls back to manual routing if LLM fails.
         """
-        self.logger.info("[SUPERVISOR ROUTING] Supervisor routing node triggered")
+        self.logger.info("[SUPERVISOR ROUTING] Supervisor routing node triggered (LLM-based)")
         
-        # Note: state is passed as a dict by LangGraph, not as UnifiedState instance
-        # So we need to access it as a dict and implement get_next_module logic inline
-        
-        # Check if this is the first invocation (welcome stage)
-        # Also check if state is new/empty (no execution_order and no messages from supervisor)
+      
         current_stage = state.get('current_stage')
         execution_order = state.get('execution_order', [])
         messages = state.get('messages', [])
         module_results = state.get('module_results', {})
         current_active = state.get('current_active_module')
+        thread_id = state.get('thread_id')
+        user_id = state.get('user_id')
         
-        self.logger.debug(f"[SUPERVISOR ROUTING] State: current_stage={current_stage}, execution_order={execution_order}, current_active_module={current_active}, completed_modules={self._get_completed_modules(module_results)}")
+        # Set environment variables for MCP subprocesses
+        if thread_id:
+            import os
+            os.environ["THREAD_ID"] = thread_id
+            os.environ["VITESS_THREAD_ID"] = thread_id
         
-        # Check if this is a new conversation (no execution_order set yet)
-        is_new_conversation = not execution_order
+        # Get execution_order from registry if not set
+        if not execution_order:
+            execution_order = self.registry.get_execution_order()
+            if execution_order:
+                self.logger.info(f"Retrieved execution_order from registry: {execution_order}")
         
-        # Check if welcome message already exists in messages
-        has_welcome_message = False
-        for msg in messages:
-            if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('module_name') == 'supervisor':
-                # Check if it looks like a welcome message
-                if hasattr(msg, 'content') and 'Neutron Simulation Configuration System' in str(msg.content):
-                    has_welcome_message = True
-                    break
+        completed_modules = self._get_completed_modules(module_results)
+        
+        # Check the actual stage of current_active_module if it exists (for logging)
+        current_active_stage = None
+        if current_active and current_active in module_results:
+            result = module_results[current_active]
+            if hasattr(result, 'stage'):
+                if hasattr(result.stage, 'stage'):
+                    current_active_stage = result.stage.stage
+                elif isinstance(result.stage, dict):
+                    current_active_stage = result.stage.get('stage')
+                else:
+                    current_active_stage = result.stage
+        
+        self.logger.debug(f"[SUPERVISOR ROUTING] State: current_stage={current_stage}, execution_order={execution_order}, current_active_module={current_active}, current_active_stage={current_active_stage}, completed_modules={completed_modules}")
         
         state_updates = {}
         
-        # Show welcome if: (1) explicitly in WELCOME stage, or (2) new conversation without welcome message
-        if current_stage == SupervisorStage.WELCOME or (is_new_conversation and not has_welcome_message):
-            # First invocation - show welcome message
-            self.logger.info("[SUPERVISOR ROUTING] First invocation detected, showing welcome message")
-            
-            # Get thread_id and user_id from state (set in initial input)
-            thread_id = state.get('thread_id')
-            user_id = state.get('user_id')
-            
-            # Set environment variables as fallback for MCP subprocesses
+        # CRITICAL: Check if there's an active module that hasn't been validated yet
+        # If so, we MUST route back to it - don't allow routing to next module
+        # A module is considered unvalidated if it's not in completed_modules
+        # (i.e., ModuleResult.stage != "completed" - could be "processing" or "error")
+        if current_active and current_active not in completed_modules:
+            self.logger.info(f"[SUPERVISOR ROUTING] Active module {current_active} is not validated yet - forcing route back to it")
+            state_updates['current_active_module'] = current_active
+            state_updates['current_module'] = current_active
             if thread_id:
-                import os
-                os.environ["THREAD_ID"] = thread_id
-                os.environ["VITESS_THREAD_ID"] = thread_id
-                self.logger.debug(f"Set environment variables: THREAD_ID={thread_id}")
+                state_updates['thread_id'] = thread_id
+            if user_id:
+                state_updates['user_id'] = user_id
+            if 'current_stage' not in state_updates:
+                state_updates['current_stage'] = SupervisorStage.MODULE_EXECUTION
+            return state_updates
+        
+        # Try LLM-based routing first
+        try:
+            # Get routing decision model
+            RoutingDecisionModel = self.get_routing_decision_model()
             
-            # Show available modules
-            modules_info = []
-            execution_order = self.registry.get_execution_order()
+            # Prepare module information
+            modules_info = self.registry.get_modules_info()
             
-            for module_name in execution_order:
-                module_metadata = self.registry.get_module(module_name)
-                if module_metadata:
-                    optional_text = " (optional)" if module_metadata.optional else ""
-                    modules_info.append(f"{module_metadata.order}. **{module_metadata.display_name}**{optional_text}: {module_metadata.description}")
+            # Get recent messages (last 8 for context)
+            recent_messages = messages[-8:] if len(messages) > 8 else messages
             
-            # Generate welcome message using prompt helper
-            welcome_text = get_supervisor_welcome_message(
+            # Create routing prompt
+            routing_prompt = get_supervisor_routing_prompt(
+                execution_order=execution_order,
+                completed_modules=completed_modules,
+                module_results=module_results,
+                current_active_module=current_active,
+                recent_messages=recent_messages,
                 modules_info=modules_info,
                 simulation_tools_available=bool(self.simulation_tools)
             )
             
-            # Create welcome message with supervisor module marker for proper display
-            welcome_message = AIMessage(
-                content=welcome_text,
-                additional_kwargs={"module_name": "supervisor"}
-            )
+            # Create LLM with structured output
+            routing_llm = self.llm.with_structured_output(RoutingDecisionModel)
             
-            # Update state with welcome message and transition to MODULE_EXECUTION
-            state_updates.update({
-                'messages': state.get('messages', []) + [welcome_message],
-                'current_stage': SupervisorStage.MODULE_EXECUTION,
-                'execution_order': execution_order,
-                'pending_modules': execution_order.copy(),
-                'module_results': state.get('module_results', {}),
-                'thread_id': thread_id or "",
-                'user_id': user_id or "",
-                'cli_generation_ready': False,
-                'error_message': None,
-                'current_module': 'supervisor',  # Set current_module for proper display
-            })
+            # Invoke LLM for routing decision
+            self.logger.info("[SUPERVISOR ROUTING] Invoking LLM for routing decision")
+            routing_decision = routing_llm.invoke([SystemMessage(content=routing_prompt)])
+            
+            self.logger.info(f"[SUPERVISOR ROUTING] LLM routing decision: action={routing_decision.action}, target_module={routing_decision.target_module}, reasoning={routing_decision.reasoning[:100]}...")
+            
+            # Handle greeting message if provided (first interaction)
+            if routing_decision.greeting_message:
+                greeting_message = AIMessage(
+                    content=routing_decision.greeting_message,
+                    additional_kwargs={"module_name": "supervisor"}
+                )
+                state_updates['messages'] = state.get('messages', []) + [greeting_message]
+                state_updates['current_module'] = 'supervisor'
+            
+            # Initialize execution_order if not set
+            if not execution_order:
+                execution_order = self.registry.get_execution_order()
+                state_updates['execution_order'] = execution_order
+                state_updates['pending_modules'] = execution_order.copy()
+            
+            # Handle routing based on LLM decision
+            if routing_decision.action == "route_to_simulation":
+                # Route to simulation - don't set current_active_module
+                # But first verify no active unvalidated module exists
+                if current_active and current_active not in completed_modules:
+                    self.logger.warning(f"[SUPERVISOR ROUTING] LLM tried to route to simulation but active module {current_active} is not validated - overriding to route back to active module")
+                    state_updates['current_active_module'] = current_active
+                    state_updates['current_module'] = current_active
+                else:
+                    self.logger.info("[SUPERVISOR ROUTING] LLM decided to route to simulation")
+                    # _route_supervisor will handle this
+            elif routing_decision.action == "route_to_module":
+                target_module = routing_decision.target_module
+                
+                if target_module and target_module != "simulation":
+                    # CRITICAL: Validate that we're not routing away from an unvalidated active module
+                    if current_active and current_active not in completed_modules and target_module != current_active:
+                        self.logger.warning(f"[SUPERVISOR ROUTING] LLM tried to route to {target_module} but active module {current_active} is not validated - overriding to route back to active module")
+                        state_updates['current_active_module'] = current_active
+                        state_updates['current_module'] = current_active
+                    # Validate target_module exists
+                    elif target_module in execution_order or target_module in self.registry.list_modules():
+                        self.logger.info(f"[SUPERVISOR ROUTING] LLM decided to route to module: {target_module}")
+                        state_updates['current_active_module'] = target_module
+                        state_updates['current_module'] = target_module
+                        
+                        # If routing to completed module, keep state (will re-validate)
+                        if target_module in completed_modules:
+                            self.logger.info(f"[SUPERVISOR ROUTING] Routing to completed module {target_module} for modification")
+                    else:
+                        self.logger.warning(f"[SUPERVISOR ROUTING] LLM returned invalid module name: {target_module}, falling back to manual routing")
+                        raise ValueError(f"Invalid module name: {target_module}")
+                else:
+                    # target_module is None or "simulation" but action is route_to_module
+                    # This might be a mistake, but handle gracefully
+                    self.logger.warning(f"[SUPERVISOR ROUTING] LLM action is route_to_module but target_module is {target_module}, falling back")
+                    raise ValueError(f"Inconsistent routing decision: action={routing_decision.action}, target_module={target_module}")
+            
+            # Update state stage
+            if 'current_stage' not in state_updates:
+                state_updates['current_stage'] = SupervisorStage.MODULE_EXECUTION
+            
+            # Ensure thread_id and user_id are set
+            if thread_id:
+                state_updates['thread_id'] = thread_id
+            if user_id:
+                state_updates['user_id'] = user_id
+            
+            return state_updates
+            
+        except Exception as e:
+            # Fallback to manual routing
+            self.logger.warning(f"[SUPERVISOR ROUTING] LLM routing failed: {e}, falling back to manual routing", exc_info=True)
+            return self._supervisor_routing_node_manual(state)
+    
+    def _supervisor_routing_node_manual(self, state: UnifiedState) -> dict:
+        """
+        Manual fallback routing logic (original implementation).
+        Used when LLM routing fails.
+        """
+        self.logger.info("[SUPERVISOR ROUTING] Using manual routing fallback")
+        
+        current_stage = state.get('current_stage')
+        execution_order = state.get('execution_order', [])
+        messages = state.get('messages', [])
+        module_results = state.get('module_results', {})
+        current_active = state.get('current_active_module')
+        thread_id = state.get('thread_id')
+        user_id = state.get('user_id')
+        
+        # Get execution_order from registry if not set
+        if not execution_order:
+            execution_order = self.registry.get_execution_order()
+        
+        state_updates = {}
+        
+        # CRITICAL: Check if there's an active module that hasn't been validated yet
+        # If so, we MUST route back to it - don't allow routing to next module
+        completed_modules = self._get_completed_modules(module_results)
+        
+        # Check the actual stage of current_active_module if it exists (for logging)
+        current_active_stage = None
+        if current_active and current_active in module_results:
+            result = module_results[current_active]
+            if hasattr(result, 'stage'):
+                if hasattr(result.stage, 'stage'):
+                    current_active_stage = result.stage.stage
+                elif isinstance(result.stage, dict):
+                    current_active_stage = result.stage.get('stage')
+                else:
+                    current_active_stage = result.stage
+        
+        if current_active and current_active not in completed_modules:
+            self.logger.info(f"[SUPERVISOR ROUTING] Manual routing: Active module {current_active} is not validated yet (stage={current_active_stage}) - forcing route back to it")
+            state_updates['current_active_module'] = current_active
+            state_updates['current_module'] = current_active
+            if thread_id:
+                state_updates['thread_id'] = thread_id
+            if user_id:
+                state_updates['user_id'] = user_id
+            if 'current_stage' not in state_updates:
+                state_updates['current_stage'] = SupervisorStage.MODULE_EXECUTION
+            return state_updates
+        
+        # Check if this is a new conversation
+        is_new_conversation = not execution_order
+        
+        # Initialize execution_order if needed
+        if is_new_conversation:
+            execution_order = self.registry.get_execution_order()
+            state_updates['execution_order'] = execution_order
+            state_updates['pending_modules'] = execution_order.copy()
+            state_updates['current_stage'] = SupervisorStage.MODULE_EXECUTION
+            if thread_id:
+                state_updates['thread_id'] = thread_id
+            if user_id:
+                state_updates['user_id'] = user_id
         
         # Update current_active_module if routing to a new module
-        current_active = state.get('current_active_module')
-        if not current_active:
-            # Find next module using dict access
-            # Get execution_order from state_updates first (if welcome stage just set it), then from state
-            execution_order = state_updates.get('execution_order') or state.get('execution_order', [])
-            module_results = state.get('module_results', {})
-            
-            # If execution_order is empty, we can't determine routing yet
-            # This should only happen if welcome stage hasn't set it yet (shouldn't happen in normal flow)
-            if not execution_order:
-                self.logger.warning("execution_order is empty in routing node - this should not happen after welcome stage")
-                # Try to get it from registry as fallback
-                execution_order = self.registry.get_execution_order()
-                if execution_order:
-                    state_updates['execution_order'] = execution_order
-                    self.logger.info(f"Retrieved execution_order from registry: {execution_order}")
-                else:
-                    self.logger.error("Cannot determine execution_order - no modules registered")
-                    return state_updates
-            
-            # Verify all modules are completed before routing to simulation
-            # Only check if execution_order is not empty
-            if execution_order and self._are_all_modules_completed(execution_order, module_results):
-                # All modules have been validated and completed
-                self.logger.info("[SUPERVISOR ROUTING] All modules validated and completed, ready for simulation")
+        execution_order = state_updates.get('execution_order') or execution_order
+        if not current_active and execution_order:
+            # Check if all modules completed
+            if self._are_all_modules_completed(execution_order, module_results):
+                self.logger.info("[SUPERVISOR ROUTING] All modules completed, ready for simulation")
                 # Don't set current_active_module - let _route_supervisor handle routing to simulation
             else:
-                # Get completed modules to find next pending module
+                # Find next pending module
                 completed = self._get_completed_modules(module_results)
-                pending = [m for m in execution_order if m not in completed]
-                
-                self.logger.debug(f"[SUPERVISOR ROUTING] Completed modules: {completed}, Pending modules: {pending}")
-                
-                # Find first module in execution order that isn't completed
                 next_module = None
                 for module in execution_order:
                     if module not in completed:
@@ -760,22 +897,9 @@ Configuration is complete. The simulation parameters are ready for execution.
                         break
                 
                 if next_module:
-                    self.logger.info(f"[SUPERVISOR ROUTING] Routing to next module: {next_module} (completed: {completed}, pending: {pending})")
-                    state_updates.update({
-                        'current_active_module': next_module,
-                        'current_module': next_module
-                    })
-                else:
-                    # This should not happen if _are_all_modules_completed works correctly
-                    # But handle edge case: all modules completed but verification failed, or execution_order is empty
-                    if not execution_order:
-                        self.logger.error("[SUPERVISOR ROUTING] execution_order is empty, cannot determine next module")
-                    else:
-                        self.logger.warning(
-                            f"[SUPERVISOR ROUTING] Could not find next module but not all modules are completed. "
-                            f"Execution order: {execution_order}, Completed: {completed}, "
-                            f"Module results: {list(module_results.keys())}"
-                        )
+                    self.logger.info(f"[SUPERVISOR ROUTING] Manual routing to next module: {next_module}")
+                    state_updates['current_active_module'] = next_module
+                    state_updates['current_module'] = next_module
         else:
             # Active module exists - keep it
             self.logger.info(f"[SUPERVISOR ROUTING] Resuming active module: {current_active}")

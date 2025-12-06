@@ -170,6 +170,50 @@ class BaseModuleAgent(ABC):
     # TEMPLATE METHODS (Override as needed)
     # =================
     
+    def _is_module_completed(self, result: Any) -> bool:
+        """
+        Helper method to check if a module result indicates completion.
+        
+        Args:
+            result: ModuleResult object or dict
+            
+        Returns:
+            True if module is completed, False otherwise
+        """
+        if not result:
+            return False
+        
+        stage = getattr(result, 'stage', None) if hasattr(result, 'stage') else result.get('stage') if isinstance(result, dict) else None
+        if not stage:
+            return False
+        
+        # Handle both FillingStage object and dict/string
+        if hasattr(stage, 'stage'):
+            stage_value = stage.stage
+        elif isinstance(stage, dict):
+            stage_value = stage.get('stage')
+        else:
+            stage_value = stage
+        
+        return stage_value == "completed"
+    
+    def _normalize_params(self, params: Any) -> dict:
+        """
+        Normalize parameters to dict format.
+        
+        Args:
+            params: Pydantic model, dict, or other type
+            
+        Returns:
+            Dictionary of parameters
+        """
+        if hasattr(params, 'model_dump'):
+            return params.model_dump()
+        elif isinstance(params, dict):
+            return params
+        else:
+            return params
+    
     def _get_next_module_name(self, state: dict = None) -> Optional[str]:
         """
         Helper method to determine the next module name from state.
@@ -214,15 +258,7 @@ class BaseModuleAgent(ABC):
                 # Get list of completed modules
                 completed = []
                 for name, result in module_results.items():
-                    stage = getattr(result, 'stage', None) if hasattr(result, 'stage') else result.get('stage') if isinstance(result, dict) else None
-                    # Handle both FillingStage object and dict/string
-                    if hasattr(stage, 'stage'):
-                        stage_value = stage.stage
-                    elif isinstance(stage, dict):
-                        stage_value = stage.get('stage')
-                    else:
-                        stage_value = stage
-                    if stage_value == "completed":
+                    if self._is_module_completed(result):
                         completed.append(name)
                 
                 # Find first module in execution order that isn't current and isn't completed
@@ -484,7 +520,6 @@ Based on the user's response to the welcome message, use the appropriate section
             """Wrapper node that invokes react-agent and handles state updates"""
             self.logger.info(f"[MODULE ENTRY] Entering module: {module_name}")
             
-            agent = self
             messages = state.get('messages', [])
             current_active = state.get('current_active_module')
             
@@ -512,14 +547,14 @@ Based on the user's response to the welcome message, use the appropriate section
                         has_module_welcome = True
                         break
                     # Also check if welcome message content is present
-                    if hasattr(msg, 'content') and agent.welcome_message in str(msg.content):
+                    if hasattr(msg, 'content') and self.welcome_message in str(msg.content):
                         has_module_welcome = True
                         break
                 
                 # Add welcome message if not present
                 if not has_module_welcome:
                     welcome_msg = AIMessage(
-                        content=agent.welcome_message,
+                        content=self.welcome_message,
                         additional_kwargs={"module_name": module_name}
                     )
                     state_updates['messages'] = messages + [welcome_msg]
@@ -622,8 +657,8 @@ Based on the user's response to the welcome message, use the appropriate section
                 module_complete = False
                 validated_params = {}
                 cli_params = ""
-                validation_source = None
-                validation_tool_name = None
+                validation_attempted = False
+                validation_failed = False
                 
                 # Map module names to their validation tool name patterns
                 module_validation_tools = {
@@ -635,18 +670,19 @@ Based on the user's response to the welcome message, use the appropriate section
                 }
                 expected_tool_pattern = module_validation_tools.get(module_name, '')
                 
-                # Look for validation tool results indicating completion
+                # Look for validation tool results indicating completion or failure
                 # Only check result_messages from current invocation to ensure we're checking the right module
                 for msg in reversed(result_messages):
                     if isinstance(msg, ToolMessage):
                         try:
-                            # Parse tool result to check for validation success
+                            # Parse tool result to check for validation success/failure
                             tool_result = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
                             if isinstance(tool_result, dict):
-                                validation_status = tool_result.get('validation_status', False)
+                                validation_status = tool_result.get('validation_status', None)
                                 
-                                # Log all validation attempts for debugging
+                                # Check if this is a validation tool result
                                 if 'validation_status' in tool_result:
+                                    validation_attempted = True
                                     # Try to identify the tool name from the tool_call_id
                                     # Find the corresponding AIMessage with this tool_call_id
                                     tool_name = None
@@ -662,66 +698,60 @@ Based on the user's response to the welcome message, use the appropriate section
                                                 if tool_name:
                                                     break
                                     
+                                    # Check if tool belongs to this module
+                                    tool_matches = (not expected_tool_pattern or 
+                                                   (tool_name and expected_tool_pattern in tool_name))
+                                    
+                                    if not tool_matches:
+                                        self.logger.debug(f"[VALIDATION] Validation result found but tool '{tool_name}' doesn't match expected pattern '{expected_tool_pattern}' for module {module_name}")
+                                        continue
+                                    
                                     self.logger.debug(f"[VALIDATION] Found validation_status={validation_status} for tool '{tool_name}' (expected pattern: '{expected_tool_pattern}')")
                                     
-                                    # Only accept validation if:
-                                    # 1. validation_status is True
-                                    # 2. Tool name matches expected pattern for this module (or pattern is empty if unknown)
-                                    # 3. validated_params is not empty
-                                    if validation_status:
+                                    # Handle validation success
+                                    if validation_status is True:
                                         validated_params_raw = tool_result.get('validated_params', {})
                                         cli_params_raw = tool_result.get('cli_parameters', '')
                                         
-                                        # Convert validated_params to dict if it's a Pydantic model
-                                        if hasattr(validated_params_raw, 'model_dump'):
-                                            validated_params = validated_params_raw.model_dump()
-                                        elif isinstance(validated_params_raw, dict):
-                                            validated_params = validated_params_raw
-                                        else:
-                                            validated_params = validated_params_raw
-                                        
+                                        validated_params = self._normalize_params(validated_params_raw)
                                         cli_params = cli_params_raw if cli_params_raw else ''
                                         
-                                        # Check if tool belongs to this module
-                                        tool_matches = (not expected_tool_pattern or 
-                                                       (tool_name and expected_tool_pattern in tool_name))
-                                        
                                         # Check if parameters are actually present
-                                        has_params = False
-                                        if isinstance(validated_params, dict):
-                                            has_params = len(validated_params) > 0
-                                        elif validated_params:
-                                            has_params = True
+                                        has_params = bool(
+                                            validated_params and 
+                                            (isinstance(validated_params, dict) and len(validated_params) > 0 or 
+                                             not isinstance(validated_params, dict) and validated_params)
+                                        )
                                         
-                                        if tool_matches and has_params:
+                                        if has_params:
                                             # Module validation succeeded - module is complete
                                             module_complete = True
-                                            validation_source = "result"
-                                            validation_tool_name = tool_name or 'unknown'
-                                            self.logger.info(f"[VALIDATION] Module {module_name} validation succeeded (tool: {validation_tool_name}, params_count: {len(validated_params) if isinstance(validated_params, dict) else 'N/A'}, cli_length: {len(cli_params) if cli_params else 0})")
+                                            tool_name_display = tool_name or 'unknown'
+                                            params_count = len(validated_params) if isinstance(validated_params, dict) else 'N/A'
+                                            cli_length = len(cli_params) if cli_params else 0
+                                            self.logger.info(f"[VALIDATION] Module {module_name} validation succeeded (tool: {tool_name_display}, params_count: {params_count}, cli_length: {cli_length})")
                                             break
                                         else:
-                                            if not tool_matches:
-                                                self.logger.debug(f"[VALIDATION] Validation result found but tool '{tool_name}' doesn't match expected pattern '{expected_tool_pattern}' for module {module_name}")
-                                            if not has_params:
-                                                self.logger.debug(f"[VALIDATION] Validation result found but validated_params is empty for module {module_name}")
+                                            self.logger.debug(f"[VALIDATION] Validation result found but validated_params is empty for module {module_name}")
+                                    # Handle validation failure
+                                    elif validation_status is False:
+                                        validation_failed = True
+                                        tool_name_display = tool_name or 'unknown'
+                                        error_message = tool_result.get('errors', tool_result.get('message', 'Validation failed'))
+                                        self.logger.info(f"[VALIDATION] Module {module_name} validation failed (tool: {tool_name_display}): {error_message}")
+                                        break
                         except (json.JSONDecodeError, AttributeError, TypeError) as e:
                             # Not a validation result, continue
                             self.logger.debug(f"[VALIDATION] Skipping non-validation tool message: {type(e).__name__}")
                             continue
                 
-                if not module_complete:
-                    self.logger.debug(f"[VALIDATION] Module {module_name} validation not yet complete - no valid validation_status=True found in current invocation results")
+                # Get existing module result if any
+                existing_results = state.get('module_results', {})
+                existing_result = existing_results.get(module_name)
                 
-                # Update module result if complete
+                # Update module result based on validation status
                 if module_complete:
-                    # Convert validated_params to dict if it's a Pydantic model
-                    if hasattr(validated_params, 'model_dump'):
-                        validated_params_dict = validated_params.model_dump()
-                    elif isinstance(validated_params, dict):
-                        validated_params_dict = validated_params
-                    else:
-                        validated_params_dict = validated_params
+                    validated_params_dict = self._normalize_params(validated_params)
                     
                     module_result = ModuleResult(
                         module_name=module_name,
@@ -735,7 +765,8 @@ Based on the user's response to the welcome message, use the appropriate section
                     updated_results[module_name] = module_result
                     
                     params_count = len(validated_params_dict) if isinstance(validated_params_dict, dict) else 0
-                    self.logger.info(f"[MODULE COMPLETE] Module {module_name} completed successfully: {params_count} parameters validated, cli_parameters length={len(cli_params)}, validation_source={validation_source}")
+                    cli_length = len(cli_params) if cli_params else 0
+                    self.logger.info(f"[MODULE COMPLETE] Module {module_name} completed successfully: {params_count} parameters validated, cli_parameters length={cli_length}")
                     
                     state_updates.update({
                         'module_results': updated_results,
@@ -744,9 +775,40 @@ Based on the user's response to the welcome message, use the appropriate section
                     })
                     self.logger.info(f"[STATE UPDATE] Cleared current_active_module, set module_stage=completed for {module_name}")
                 else:
-                    # Module still processing
-                    state_updates['module_stage'] = FillingStage(stage='processing')
-                    self.logger.debug(f"[MODULE PROCESSING] Module {module_name} still processing, module_stage=processing")
+                    # Module still processing - validation not complete or failed
+                    # Always create/update ModuleResult with stage='processing' to track state
+                    updated_results = existing_results.copy()
+                    
+                    # Preserve existing parameters if available (from previous successful validation)
+                    existing_params = None
+                    existing_cli = None
+                    if existing_result:
+                        existing_params = existing_result.parameters
+                        existing_cli = existing_result.cli_parameters
+                    
+                    # Create/update ModuleResult with processing stage
+                    processing_result = ModuleResult(
+                        module_name=module_name,
+                        stage=FillingStage(stage='processing'),
+                        parameters=existing_params,  # Keep existing params if any
+                        cli_parameters=existing_cli,  # Keep existing CLI if any
+                        thread_id=state.get('thread_id'),
+                        user_id=state.get('user_id')
+                    )
+                    updated_results[module_name] = processing_result
+                    
+                    if validation_failed:
+                        self.logger.info(f"[MODULE PROCESSING] Module {module_name} validation failed - setting stage to 'processing'")
+                    elif validation_attempted:
+                        self.logger.debug(f"[MODULE PROCESSING] Module {module_name} validation attempted but not successful - setting stage to 'processing'")
+                    else:
+                        self.logger.debug(f"[MODULE PROCESSING] Module {module_name} validation not yet attempted - setting stage to 'processing'")
+                    
+                    state_updates.update({
+                        'module_results': updated_results,
+                        'module_stage': FillingStage(stage='processing')
+                    })
+                    self.logger.debug(f"[MODULE PROCESSING] Module {module_name} still processing, module_stage=processing, ModuleResult updated")
                 
                 # Merge react-agent result with state updates
                 self.logger.debug(f"[MODULE EXIT] Exiting module {module_name}, module_complete={module_complete}")

@@ -1,4 +1,5 @@
 """Supervisor agent prompts for server mode."""
+from typing import List, Dict, Any, Optional
 
 
 SUPERVISOR_WELCOME_MESSAGE = """
@@ -125,6 +126,120 @@ Generate a helpful response to the user. Acknowledge that the simulation was att
 
 Be concise and helpful. Keep the response under 150 words.
 """
+    
+    return prompt
+
+
+def get_supervisor_routing_prompt(
+    execution_order: List[str],
+    completed_modules: List[str],
+    module_results: Dict[str, Any],
+    current_active_module: Optional[str],
+    recent_messages: List[Any],
+    modules_info: List[Dict[str, Any]],
+    simulation_tools_available: bool = False
+) -> str:
+    """
+    Generate the system prompt for supervisor routing decisions.
+    
+    Args:
+        execution_order: List of module names in execution order
+        completed_modules: List of completed module names
+        module_results: Dictionary of module results with their status
+        current_active_module: Currently active module name (if any)
+        recent_messages: Last 5-10 conversation messages for context
+        modules_info: List of module metadata dictionaries with name, display_name, description, order
+        simulation_tools_available: Whether simulation execution tools are available
+        
+    Returns:
+        Formatted prompt string for LLM routing decisions
+    """
+    # Build module status summary
+    pending_modules = [m for m in execution_order if m not in completed_modules]
+    
+    # Format module information
+    modules_text = []
+    for module_info in modules_info:
+        name = module_info.get('name', '')
+        display_name = module_info.get('display_name', name)
+        description = module_info.get('description', '')
+        optional = module_info.get('optional', False)
+        order = module_info.get('order', 999)
+        optional_text = " (optional)" if optional else ""
+        status = "✓ Completed" if name in completed_modules else "⏳ Pending"
+        modules_text.append(f"  {order}. {display_name}{optional_text} ({name}) - {description} [{status}]")
+    
+    # Format recent conversation (last few messages)
+    conversation_text = ""
+    if recent_messages:
+        conversation_text = "\n**Recent Conversation:**\n"
+        for msg in recent_messages[-8:]:  # Last 8 messages
+            if hasattr(msg, 'content'):
+                content = str(msg.content)[:200]  # Truncate long messages
+                msg_type = type(msg).__name__
+                conversation_text += f"  [{msg_type}]: {content}\n"
+    
+    # Build module results summary
+    results_summary = []
+    for module_name in execution_order:
+        if module_name in module_results:
+            result = module_results[module_name]
+            if hasattr(result, 'stage'):
+                stage = result.stage.stage if hasattr(result.stage, 'stage') else str(result.stage)
+            elif isinstance(result, dict):
+                stage = result.get('stage', {}).get('stage', 'unknown') if isinstance(result.get('stage'), dict) else str(result.get('stage', 'unknown'))
+            else:
+                stage = 'unknown'
+            results_summary.append(f"  - {module_name}: {stage}")
+        else:
+            results_summary.append(f"  - {module_name}: not started")
+    
+    prompt = f"""You are an intelligent routing supervisor for a neutron simulation configuration system.
+
+Your task is to analyze the current state and conversation context to determine where to route the user next.
+
+**Current State:**
+- Execution Order: {execution_order}
+- Completed Modules: {completed_modules}
+- Pending Modules: {pending_modules}
+- Current Active Module: {current_active_module or "None"}
+
+**Module Status:**
+{chr(10).join(results_summary)}
+
+**Available Modules:**
+{chr(10).join(modules_text)}
+{conversation_text}
+**Routing Rules:**
+
+1. **First Interaction**: If this is the first user message (no previous conversation), provide a natural, friendly greeting in the `greeting_message` field. Do NOT use formal welcome messages - be conversational and helpful. 
+   
+   **CRITICAL**: Your greeting MUST include information about the registered modules. Mention the modules that are available for configuration (listed in the "Available Modules" section above). For example, you might say something like "I'll help you configure your neutron simulation. We'll work through [module names] step by step." This helps users understand what will be configured.
+
+2. **Normal Flow**: If the user is continuing normally and there are pending modules, route to the next pending module in execution order.
+
+3. **Change Previous Module**: If the user explicitly wants to change or modify a previous (completed) module, route back to that module. The module will handle re-validation.
+
+4. **All Modules Complete**: If all modules are completed and the user hasn't requested changes, route to simulation (set action="route_to_simulation" and target_module="simulation" or None).
+
+5. **Resume Active Module**: If there's a current_active_module and the user just provided input, route back to that module.
+
+6. **CRITICAL - Unvalidated Active Module**: If current_active_module exists and is NOT in completed_modules, you MUST route back to current_active_module. Do NOT route to the next module or simulation until the active module is validated (stage="completed"). This ensures parameters are validated before proceeding. This rule takes precedence over all other routing rules except explicit user requests to change modules.
+
+7. **User Intent Detection**: Carefully analyze the conversation messages to understand user intent:
+   - "I want to change X" → route to module X
+   - "Let me modify the Y parameters" → route to module Y  
+   - "Go back to Z" → route to module Z
+   - General questions or clarifications → continue with current flow
+
+**Important:**
+- Use `action="route_to_module"` when routing to any module
+- Use `action="route_to_simulation"` when all modules are complete
+- The `target_module` must be one of: {execution_order + ['simulation']}
+- Provide clear `reasoning` explaining your routing decision
+- Only set `greeting_message` for first-time interactions
+
+Analyze the state and conversation, then return your routing decision."""
     
     return prompt
 
