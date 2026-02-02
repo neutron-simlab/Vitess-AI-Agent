@@ -87,7 +87,7 @@ class UserInput(BaseModel):
     model: Optional[str] = Field(
         description="LLM model name to use (provider-specific).",
         default=None,
-        examples=["gpt-4o-mini", "alias-function-call"],
+        examples=["gpt-4o-mini", "GPT-OSS-120b"],
     )
 
 
@@ -196,7 +196,7 @@ class ModuleInterruptInput(BaseModel):
     model: Optional[str] = Field(
         description="LLM model name to use (provider-specific).",
         default=None,
-        examples=["gpt-4o-mini", "alias-function-call"],
+        examples=["gpt-4o-mini", "GPT-OSS-120b"],
     )
 
 

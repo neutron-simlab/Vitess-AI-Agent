@@ -10,10 +10,13 @@ from uuid import uuid4
 from pathlib import Path
 from io import BytesIO
 
-from vitess_ai.schema.llm_models import Provider, OpenAIModelName, BlabladorModelName
+from vitess_ai.schema.llm_models import (
+    Provider,
+    OpenAIModelName,
+    BlabladorModelName,
+    get_blablador_model_display_name,
+)
 from file_management import (
-    check_server_health,
-    initialize_client,
     upload_file_to_server,
     delete_file_from_server,
     load_uploaded_files,
@@ -50,7 +53,7 @@ def render_sidebar() -> None:
                 f"You selected **{st.session_state.pending_provider}** as the provider.\n\n"
                 f"This will regenerate the agent graph with the new LLM. "
                 f"Your current conversation will continue with the new model.\n\n"
-                f"**Model**: {st.session_state.pending_model or ('alias-function-call' if st.session_state.pending_provider == Provider.BLABLADOR.value else 'gpt-4o-mini')}"
+                f"**Model**: {get_blablador_model_display_name(st.session_state.pending_model or BlabladorModelName.GPT_OSS.value) if st.session_state.pending_provider == Provider.BLABLADOR.value else (st.session_state.pending_model or 'gpt-4o-mini')}"
             )
             col1, col2 = st.columns(2)
             with col1:
@@ -60,7 +63,7 @@ def render_sidebar() -> None:
                         if st.session_state.pending_model:
                             st.session_state.selected_model = st.session_state.pending_model
                         elif st.session_state.pending_provider == Provider.BLABLADOR.value:
-                            st.session_state.selected_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+                            st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
                         else:
                             st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
                         
@@ -106,7 +109,7 @@ def render_sidebar() -> None:
             selected_provider = st.radio(
                 "Provider",
                 options=provider_options,
-                index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 0,  # Default to OpenAI (index 0)
+                index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 1,  # Default to Blablador (index 1)
                 help="Select the LLM provider to use"
             )
             
@@ -116,7 +119,7 @@ def render_sidebar() -> None:
                     # For Blablador, require confirmation
                     st.session_state.provider_change_pending = True
                     st.session_state.pending_provider = selected_provider
-                    st.session_state.pending_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+                    st.session_state.pending_model = BlabladorModelName.GPT_OSS.value
                     st.rerun()
                 else:
                     # For OpenAI, apply immediately
@@ -156,14 +159,15 @@ def render_sidebar() -> None:
                 )
             else:  # Blablador
                 model_options = [model.value for model in BlabladorModelName]
-                # Ensure selected model is valid for current provider, or auto-select alias-function-call
+                # Ensure selected model is valid for current provider, or auto-select GPT-OSS-120b
                 if st.session_state.selected_model not in model_options:
-                    st.session_state.selected_model = BlabladorModelName.ALIAS_FUNCTION_CALL.value
+                    st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
                 selected_model = st.selectbox(
                     "Model",
                     options=model_options,
                     index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
-                    help="Select the Blablador model to use (defaults to alias-function-call)"
+                    format_func=get_blablador_model_display_name,
+                    help="Select the Blablador model to use (GPT-OSS-120b)",
                 )
             
             # Update model if changed

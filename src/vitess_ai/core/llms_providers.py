@@ -5,6 +5,7 @@ Centralized LLM provider management for OpenAI, Blablador, and future Anthropic
 from typing import Dict
 from langchain_openai import ChatOpenAI
 from vitess_ai.core.config import global_config
+from vitess_ai.schema.llm_models import BlabladorModelName
 
 
 class LLMFactory:
@@ -278,7 +279,7 @@ def test_blablador_connection() -> bool:
     
     print("🧪 Testing Blablador connection...")
     try:
-        llm = LLMFactory.create_llm('blablador', 'alias-fast')
+        llm = LLMFactory.create_llm('blablador', BlabladorModelName.GPT_OSS.value)
         from langchain_core.messages import HumanMessage
         response = llm.invoke([HumanMessage(content="Hello")])
         print(f"✅ Blablador working: {response.content[:50]}...")

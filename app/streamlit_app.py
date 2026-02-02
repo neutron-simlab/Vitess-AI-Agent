@@ -12,7 +12,7 @@ import sys
 # Add parent directory to path to import vitess_ai modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from vitess_ai.schema.llm_models import Provider, OpenAIModelName
+from vitess_ai.schema.llm_models import Provider, OpenAIModelName, BlabladorModelName
 
 # Import UI modules
 from sidebar import render_sidebar
@@ -57,10 +57,10 @@ if "show_system_messages" not in st.session_state:
     st.session_state.show_system_messages = False
 
 if "selected_provider" not in st.session_state:
-    st.session_state.selected_provider = Provider.OPENAI.value
+    st.session_state.selected_provider = Provider.BLABLADOR.value
 
 if "selected_model" not in st.session_state:
-    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+    st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
 
 if "provider_change_pending" not in st.session_state:
     st.session_state.provider_change_pending = False

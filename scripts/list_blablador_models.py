@@ -18,9 +18,7 @@ Usage:
 """
 
 import sys
-import os
 import json
-import re
 from pathlib import Path
 
 # Add project root to path to import vitess_ai modules

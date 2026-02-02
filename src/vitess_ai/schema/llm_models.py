@@ -22,15 +22,25 @@ class OpenAIModelName(StrEnum):
 
 
 class BlabladorModelName(StrEnum):
-    """Blablador model names (OpenAI-compatible API)
-    Only models that support function calling and structured output are included.
+    """Blablador model names (OpenAI-compatible API).
+    Only GPT-OSS-120b is offered in the UI (alias: GPT-OSS-120b).
     """
-    
-    # Models with function calling and structured output support
-    ALIAS_FUNCTION_CALL = "alias-function-call"
-    ALIAS_CODE = "alias-code"
+
     GPT_OSS = "1 - GPT-OSS-120b - an open model released by OpenAI in August 2025"
-    # Type alias for all supported models
+
+
+# Display name shown in UI for Blablador models (model id -> label)
+BLABLADOR_MODEL_DISPLAY_NAMES: Dict[str, str] = {
+    BlabladorModelName.GPT_OSS.value: "GPT-OSS-120b",
+}
+
+
+def get_blablador_model_display_name(model_id: str) -> str:
+    """Return the UI display name for a Blablador model id."""
+    return BLABLADOR_MODEL_DISPLAY_NAMES.get(model_id, model_id)
+
+
+# Type alias for all supported models
 AllModelEnum: TypeAlias = OpenAIModelName | BlabladorModelName
 
 
@@ -50,7 +60,7 @@ def get_default_model_for_provider(provider: Provider) -> str:
     """Get the default model for a specific provider"""
     defaults = {
         Provider.OPENAI: OpenAIModelName.GPT_4O_MINI.value,
-        Provider.BLABLADOR: BlabladorModelName.ALIAS_FUNCTION_CALL.value,
+        Provider.BLABLADOR: BlabladorModelName.GPT_OSS.value,
     }
     return defaults.get(provider, "")
 

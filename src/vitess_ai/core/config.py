@@ -34,9 +34,12 @@ class Config:
     FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER", "openai")
     
     # Default model (uses provider-specific default if not set)
-    # For Blablador: alias-function-call, alias-code (only models with function calling support)
+    # For Blablador: GPT-OSS-120b (id: 1 - GPT-OSS-120b - an open model released by OpenAI in August 2025)
     # For OpenAI: gpt-4o-mini, gpt-4o, etc.
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", os.getenv("BLABLADOR_DEFAULT_MODEL", "alias-function-call"))
+    DEFAULT_MODEL = os.getenv(
+        "DEFAULT_MODEL",
+        os.getenv("BLABLADOR_DEFAULT_MODEL", "1 - GPT-OSS-120b - an open model released by OpenAI in August 2025"),
+    )
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "10000"))
     TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "60"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
