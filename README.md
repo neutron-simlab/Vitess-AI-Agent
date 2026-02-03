@@ -97,7 +97,7 @@ print(response.content)
 
 ## Production Deployment
 
-For production, we use Docker and deploy to Digital Ocean with automated CI/CD.
+For production, we use Docker (and optional CI/CD when you choose a host). The Docker image builds VITESS from source at build time by cloning the official repo (default branch: `develop`); you can override the repo or branch with build args `VITESS_REPO` and `VITESS_REF`.
 
 **Quick setup:**
 1. Set up GitHub Secrets with your API keys and server details

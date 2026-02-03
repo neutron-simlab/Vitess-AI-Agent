@@ -56,16 +56,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Build Vitess image
-        run: |
-          docker build -t vitess:latest -f vitess/Dockerfile ./vitess
-      
       - name: Build Vitess AI Agent image
         run: |
           docker build -t vitess-ai-agent:latest -f Dockerfile .
 
   deploy:
-    name: Deploy to Digital Ocean
+    name: Deploy to production
     runs-on: ubuntu-latest
     needs: build
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/production'
@@ -77,11 +73,11 @@ jobs:
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.DIGITALOCEAN_SSH_KEY }}
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
       
       - name: Add server to known hosts
         run: |
-          ssh-keyscan -H ${{ secrets.DIGITALOCEAN_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
       
       - name: Create production environment file
         run: |
@@ -122,13 +118,13 @@ jobs:
           LOG_LEVEL=INFO
           EOF
       
-      - name: Deploy to droplet
+      - name: Deploy to server
         run: |
-          # Copy environment file to droplet
-          scp /tmp/prod.env ${{ secrets.DIGITALOCEAN_USER }}@${{ secrets.DIGITALOCEAN_HOST }}:/etc/vitess-ai/.env
+          # Copy environment file to server
+          scp /tmp/prod.env ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/etc/vitess-ai/.env
           
-          # SSH into droplet and deploy
-          ssh ${{ secrets.DIGITALOCEAN_USER }}@${{ secrets.DIGITALOCEAN_HOST }} << 'EOF'
+          # SSH into server and deploy
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             set -e
             
             # Navigate to application directory
@@ -165,5 +161,5 @@ jobs:
       - name: Verify deployment
         run: |
           sleep 5
-          curl -f http://${{ secrets.DIGITALOCEAN_HOST }}:8000/health || exit 1
+          curl -f http://${{ secrets.DEPLOY_HOST }}:8000/health || exit 1
 

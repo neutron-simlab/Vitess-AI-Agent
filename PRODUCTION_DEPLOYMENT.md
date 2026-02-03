@@ -1,28 +1,28 @@
 # Production Deployment Guide
 
-This guide covers deploying Vitess AI Agent to Digital Ocean with secure API key management and automated CI/CD.
+This guide covers deploying Vitess AI Agent to a production server with secure API key management and optional CI/CD.
 
 ## Quick Start
 
-1. **Set up GitHub Secrets** (Repository Settings → Secrets → Actions):
+1. **Set up GitHub Secrets** (Repository Settings → Secrets → Actions), if using CI/CD:
    - `OPENAI_API_KEY` - Your OpenAI API key
    - `BLABLADOR_API_KEY` - Your Blablador API key (if used)
    - `LANGSMITH_API_KEY` - Your LangSmith API key (if used)
-   - `DIGITALOCEAN_HOST` - Your droplet IP or hostname
-   - `DIGITALOCEAN_USER` - SSH username (usually `root`)
-   - `DIGITALOCEAN_SSH_KEY` - Private SSH key for droplet access
+   - `DEPLOY_HOST` - Your server IP or hostname
+   - `DEPLOY_USER` - SSH username (e.g. `root` or `ubuntu`)
+   - `DEPLOY_SSH_KEY` - Private SSH key for server access
 
-2. **Set up Digital Ocean Droplet**:
+2. **Set up production server** (any Ubuntu 22.04 host):
    ```bash
-   # Run setup script on fresh Ubuntu 22.04 droplet
+   # Run setup script on fresh Ubuntu 22.04 server
    curl -fsSL https://raw.githubusercontent.com/your-org/vitess-ai-agent/main/scripts/setup-production-env.sh | sudo bash
    ```
 
-3. **Deploy**:
+3. **Deploy** (if using CI/CD):
    - Push to `main` or `production` branch
-   - GitHub Actions automatically deploys
+   - GitHub Actions runs tests, builds images, and deploys to your server
 
-## Initial Droplet Setup
+## Initial Server Setup
 
 ### Automated Setup (Recommended)
 
@@ -63,7 +63,7 @@ git clone https://github.com/your-org/vitess-ai-agent.git .
 
 ### Production Environment File
 
-Create `/etc/vitess-ai/.env` on your droplet:
+Create `/etc/vitess-ai/.env` on your server:
 
 ```bash
 sudo nano /etc/vitess-ai/.env
@@ -91,14 +91,14 @@ The GitHub Actions workflow automatically creates this file from secrets during 
 2. GitHub Actions runs:
    - Tests
    - Docker image builds
-   - Deployment to droplet
+   - Deployment to server
    - Health checks
 
 ### Manual Deployment
 
 ```bash
-# SSH to droplet
-ssh root@your-droplet-ip
+# SSH to server
+ssh root@your-server-ip
 
 # Navigate to app
 cd /opt/vitess-ai
@@ -138,7 +138,7 @@ docker-compose logs -f
 ### Deployment Fails: Permission Denied
 ```bash
 # Test SSH connection
-ssh -i ~/.ssh/your-key root@your-droplet-ip
+ssh -i ~/.ssh/your-key root@your-server-ip
 # Verify SSH key in GitHub Secrets
 ```
 
@@ -184,10 +184,10 @@ curl https://api.openai.com/v1/models \
 ## Quick Checklist
 
 **Initial Setup**:
-- [ ] Create Digital Ocean droplet (Ubuntu 22.04)
+- [ ] Provision a server (Ubuntu 22.04 recommended)
 - [ ] Run setup script or configure manually
-- [ ] Set up GitHub Secrets
-- [ ] Push to `main` branch (triggers deployment)
+- [ ] Set up GitHub Secrets (if using CI/CD)
+- [ ] Push to `main` branch (triggers deployment if CI/CD is configured)
 
 **Regular Maintenance**:
 - [ ] Rotate API keys every 90 days

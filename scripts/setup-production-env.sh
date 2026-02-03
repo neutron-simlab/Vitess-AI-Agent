@@ -1,7 +1,7 @@
 #!/bin/bash
-# setup-production-env.sh - Initial setup script for Digital Ocean droplet
+# setup-production-env.sh - Initial setup script for production server
 #
-# This script sets up the production environment on a fresh Digital Ocean droplet.
+# This script sets up the production environment on a fresh Ubuntu server.
 # It should be run once during initial server setup.
 #
 # Usage:
@@ -11,7 +11,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/your-org/vitess-ai-agent/main/scripts/setup-production-env.sh | bash
 #
 # Prerequisites:
-#   - Fresh Ubuntu 22.04 LTS droplet
+#   - Fresh Ubuntu 22.04 LTS server
 #   - Root or sudo access
 #   - SSH key access configured
 

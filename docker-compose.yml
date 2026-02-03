@@ -16,34 +16,13 @@
 #   - Use GitHub Secrets for CI/CD pipeline
 # =============================================================================
 services:
-  vitess:
-    build:
-      context: ./vitess
-      dockerfile: Dockerfile
-    image: vitess:latest
-    container_name: vitess-builder
-    volumes:
-      - vitess-modules:/vitess/MODULES:ro
-      - vitess-projects:/data/projects
-    environment:
-      - V=/vitess/MODULES
-      - P=/data/projects
-      - L=/data/logs/logfile.log
-    # Keep container running to provide volume access
-    command: tail -f /dev/null
-    networks:
-      - vitess-network
-
   vitess-ai-agent:
     build:
       context: .
       dockerfile: Dockerfile
     image: vitess-ai-agent:latest
     container_name: vitess-ai-agent
-    depends_on:
-      - vitess
     volumes:
-      - vitess-modules:/vitess/MODULES:ro
       - vitess-projects:/data/projects
     environment:
       # Vitess paths (automatically set by Docker, no need to configure in .env)
@@ -114,8 +93,6 @@ services:
       start_period: 40s
 
 volumes:
-  vitess-modules:
-    driver: local
   vitess-projects:
     driver: local
 

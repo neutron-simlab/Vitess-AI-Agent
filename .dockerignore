@@ -42,7 +42,7 @@ tests/
 *.test.py
 *_test.py
 
-# Vitess submodule (handled separately in vitess/Dockerfile)
+# Vitess (built from source in Dockerfile stage 1; no submodule)
 vitess/
 
 # Docker

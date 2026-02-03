@@ -61,3 +61,6 @@ htmlcov/
 # Local development
 .DS_Store
 Thumbs.db
+
+# Vitess (built from source in Dockerfile; no submodule)
+vitess/
