@@ -77,7 +77,9 @@ async def message_generator(
             user_input.message,
             agent,
             thread_id=user_input.thread_id,
-            user_id=user_input.user_id
+            user_id=user_input.user_id,
+            provider=provider,
+            model=model,
         )
     except StateError as e:
         logger.error(f"Failed to prepare input: {e}")
@@ -158,7 +160,9 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
             user_input.message,
             agent,
             thread_id=user_input.thread_id,
-            user_id=user_input.user_id
+            user_id=user_input.user_id,
+            provider=provider,
+            model=model,
         )
     except StateError as e:
         logger.error(f"Failed to prepare input: {e}")

@@ -1,20 +1,132 @@
 """
-Module Middleware - Message Filtering for Module Agents
+Module Middleware
 
 This module provides middleware for filtering messages so that each module agent
-only sees its own conversation context, maintaining independence between modules.
+only sees its own conversation context, and for choosing the LLM at invoke time
+from config.configurable (provider/model) without restarting the graph.
 """
 
 import logging
 import os
-from typing import Any, Optional, Set
-from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
+from typing import Any, Callable, Optional, Set
+
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    AgentState,
+    ModelRequest,
+    ModelResponse,
+    hook_config,
+)
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
+from langgraph.config import get_config
 from langgraph.runtime import Runtime
 
 from vitess_ai.core.log import get_logger
-from vitess_ai.core.llms_providers import create_llm_with_fallback
+from vitess_ai.core.llms_providers import LLMFactory, create_llm_with_fallback
 from vitess_ai.core.config import global_config
+
+
+def _get_provider_model_from_request(request: ModelRequest) -> tuple[Optional[str], Optional[str]]:
+    """
+    Read provider and model for dynamic model selection.
+
+    ModelRequest has state and runtime; LangGraph Runtime does not expose config.
+    We use langgraph.config.get_config() to get the current run's RunnableConfig
+    (set at invoke via config=...), then configurable["provider"] and ["model"].
+    Fall back to request.state llm_provider / llm_model if present (e.g. if set by input).
+    """
+    provider, model = None, None
+
+    # 1. Current run's config (set when graph is invoked with config=...)
+    try:
+        config = get_config()
+        # RunnableConfig is dict-like; use .get for configurable
+        configurable = config.get("configurable", None) if hasattr(config, "get") else getattr(config, "configurable", None)
+        configurable = configurable or {}
+        if isinstance(configurable, dict):
+            provider = configurable.get("provider")
+            model = configurable.get("model")
+    except RuntimeError:
+        # get_config() raises when called outside a runnable context
+        pass
+
+    # 2. State (e.g. if provider/model were put in state by input or a node)
+    if (provider is None or model is None) and hasattr(request, "state") and request.state:
+        state = request.state
+        if isinstance(state, dict):
+            if provider is None:
+                provider = state.get("llm_provider")
+            if model is None:
+                model = state.get("llm_model")
+
+    return provider, model
+
+
+class DynamicModelMiddleware(AgentMiddleware):
+    """
+    Middleware that swaps the model per request using provider/model from
+    config.configurable (or state), so the graph can use a different LLM
+    per invocation without restarting.
+    """
+
+    def __init__(self):
+        """Initialize the dynamic model middleware."""
+        self.logger = get_logger(
+            "vitess_ai.server_agents.module_middleware.DynamicModelMiddleware",
+            level=logging.DEBUG,
+        )
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Use provider/model from configurable to create LLM and override the request."""
+        provider, model = _get_provider_model_from_request(request)
+        if provider and model:
+            try:
+                streaming = getattr(request.model, "streaming", False)
+                llm = LLMFactory.create_llm(
+                    provider=str(provider),
+                    model=str(model),
+                    temperature=0.0,
+                    streaming=streaming,
+                )
+                self.logger.debug(
+                    f"[DYNAMIC_MODEL] Using configurable model: provider={provider}, model={model}"
+                )
+                return handler(request.override(model=llm))
+            except Exception as e:
+                self.logger.warning(
+                    f"[DYNAMIC_MODEL] Failed to create LLM for provider={provider}, model={model}: {e}. Using default model."
+                )
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Any],
+    ) -> ModelResponse:
+        """Async: use provider/model from configurable to create LLM and override the request."""
+        provider, model = _get_provider_model_from_request(request)
+        if provider and model:
+            try:
+                streaming = getattr(request.model, "streaming", False)
+                llm = LLMFactory.create_llm(
+                    provider=str(provider),
+                    model=str(model),
+                    temperature=0.0,
+                    streaming=streaming,
+                )
+                self.logger.debug(
+                    f"[DYNAMIC_MODEL] Using configurable model: provider={provider}, model={model}"
+                )
+                return await handler(request.override(model=llm))
+            except Exception as e:
+                self.logger.warning(
+                    f"[DYNAMIC_MODEL] Failed to create LLM for provider={provider}, model={model}: {e}. Using default model."
+                )
+        return await handler(request)
 
 
 def filter_module_messages(

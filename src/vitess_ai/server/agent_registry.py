@@ -16,15 +16,16 @@ from vitess_ai.server.errors import AgentNotFoundError
 logger = get_logger(__name__)
 
 # Simple in-memory agent registry
-# Key format: (agent_id, provider, model) -> tuple(AgentInstance, CompiledStateGraph)
+# Key format: agent_id -> tuple(AgentInstance, CompiledStateGraph)
+# Provider/model are now handled per-invocation via config.configurable and DynamicModelMiddleware
 # Storing both agent instance and app allows us to restart the graph with new config
 DEFAULT_AGENT = "supervisor"
 
 # Type alias for agent instance (currently SupervisorAgent, but could be extended)
 AgentInstance = Any
 
-# Registry storage: (agent_id, provider, model) -> (AgentInstance, CompiledStateGraph)
-_agent_registry: dict[tuple[str, str, str], tuple[AgentInstance, CompiledStateGraph]] = {}
+# Registry storage: agent_id -> (AgentInstance, CompiledStateGraph)
+_agent_registry: dict[str, tuple[AgentInstance, CompiledStateGraph]] = {}
 
 # Agent factory registry: agent_id -> async factory function
 # Factory function signature: async (provider: str, model: str) -> tuple[AgentInstance, CompiledStateGraph]
@@ -92,10 +93,16 @@ async def get_agent(
     """
     Get an agent by ID, creating it if it doesn't exist.
     
+    Provider and model are used only for initial creation (to set default LLMs).
+    After creation, DynamicModelMiddleware handles model selection per invocation
+    via config.configurable, so the same graph can use different models without restart.
+    
     Args:
         agent_id: Agent identifier (e.g., "supervisor")
-        provider: LLM provider (openai or blablador). Defaults to global_config.DEFAULT_PROVIDER
-        model: LLM model name. Defaults to provider's default model
+        provider: LLM provider (openai or blablador). Defaults to global_config.DEFAULT_PROVIDER.
+                  Only used for initial creation; ignored for existing agents.
+        model: LLM model name. Defaults to provider's default model.
+               Only used for initial creation; ignored for existing agents.
     
     Returns:
         CompiledStateGraph for the agent
@@ -103,16 +110,12 @@ async def get_agent(
     Raises:
         AgentNotFoundError: If agent_id is not registered or creation fails
     """
+    # Normalize provider/model for initial creation (if needed)
     provider, model = _normalize_provider_model(provider, model)
     
-    # Create composite key for registry
-    # Note: Different provider/model combinations create separate agents
-    # This allows the graph to regenerate with the new LLM automatically
-    registry_key = (agent_id, provider, model)
+    logger.info(f"Getting agent: {agent_id} (provider={provider}, model={model} used only for initial creation)")
     
-    logger.info(f"Getting agent: {agent_id} with provider={provider}, model={model}")
-    
-    if registry_key not in _agent_registry:
+    if agent_id not in _agent_registry:
         # Check if factory is registered for this agent type
         if agent_id not in _agent_factories:
             logger.error(f"Unknown agent requested: {agent_id}")
@@ -124,13 +127,13 @@ async def get_agent(
         
         try:
             factory = _agent_factories[agent_id]
-            logger.info(f"Creating new {agent_id} agent with provider={provider}, model={model}")
+            logger.info(f"Creating new {agent_id} agent with default provider={provider}, model={model}")
             
-            # Call factory function to create agent
+            # Call factory function to create agent (provider/model used for initial LLM setup)
             agent_instance, compiled_graph = await factory(provider, model)
             
-            _agent_registry[registry_key] = (agent_instance, compiled_graph)
-            logger.info(f"{agent_id} agent created and registered")
+            _agent_registry[agent_id] = (agent_instance, compiled_graph)
+            logger.info(f"{agent_id} agent created and registered (model selection now handled per-invocation via config)")
         except Exception as e:
             logger.error(f"Failed to create {agent_id} agent: {e}")
             raise AgentNotFoundError(
@@ -138,10 +141,10 @@ async def get_agent(
                 details={"error": str(e), "agent_type": agent_id, "provider": provider, "model": model}
             )
     else:
-        logger.info(f"Using existing agent: {agent_id} with provider={provider}, model={model}")
+        logger.info(f"Using existing agent: {agent_id} (provider/model from config.configurable will be used per invocation)")
     
     # Return the CompiledStateGraph (app) from the registry
-    return _agent_registry[registry_key][1]
+    return _agent_registry[agent_id][1]
 
 
 async def restart_agent(
@@ -150,27 +153,24 @@ async def restart_agent(
     model: str | None = None
 ) -> CompiledStateGraph:
     """
-    Restart an agent with new provider/model configuration.
+    Restart an agent by clearing its state/memory.
     
-    This function forces reinitialization of the agent graph with new LLM configuration,
-    similar to refreshing the web page but keeping the new provider/model.
+    With dynamic model selection, provider/model changes don't require graph restart.
+    This function clears conversation state/memory for a fresh start.
+    The graph itself is reused; model selection happens per-invocation via config.
     
     Args:
         agent_id: Agent identifier (e.g., "supervisor")
-        provider: New LLM provider (optional, uses current if not provided)
-        model: New LLM model name (optional, uses current if not provided)
+        provider: Ignored (kept for backward compatibility). Model selection is per-invocation.
+        model: Ignored (kept for backward compatibility). Model selection is per-invocation.
     
     Returns:
-        CompiledStateGraph for the restarted agent
+        CompiledStateGraph for the agent (same graph, cleared state)
         
     Raises:
         AgentNotFoundError: If agent_id is not registered
     """
-    provider, model = _normalize_provider_model(provider, model)
-    
-    registry_key = (agent_id, provider, model)
-    
-    logger.info(f"Restarting agent: {agent_id} with provider={provider}, model={model}")
+    logger.info(f"Restarting agent: {agent_id} (clearing state/memory)")
     
     # Check if factory is registered
     if agent_id not in _agent_factories:
@@ -181,30 +181,34 @@ async def restart_agent(
             details={"available_agents": available_agents}
         )
     
-    # If agent exists, try to restart it
-    if registry_key in _agent_registry:
-        agent_instance, _ = _agent_registry[registry_key]
+    # If agent exists, clear its state
+    if agent_id in _agent_registry:
+        agent_instance, _ = _agent_registry[agent_id]
         
         # Check if agent has restart_with_new_config method (supervisor-specific)
         if hasattr(agent_instance, 'restart_with_new_config'):
-            logger.info(f"Restarting existing {agent_id} with new config: provider={provider}, model={model}")
+            # Normalize provider/model for restart_with_new_config (it may still use them for default LLM)
+            provider, model = _normalize_provider_model(provider, model)
+            logger.info(f"Clearing state for {agent_id} (provider/model selection now per-invocation)")
             await agent_instance.restart_with_new_config(provider=provider, model=model, clear_state=True)
-            # Update the registry with the new app
-            _agent_registry[registry_key] = (agent_instance, agent_instance.app)
-            logger.info(f"{agent_id} restarted successfully with cleared state")
+            # Update the registry with the new app (same graph, cleared state)
+            _agent_registry[agent_id] = (agent_instance, agent_instance.app)
+            logger.info(f"{agent_id} state cleared successfully")
         else:
             # Agent doesn't support restart, recreate it
-            logger.info(f"{agent_id} doesn't support restart, recreating with new config")
+            logger.info(f"{agent_id} doesn't support restart, recreating")
             # Remove old entry
-            del _agent_registry[registry_key]
-            # Create new one
+            del _agent_registry[agent_id]
+            # Create new one (provider/model used for initial default LLM)
+            provider, model = _normalize_provider_model(provider, model)
             return await get_agent(agent_id, provider=provider, model=model)
     else:
         # Agent doesn't exist, create it
-        logger.info(f"Agent not found, creating new {agent_id} with provider={provider}, model={model}")
+        logger.info(f"Agent not found, creating new {agent_id}")
+        provider, model = _normalize_provider_model(provider, model)
         return await get_agent(agent_id, provider=provider, model=model)
     
-    return _agent_registry[registry_key][1]
+    return _agent_registry[agent_id][1]
 
 
 def get_agent_instance(agent_id: str = DEFAULT_AGENT) -> Optional[AgentInstance]:
@@ -220,11 +224,9 @@ def get_agent_instance(agent_id: str = DEFAULT_AGENT) -> Optional[AgentInstance]
     Returns:
         Agent instance if found, None otherwise
     """
-    # Search through registry for any instance with matching agent_id
-    # Returns the first match found (could be any provider/model combination)
-    for (reg_agent_id, _, _), (agent_instance, _) in _agent_registry.items():
-        if reg_agent_id == agent_id:
-            return agent_instance
+    if agent_id in _agent_registry:
+        agent_instance, _ = _agent_registry[agent_id]
+        return agent_instance
     return None
 
 

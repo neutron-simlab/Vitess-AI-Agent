@@ -19,7 +19,10 @@ from vitess_ai.core.llms_providers import create_llm_with_fallback
 from vitess_ai.core.log import get_logger
 from vitess_ai.server_agents.unified_state import UnifiedState, ModuleResult
 from vitess_ai.schema.base import FillingStage
-from vitess_ai.server_agents.module_middleware import MessageFilterMiddleware
+from vitess_ai.server_agents.module_middleware import (
+    MessageFilterMiddleware,
+    DynamicModelMiddleware,
+)
 from vitess_ai.core.config import global_config
 
 
@@ -473,10 +476,13 @@ Based on the user's response to the welcome message, use the appropriate section
         tool_names = [tool.name if hasattr(tool, 'name') else str(type(tool).__name__) for tool in self.tools]
         self.logger.debug(f"[REACT_AGENT] Tools for {self.module_name}: {tool_names}")
         
-        # Prepare middleware list
-        middleware_list = list(middleware) if middleware else []
+        # Prepare middleware list: dynamic model first (so provider/model from configurable are used)
+        middleware_list = [DynamicModelMiddleware()] + (list(middleware) if middleware else [])
         if middleware_list:
-            middleware_names = [m.__class__.__name__ if hasattr(m, '__class__') else str(type(m).__name__) for m in middleware_list]
+            middleware_names = [
+                getattr(m, "__name__", None) or type(m).__name__
+                for m in middleware_list
+            ]
             self.logger.debug(f"[REACT_AGENT] Middleware for {self.module_name}: {middleware_names}")
         
         # Create react-agent with LLM, tools, module-specific prompt, and middleware
@@ -485,7 +491,7 @@ Based on the user's response to the welcome message, use the appropriate section
             tools=self.tools,
             system_prompt=prompt,
             name=f"{self.module_name}_agent",
-            middleware=middleware_list if middleware_list else None
+            middleware=middleware_list,
         )
         
         self.logger.info(f"[REACT_AGENT] React-agent created successfully for {self.module_name}: {len(self.tools)} tools, prompt_length={len(prompt)}, middleware_count={len(middleware_list)}")
@@ -516,8 +522,12 @@ Based on the user's response to the welcome message, use the appropriate section
         """
         module_name = self.module_name
         
-        async def wrapper_node(state: UnifiedState):
-            """Wrapper node that invokes react-agent and handles state updates"""
+        async def wrapper_node(
+            state: UnifiedState, config: Optional[RunnableConfig] = None
+        ):
+            """Wrapper node that invokes react-agent and handles state updates.
+            Passes parent config (with configurable provider/model) so DynamicModelMiddleware can use it.
+            """
             self.logger.info(f"[MODULE ENTRY] Entering module: {module_name}")
             
             messages = state.get('messages', [])
@@ -629,9 +639,16 @@ Based on the user's response to the welcome message, use the appropriate section
                 # The middleware will also filter during LLM calls as an additional safety measure
                 messages_to_agent = filtered_invoke_state.get('messages', [])
                 self.logger.info(f"[REACT_AGENT] Invoking react-agent for module {module_name} with {len(messages_to_agent)} pre-filtered messages")
-                # Set recursion_limit to 50 to allow more iterations before hitting limit
-                config = RunnableConfig(recursion_limit=50)
-                result = await react_agent.ainvoke(filtered_invoke_state, config=config)
+                # Pass parent config (with configurable provider/model) so get_config() in DynamicModelMiddleware sees it
+                configurable = (
+                    getattr(config, "configurable", None) or {}
+                    if config else {}
+                )
+                invoke_config = RunnableConfig(
+                    recursion_limit=50,
+                    configurable=dict(configurable),
+                )
+                result = await react_agent.ainvoke(filtered_invoke_state, config=invoke_config)
                 
                 # Check if module is complete by examining tool results in messages
                 # IMPORTANT: Only check result_messages (from current invocation) to avoid picking up validation from previous modules

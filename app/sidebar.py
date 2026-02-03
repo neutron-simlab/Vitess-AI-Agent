@@ -46,152 +46,49 @@ def render_sidebar() -> None:
 
         # 1. LLM Configuration
         st.subheader("LLM Configuration")
-        # Show confirmation dialog if provider change is pending
-        if st.session_state.provider_change_pending and st.session_state.pending_provider:
-            st.warning(
-                f"**Provider Change Pending**\n\n"
-                f"You selected **{st.session_state.pending_provider}** as the provider.\n\n"
-                f"This will regenerate the agent graph with the new LLM. "
-                f"Your current conversation will continue with the new model.\n\n"
-                f"**Model**: {get_blablador_model_display_name(st.session_state.pending_model or BlabladorModelName.GPT_OSS.value) if st.session_state.pending_provider == Provider.BLABLADOR.value else (st.session_state.pending_model or 'gpt-4o-mini')}"
+        provider_options = [Provider.OPENAI.value, Provider.BLABLADOR.value]
+        selected_provider = st.radio(
+            "Provider",
+            options=provider_options,
+            index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 1,  # Default to Blablador (index 1)
+            help="Select the LLM provider to use"
+        )
+        # Handle provider change (apply immediately for both OpenAI and Blablador)
+        if selected_provider != st.session_state.selected_provider:
+            st.session_state.selected_provider = selected_provider
+            if selected_provider == Provider.BLABLADOR.value:
+                st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
+            else:
+                st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+            st.info(f"Switched to **{selected_provider}**. Next message will use the new model.")
+        # Model selector based on provider
+        if st.session_state.selected_provider == Provider.OPENAI.value:
+            model_options = [model.value for model in OpenAIModelName]
+            # Ensure selected model is valid for current provider
+            if st.session_state.selected_model not in model_options:
+                st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+            selected_model = st.selectbox(
+                "Model",
+                options=model_options,
+                index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                help="Select the OpenAI model to use"
             )
-            col1, col2 = st.columns(2)
-            with col1:
-                    if st.button("Confirm", width='stretch', type="primary"):
-                        # Apply the provider change
-                        st.session_state.selected_provider = st.session_state.pending_provider
-                        if st.session_state.pending_model:
-                            st.session_state.selected_model = st.session_state.pending_model
-                        elif st.session_state.pending_provider == Provider.BLABLADOR.value:
-                            st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
-                        else:
-                            st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
-                        
-                        # Clear pending state
-                        st.session_state.provider_change_pending = False
-                        st.session_state.pending_provider = None
-                        st.session_state.pending_model = None
-                        
-                        # Restart the graph with new provider/model if server is connected
-                        if st.session_state.server_connected and st.session_state.client:
-                            try:
-                                st.session_state.client.restart(
-                                    provider=st.session_state.selected_provider,
-                                    model=st.session_state.selected_model
-                                )
-                                # Clear conversation state for fresh start
-                                st.session_state.thread_id = str(uuid4())
-                                st.session_state.user_id = str(uuid4())
-                                st.session_state.messages = []
-                                st.session_state.current_interrupt = None
-                                st.session_state.welcome_initialized = False
-                                st.success(f"Switched to **{st.session_state.selected_provider}** with model **{st.session_state.selected_model}**. Graph restarted and conversation cleared for fresh start!")
-                            except Exception as e:
-                                st.warning(f"Provider/model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
-                        else:
-                            st.success(f"Switched to **{st.session_state.selected_provider}** with model **{st.session_state.selected_model}**. Graph will regenerate on next request.")
-                        st.rerun()
-                
-            with col2:
-                if st.button("Cancel", width='stretch'):
-                    # Cancel the change
-                    st.session_state.provider_change_pending = False
-                    st.session_state.pending_provider = None
-                    st.session_state.pending_model = None
-                    st.rerun()
-            
-            st.divider()
-            # Show current provider (not pending one) while confirmation is pending
-            st.info(f"**Current Provider**: {st.session_state.selected_provider}")
-        else:
-            # Provider selector (only show when not pending confirmation)
-            provider_options = [Provider.OPENAI.value, Provider.BLABLADOR.value]
-            selected_provider = st.radio(
-                "Provider",
-                options=provider_options,
-                index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 1,  # Default to Blablador (index 1)
-                help="Select the LLM provider to use"
+        else:  # Blablador
+            model_options = [model.value for model in BlabladorModelName]
+            # Ensure selected model is valid for current provider, or auto-select GPT-OSS-120b
+            if st.session_state.selected_model not in model_options:
+                st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
+            selected_model = st.selectbox(
+                "Model",
+                options=model_options,
+                index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
+                format_func=get_blablador_model_display_name,
+                help="Select the Blablador model to use (GPT-OSS-120b)",
             )
-            
-            # Handle provider change - require confirmation for Blablador
-            if selected_provider != st.session_state.selected_provider:
-                if selected_provider == Provider.BLABLADOR.value:
-                    # For Blablador, require confirmation
-                    st.session_state.provider_change_pending = True
-                    st.session_state.pending_provider = selected_provider
-                    st.session_state.pending_model = BlabladorModelName.GPT_OSS.value
-                    st.rerun()
-                else:
-                    # For OpenAI, apply immediately
-                    st.session_state.selected_provider = selected_provider
-                    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
-                    
-                    # Restart the graph with new provider/model if server is connected
-                    if st.session_state.server_connected and st.session_state.client:
-                        try:
-                            st.session_state.client.restart(
-                                provider=st.session_state.selected_provider,
-                                model=st.session_state.selected_model
-                            )
-                            # Clear conversation state for fresh start
-                            st.session_state.thread_id = str(uuid4())
-                            st.session_state.user_id = str(uuid4())
-                            st.session_state.messages = []
-                            st.session_state.current_interrupt = None
-                            st.session_state.welcome_initialized = False
-                            st.info("Switched to OpenAI. Graph restarted and conversation cleared for fresh start!")
-                        except Exception as e:
-                            st.warning(f"Provider/model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
-                    else:
-                        st.info("Switched to OpenAI. Graph will regenerate on next request.")
-            
-            # Model selector based on provider
-            if st.session_state.selected_provider == Provider.OPENAI.value:
-                model_options = [model.value for model in OpenAIModelName]
-                # Ensure selected model is valid for current provider
-                if st.session_state.selected_model not in model_options:
-                    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
-                selected_model = st.selectbox(
-                    "Model",
-                    options=model_options,
-                    index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
-                    help="Select the OpenAI model to use"
-                )
-            else:  # Blablador
-                model_options = [model.value for model in BlabladorModelName]
-                # Ensure selected model is valid for current provider, or auto-select GPT-OSS-120b
-                if st.session_state.selected_model not in model_options:
-                    st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
-                selected_model = st.selectbox(
-                    "Model",
-                    options=model_options,
-                    index=model_options.index(st.session_state.selected_model) if st.session_state.selected_model in model_options else 0,
-                    format_func=get_blablador_model_display_name,
-                    help="Select the Blablador model to use (GPT-OSS-120b)",
-                )
-            
-            # Update model if changed
-            if selected_model != st.session_state.selected_model:
-                st.session_state.selected_model = selected_model
-                
-                # Restart the graph with new model if server is connected
-                if st.session_state.server_connected and st.session_state.client:
-                    try:
-                        st.session_state.client.restart(
-                            provider=st.session_state.selected_provider,
-                            model=st.session_state.selected_model
-                        )
-                        # Clear conversation state for fresh start
-                        st.session_state.thread_id = str(uuid4())
-                        st.session_state.user_id = str(uuid4())
-                        st.session_state.messages = []
-                        st.session_state.current_interrupt = None
-                        st.session_state.welcome_initialized = False
-                        st.info(f"Model changed to **{selected_model}**. Graph restarted and conversation cleared for fresh start!")
-                    except Exception as e:
-                        st.warning(f"Model changed, but graph restart failed: {e}. Graph will regenerate on next request.")
-                else:
-                    st.info(f"Model changed to **{selected_model}**. Graph will regenerate with the new model on next request.")
+        # Update model if changed (no restart: next message uses new model via config)
+        if selected_model != st.session_state.selected_model:
+            st.session_state.selected_model = selected_model
+            st.info(f"Model changed to **{selected_model}**. Next message will use the new model.")
 
 
         # 3. File Upload Section

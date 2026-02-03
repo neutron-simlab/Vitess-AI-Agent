@@ -10,6 +10,7 @@ import json
 import time
 from typing import Dict, List, Any, Optional
 from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import InMemorySaver
@@ -34,7 +35,6 @@ from vitess_ai.core.config import global_config
 from vitess_ai.prompts.supervisor import (
     get_simulation_execution_prompt, 
     get_post_simulation_response_prompt,
-    get_supervisor_welcome_message,
     get_supervisor_routing_prompt
 )
 from vitess_ai.server_agents.tool_wrapper import create_thread_id_tool_node
@@ -388,7 +388,36 @@ class SupervisorAgent:
     # =================
     # SUPERVISOR NODE IMPLEMENTATIONS
     # =================
-    
+
+    def _get_llm_for_invocation(
+        self,
+        config: Optional[RunnableConfig] = None,
+        use_response_llm: bool = False,
+    ):
+        """
+        Return the LLM to use for this invocation.
+        If config.configurable has provider and model, create and return that LLM
+        so the supervisor can use a different model per invocation without restart.
+        Otherwise return self.llm or self.response_llm.
+        """
+        configurable = {}
+        if config is not None:
+            configurable = getattr(config, "configurable", None) or {}
+        provider = configurable.get("provider")
+        model = configurable.get("model")
+        if provider and model:
+            try:
+                return create_llm_with_fallback(
+                    provider=str(provider),
+                    model=str(model),
+                    temperature=0.0,
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"[SUPERVISOR] Failed to create LLM from configurable provider={provider}, model={model}: {e}. Using default."
+                )
+        return self.response_llm if use_response_llm else self.llm
+
     def _prepare_simulation_node(self, state: UnifiedState) -> dict:
         """Prepare simulation node - emits the 'starting simulation' message before execution"""
         self.logger.info("Preparing simulation execution - showing start message")
@@ -427,13 +456,16 @@ All modules have been configured successfully:
             'current_module': 'supervisor'  # Mark as supervisor message for proper display
         }
     
-    def _run_simulation_node(self, state: UnifiedState) -> dict:
+    def _run_simulation_node(
+        self, state: UnifiedState, config: Optional[RunnableConfig] = None
+    ) -> dict:
         """Simulation execution node - runs simulation directly using module results
         
         This node includes timeout protection to prevent hanging with Blablador:
         - Specifically catches timeout errors
         - Provides informative error messages if timeout occurs
         - Falls back gracefully if LLM invocation fails
+        Uses config.configurable (provider/model) when present for dynamic model selection.
         """
         self.logger.info("Entering simulation execution phase")
         
@@ -446,16 +478,20 @@ All modules have been configured successfully:
         simulation_system_prompt = SystemMessage(content=simulation_prompt)
 
         messages = [simulation_system_prompt]
-        timeout = getattr(self.llm, 'timeout', global_config.TIMEOUT_SECONDS)
+        llm = self._get_llm_for_invocation(config, use_response_llm=False)
+        # Bind simulation tools so the dynamic LLM can call them (same as self.llm at init)
+        if self.simulation_tools:
+            llm = llm.bind_tools(self.simulation_tools, parallel_tool_calls=False)
+        timeout = getattr(llm, 'timeout', global_config.TIMEOUT_SECONDS)
         msg_count = len(messages)
         response = None
         
         try:
             # Enhanced logging for LLM invocation
-            self.logger.info(f"Invoking LLM for simulation execution: {msg_count} messages, timeout={timeout}s, provider={self.config.provider}, model={self.config.model}")
+            self.logger.info(f"Invoking LLM for simulation execution: {msg_count} messages, timeout={timeout}s")
             start_time = time.time()
             
-            response = self.llm.invoke(messages)
+            response = llm.invoke(messages)
             
             duration = time.time() - start_time
             self.logger.info(f"LLM invocation completed successfully in {duration:.2f}s")
@@ -647,7 +683,9 @@ Configuration is complete. The simulation parameters are ready for execution.
         self.logger.info(f"All {len(execution_order)} modules are completed: {execution_order}")
         return True
     
-    def _supervisor_routing_node(self, state: UnifiedState) -> dict:
+    def _supervisor_routing_node(
+        self, state: UnifiedState, config: Optional[RunnableConfig] = None
+    ) -> dict:
         """
         Supervisor routing node - determines which module to route to using LLM.
         
@@ -658,6 +696,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         - Route intelligently based on state and messages
         
         Falls back to manual routing if LLM fails.
+        Uses config.configurable (provider/model) when present for dynamic model selection.
         """
         self.logger.info("[SUPERVISOR ROUTING] Supervisor routing node triggered (LLM-based)")
         
@@ -738,8 +777,9 @@ Configuration is complete. The simulation parameters are ready for execution.
                 simulation_tools_available=bool(self.simulation_tools)
             )
             
-            # Create LLM with structured output
-            routing_llm = self.llm.with_structured_output(RoutingDecisionModel)
+            # Create LLM with structured output (use configurable provider/model when present)
+            llm = self._get_llm_for_invocation(config, use_response_llm=False)
+            routing_llm = llm.with_structured_output(RoutingDecisionModel)
             
             # Invoke LLM for routing decision
             self.logger.info("[SUPERVISOR ROUTING] Invoking LLM for routing decision")
@@ -1056,13 +1096,16 @@ Configuration is complete. The simulation parameters are ready for execution.
         self.logger.info("Routing to post-simulation response node")
         return 'supervisor_post_simulation_response'
     
-    def _post_simulation_response_node(self, state: UnifiedState) -> dict:
+    def _post_simulation_response_node(
+        self, state: UnifiedState, config: Optional[RunnableConfig] = None
+    ) -> dict:
         """Post-simulation response node - generates AI response after tool execution
         
         This node includes timeout protection to prevent hanging with Blablador:
         - Specifically catches timeout errors
         - Provides fallback messages if timeout occurs
         - Uses existing tool results to generate appropriate responses
+        Uses config.configurable (provider/model) when present for dynamic model selection.
         """
         self.logger.info("Generating AI response after simulation execution")
         
@@ -1102,20 +1145,21 @@ Configuration is complete. The simulation parameters are ready for execution.
         response_prompt = get_post_simulation_response_prompt(tool_result)
         system_message = SystemMessage(content=response_prompt)
         
-        # Prepare LLM invocation with timeout protection
+        # Prepare LLM invocation with timeout protection (use configurable provider/model when present)
+        response_llm = self._get_llm_for_invocation(config, use_response_llm=True)
         recent_messages = messages[-5:] if len(messages) > 5 else messages
         llm_messages = [system_message] + recent_messages
-        timeout = getattr(self.response_llm, 'timeout', global_config.TIMEOUT_SECONDS)
+        timeout = getattr(response_llm, 'timeout', global_config.TIMEOUT_SECONDS)
         response = None
         
         try:
             # Invoke unbound LLM (without tools) to generate response
             # Include recent conversation context (last few messages)
             msg_count = len(llm_messages)
-            self.logger.info(f"Invoking LLM for post-simulation response: {msg_count} messages, timeout={timeout}s, provider={self.config.provider}, model={self.config.model}")
+            self.logger.info(f"Invoking LLM for post-simulation response: {msg_count} messages, timeout={timeout}s")
             start_time = time.time()
             
-            response = self.response_llm.invoke(llm_messages)
+            response = response_llm.invoke(llm_messages)
             
             duration = time.time() - start_time
             self.logger.info(f"Post-simulation response LLM invocation completed successfully in {duration:.2f}s")

@@ -15,7 +15,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from vitess_ai.core.log import get_logger
-from vitess_ai.server.errors import StateError
+from vitess_ai.server.agent_registry import _normalize_provider_model
 
 logger = get_logger(__name__)
 
@@ -29,13 +29,17 @@ class AgentInputHandler:
         agent: CompiledStateGraph,
         thread_id: str | None = None,
         user_id: str | None = None,
-        run_id: UUID | None = None
+        run_id: UUID | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> tuple[dict[str, Any], UUID]:
         """
         Prepare input for agent invocation.
         
         With react-agent architecture, modules END when needing user input.
         LangGraph automatically resumes from checkpoint when invoked with same thread_id.
+        Provider and model are placed in config.configurable so dynamic model
+        middleware can use them without restarting the graph.
         
         Args:
             user_input: User input message
@@ -43,6 +47,8 @@ class AgentInputHandler:
             thread_id: Optional thread ID for conversation continuity
             user_id: Optional user ID for cross-thread conversations
             run_id: Optional run ID, will generate if not provided
+            provider: Optional LLM provider (openai/blablador); normalized to default if None
+            model: Optional LLM model name; normalized to provider default if None
             
         Returns:
             Tuple of (kwargs for agent invocation, run_id)
@@ -53,8 +59,14 @@ class AgentInputHandler:
         run_id = run_id or uuid4()
         thread_id = thread_id or str(uuid4())
         user_id = user_id or str(uuid4())
+        provider, model = _normalize_provider_model(provider, model)
         
-        configurable = {"thread_id": thread_id, "user_id": user_id}
+        configurable: dict[str, Any] = {
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "provider": provider,
+            "model": model,
+        }
         config = RunnableConfig(
             configurable=configurable,
             run_id=run_id,
