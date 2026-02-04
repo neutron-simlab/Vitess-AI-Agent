@@ -296,36 +296,6 @@ vitess-ai-agent/
 └── pyproject.toml          # Python project configuration
 ```
 
-## Development Setup
-
-For contributors who want to develop locally without Docker:
-
-### Prerequisites
-
-- Python 3.13+
-- [VITESS](https://vitess.fz-juelich.de) installed and available in PATH
-- [uv](https://github.com/astral-sh/uv) package manager
-
-### Installation
-
-```bash
-# Install uv (if not installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install dependencies
-uv sync
-
-# Configure environment
-cp env.example .env
-# Edit .env with your API keys
-
-# Start API server
-python main.py
-
-# In another terminal, start Streamlit
-streamlit run app/streamlit_app.py
-```
-
 ## Contributing
 
 Areas for contribution:
