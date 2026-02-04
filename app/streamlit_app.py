@@ -12,7 +12,9 @@ import sys
 # Add parent directory to path to import vitess_ai modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from vitess_ai.schema.llm_models import Provider, OpenAIModelName, BlabladorModelName
+from vitess_ai.schema.llm_models import Provider, BlabladorModelName, get_default_model_for_provider
+from vitess_ai.core.config import global_config
+from vitess_ai.core.llms_providers import get_available_providers
 
 # Import UI modules
 from sidebar import render_sidebar
@@ -57,10 +59,27 @@ if "show_system_messages" not in st.session_state:
     st.session_state.show_system_messages = False
 
 if "selected_provider" not in st.session_state:
-    st.session_state.selected_provider = Provider.BLABLADOR.value
+    # Initialize provider from available providers
+    available_providers = get_available_providers()
+    available_provider_list = [p.value for p in Provider if available_providers.get(p.value, False)]
+    
+    # Use global_config.DEFAULT_PROVIDER if available, otherwise use first available
+    if global_config.DEFAULT_PROVIDER.lower() in available_provider_list:
+        st.session_state.selected_provider = global_config.DEFAULT_PROVIDER.lower()
+    elif available_provider_list:
+        st.session_state.selected_provider = available_provider_list[0]
+    else:
+        # Fallback to Blablador if no providers available (will show error in sidebar)
+        st.session_state.selected_provider = Provider.BLABLADOR.value
 
 if "selected_model" not in st.session_state:
-    st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
+    # Initialize model based on selected provider
+    try:
+        provider_enum = Provider(st.session_state.selected_provider)
+        st.session_state.selected_model = get_default_model_for_provider(provider_enum)
+    except (ValueError, KeyError):
+        # Fallback to Blablador default if provider not found
+        st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
 
 if "provider_change_pending" not in st.session_state:
     st.session_state.provider_change_pending = False

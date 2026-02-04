@@ -17,7 +17,7 @@ from vitess_ai.mcp.supervisor_tools import (
     coerce_json_to_dict,
     coerce_json_to_list,
     MODULE_EXECUTABLES,
-    COMMON_PARAMS,
+    COMMON_PARAMS_BASE,
 )
 
 
@@ -162,7 +162,7 @@ class TestGenerateCliCommand:
         
         assert result["success"] is True
         # Common params should be in the command
-        assert "--Z1" in result["cli_command"] or COMMON_PARAMS in result["cli_command"]
+        assert "--Z1" in result["cli_command"] or COMMON_PARAMS_BASE in result["cli_command"]
     
     def test_pipe_separators(self):
         """Test pipe separators between modules"""

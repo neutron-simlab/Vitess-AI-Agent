@@ -33,7 +33,6 @@ class ModuleMetadata(BaseModel):
     description: str = Field(..., description="Module description")
     agent_class: Type[Any] = Field(..., description="Agent class for this module (BaseModuleAgent)")
     optional: bool = Field(default=False, description="Whether module can be skipped")
-    config_path: Optional[str] = Field(None, description="Path to MCP tools configuration")
     order: int = Field(default=100, description="Execution order (1, 2, 3, etc.)")
     
     class Config:
@@ -49,7 +48,6 @@ class ModuleBuilder:
         display_name: str, 
         description: str,
         agent_class: Type[Any],
-        config_path: str = None,
         optional: bool = False,
         order: int = 100
     ) -> ModuleMetadata:
@@ -61,7 +59,6 @@ class ModuleBuilder:
             display_name: Pretty name like "Read-in Parameters"  
             description: What this module does
             agent_class: Your agent class (inherits BaseModuleAgent)
-            config_path: Path to MCP tools (optional)
             optional: Can user skip this? (default False)
             order: Execution order - 1, 2, 3, etc. (default 100)
         """
@@ -70,7 +67,6 @@ class ModuleBuilder:
             display_name=display_name,
             description=description,
             agent_class=agent_class,
-            config_path=config_path,
             optional=optional,
             order=order
         )
@@ -108,7 +104,7 @@ class BaseModuleAgent(ABC):
         # Log initialization
         self.logger.info(f"Initializing {self.name} agent with model {model}")
         if tools:
-            self.logger.info(f"Loaded {len(tools)} MCP tools")
+            self.logger.info(f"Loaded {len(tools)} tools")
         
         # Setup agent-specific configurations
         self._setup_llm()
@@ -156,7 +152,7 @@ class BaseModuleAgent(ABC):
     
     @classmethod
     @abstractmethod
-    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+    def register_with_supervisor(cls, supervisor) -> None:
         """
         Register this module with the supervisor.
         
@@ -165,7 +161,6 @@ class BaseModuleAgent(ABC):
         
         Args:
             supervisor: SupervisorAgent instance to register with
-            config_path: Optional path to MCP tools configuration (overrides default)
         """
         pass
     
@@ -305,10 +300,10 @@ class BaseModuleAgent(ABC):
         logger
     ) -> 'BaseModuleAgent':
         """
-        Setup an agent instance for a module with MCP tools.
+        Setup an agent instance for a module with LangChain tools.
         
         This class method handles:
-        - Setting up MCP tools if config_path is provided
+        - Loading LangChain tools for readin/guide/writeout/monitor modules
         - Creating the agent instance with the appropriate tools
         - Logging the initialization process
         
@@ -321,53 +316,24 @@ class BaseModuleAgent(ABC):
         Returns:
             Initialized BaseModuleAgent instance
         """
-        # Setup MCP tools if config path provided
+        # Load tools: native LangChain tools for readin/guide/writeout/monitor, MCP for supervisor only
         tools = []
-        if module_metadata.config_path:
+        module_name = module_metadata.name
+        if module_name in ("readin", "guide", "writeout", "monitor1d", "monitor2d"):
             try:
-                from langchain_mcp_adapters.client import MultiServerMCPClient
-                import os
-                
-                # Check transport mode
-                if global_config.is_mcp_http_mode():
-                    # Use HTTP transport (streamable-http for FastMCP compatibility)
-                    mcp_url = global_config.get_mcp_url(module_metadata.name)
-                    client = MultiServerMCPClient({
-                        "validation": {
-                            "url": mcp_url,
-                            "transport": "streamable_http",
-                            "headers": {
-                                "Content-Type": "application/json",
-                                "Accept": "application/json,text/event-stream",
-                                "MCP-Protocol-Version": "2024-11-05"
-                            }
-                        }
-                    })
-                    logger.info(f"Connecting to {module_metadata.name} MCP server via HTTP: {mcp_url}")
+                from vitess_ai.tools import get_guide_tools, get_readin_tools, get_writeout_tools, get_monitor_tools
+                if module_name == "guide":
+                    tools = get_guide_tools()
+                elif module_name == "readin":
+                    tools = get_readin_tools()
+                elif module_name == "writeout":
+                    tools = get_writeout_tools()
                 else:
-                    # Use stdio transport (development mode)
-                    # Prepare environment variables for MCP subprocess
-                    # Include current environment plus THREAD_ID and VITESS_THREAD_ID if available
-                    env = os.environ.copy()
-                    # Note: thread_id will be set dynamically when tools are called via service.py
-                    # The environment variables are passed at subprocess creation time
-                    # We'll pass current env vars, and service.py will update them before tool calls
-                    
-                    client = MultiServerMCPClient({
-                        "validation": {
-                            "command": "python",
-                            "args": [module_metadata.config_path],
-                            "transport": "stdio",
-                            "env": env  # Pass environment variables to subprocess
-                        }
-                    })
-                    logger.debug(f"MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
-                
-                tools = await client.get_tools()
-                logger.info(f"Loaded {len(tools)} MCP tools for {module_metadata.name}")
+                    tools = get_monitor_tools()
+                logger.info(f"Loaded {len(tools)} LangChain tools for {module_name}")
             except Exception as e:
-                logger.warning(f"Failed to load MCP tools for {module_metadata.name}: {e}")
-        
+                logger.warning(f"Failed to load LangChain tools for {module_name}: {e}")
+
         # Create agent instance
         agent = module_metadata.agent_class(
             provider=provider, 
@@ -693,7 +659,17 @@ Based on the user's response to the welcome message, use the appropriate section
                     if isinstance(msg, ToolMessage):
                         try:
                             # Parse tool result to check for validation success/failure
-                            tool_result = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
+                            # LangChain's @tool decorator may serialize dict returns to JSON string
+                            if isinstance(msg.content, str):
+                                try:
+                                    tool_result = json.loads(msg.content)
+                                except json.JSONDecodeError:
+                                    # If JSON parsing fails, try to extract dict from string representation
+                                    self.logger.debug(f"[VALIDATION] Failed to parse ToolMessage.content as JSON: {msg.content[:200]}")
+                                    continue
+                            else:
+                                tool_result = msg.content
+                            
                             if isinstance(tool_result, dict):
                                 validation_status = tool_result.get('validation_status', None)
                                 
@@ -759,7 +735,11 @@ Based on the user's response to the welcome message, use the appropriate section
                                         break
                         except (json.JSONDecodeError, AttributeError, TypeError) as e:
                             # Not a validation result, continue
-                            self.logger.debug(f"[VALIDATION] Skipping non-validation tool message: {type(e).__name__}")
+                            self.logger.debug(f"[VALIDATION] Skipping non-validation tool message: {type(e).__name__}: {e}")
+                            continue
+                        except Exception as e:
+                            # Unexpected error parsing tool message - log but continue
+                            self.logger.warning(f"[VALIDATION] Unexpected error parsing ToolMessage: {type(e).__name__}: {e}", exc_info=True)
                             continue
                 
                 # Get existing module result if any

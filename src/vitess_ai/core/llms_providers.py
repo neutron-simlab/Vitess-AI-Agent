@@ -4,8 +4,13 @@ Centralized LLM provider management for OpenAI, Blablador, and future Anthropic
 """
 from typing import Dict
 from langchain_openai import ChatOpenAI
-from vitess_ai.core.config import global_config
-from vitess_ai.schema.llm_models import BlabladorModelName
+from vitess_ai.schema.llm_models import BlabladorModelName, Provider
+
+
+def _get_config():
+    """Lazy import of global_config to avoid circular import"""
+    from vitess_ai.core.config import global_config
+    return global_config
 
 
 class LLMFactory:
@@ -32,8 +37,9 @@ class LLMFactory:
         """
         
         # Use config defaults if not specified
-        provider = provider or global_config.DEFAULT_PROVIDER
-        model = model or global_config.DEFAULT_MODEL
+        config = _get_config()
+        provider = provider or config.DEFAULT_PROVIDER
+        model = model or config.DEFAULT_MODEL
         
         if provider.lower() == 'openai':
             return LLMFactory._create_openai(model, temperature, **kwargs)
@@ -45,13 +51,14 @@ class LLMFactory:
     @staticmethod
     def _create_openai(model: str, temperature: float, **kwargs) -> ChatOpenAI:
         """Create OpenAI LLM"""
+        config = _get_config()
         llm_kwargs = {
-            'api_key': global_config.OPENAI_API_KEY,
+            'api_key': config.OPENAI_API_KEY,
             'model': model,
             'temperature': temperature,
-            'max_tokens': kwargs.get('max_tokens', global_config.MAX_TOKENS),
-            'timeout': kwargs.get('timeout', global_config.TIMEOUT_SECONDS),
-            'max_retries': kwargs.get('max_retries', global_config.MAX_RETRIES),
+            'max_tokens': kwargs.get('max_tokens', config.MAX_TOKENS),
+            'timeout': kwargs.get('timeout', config.TIMEOUT_SECONDS),
+            'max_retries': kwargs.get('max_retries', config.MAX_RETRIES),
         }
         # Only set streaming if explicitly provided in kwargs
         if 'streaming' in kwargs:
@@ -63,18 +70,19 @@ class LLMFactory:
         """Create Blablador LLM (uses ChatOpenAI with custom base_url)
         
         Note: timeout is properly configured here to prevent hanging.
-        The timeout value (default 60s from global_config.TIMEOUT_SECONDS) 
+        The timeout value (default 60s from config.TIMEOUT_SECONDS) 
         is passed to ChatOpenAI which will raise a timeout error if exceeded.
         """
-        timeout = kwargs.get('timeout', global_config.TIMEOUT_SECONDS)
+        config = _get_config()
+        timeout = kwargs.get('timeout', config.TIMEOUT_SECONDS)
         llm_kwargs = {
-            'api_key': global_config.BLABLADOR_API_KEY,
-            'base_url': global_config.BLABLADOR_BASE_URL,
+            'api_key': config.BLABLADOR_API_KEY,
+            'base_url': config.BLABLADOR_BASE_URL,
             'model': model,
             'temperature': temperature,
-            'max_tokens': kwargs.get('max_tokens', global_config.MAX_TOKENS),
+            'max_tokens': kwargs.get('max_tokens', config.MAX_TOKENS),
             'timeout': timeout,  # Timeout in seconds - prevents hanging on Blablador
-            'max_retries': kwargs.get('max_retries', global_config.MAX_RETRIES),
+            'max_retries': kwargs.get('max_retries', config.MAX_RETRIES),
         }
         # Only set streaming if explicitly provided in kwargs
         if 'streaming' in kwargs:
@@ -89,51 +97,77 @@ def create_llm_with_fallback(
     **kwargs
 ) -> ChatOpenAI:
     """
-    Create LLM with automatic fallback to available providers
-    Priority: OpenAI -> Blablador 
+    Create LLM with automatic fallback to available providers.
+    
+    Fallback chain is built dynamically from available providers only,
+    making it future-proof for new providers (Gemini, Anthropic, etc.).
     """
     
-    # Use global_config defaults if not specified
-    provider = provider or global_config.DEFAULT_PROVIDER
-    model = model or global_config.DEFAULT_MODEL
+    # Use config defaults if not specified
+    config = _get_config()
+    provider = provider or config.DEFAULT_PROVIDER
+    model = model or config.DEFAULT_MODEL
     
     try:
         return LLMFactory.create_llm(provider, model, temperature, **kwargs)
     except Exception as e:
         print(f"⚠️ {provider} failed: {e}")
         
-        # Try fallback chain: OpenAI -> Blablador
-        fallback_chain = ['openai', 'blablador']
+        # Build fallback chain dynamically from available providers
+        available_providers = get_available_providers()
         
-        # Remove the failed provider from fallback chain
-        if provider.lower() in fallback_chain:
-            fallback_chain.remove(provider.lower())
+        # Get list of available provider names (sorted for consistent fallback order)
+        fallback_chain = [
+            p.value for p in Provider 
+            if available_providers.get(p.value, False) and p.value != provider.lower()
+        ]
+        
+        if not fallback_chain:
+            raise Exception(
+                f"Provider {provider} failed and no fallback providers are available. "
+                f"Please configure at least one provider with valid API keys."
+            )
         
         for fallback_provider in fallback_chain:
-            if get_available_providers().get(fallback_provider, False):
-                print(f"🔄 Trying fallback: {fallback_provider}")
-                try:
-                    return LLMFactory.create_llm(fallback_provider, model, temperature, **kwargs)
-                except Exception as fallback_error:
-                    print(f"❌ {fallback_provider} also failed: {fallback_error}")
-                    continue
+            print(f"🔄 Trying fallback: {fallback_provider}")
+            try:
+                return LLMFactory.create_llm(fallback_provider, model, temperature, **kwargs)
+            except Exception as fallback_error:
+                print(f"❌ {fallback_provider} also failed: {fallback_error}")
+                continue
         
-        raise Exception(f"All providers failed. Last error: {e}")
+        raise Exception(f"All available providers failed. Last error: {e}")
 
 
 def get_available_providers() -> Dict[str, bool]:
     """
     Check which providers are available (have API keys configured)
     
+    This function delegates to Config.get_available_providers() to avoid code duplication.
+    The actual implementation is in config.py to avoid circular imports.
+    
     Returns:
         Dict mapping provider names to availability status
     """
-    providers = {
-        'openai': bool(global_config.OPENAI_API_KEY),
-        'blablador': bool(global_config.BLABLADOR_API_KEY and global_config.BLABLADOR_BASE_URL)
-        # 'anthropic': bool(global_config.ANTHROPIC_API_KEY),
-    }
-    return providers
+    config = _get_config()
+    return config.get_available_providers()
+
+
+def get_available_models(provider: str) -> list[str]:
+    """
+    Get list of available models for a provider based on .env configuration.
+    
+    If provider-specific AVAILABLE_MODELS env var is set, returns that filtered list.
+    Otherwise, returns all models from the enum for that provider.
+    
+    Args:
+        provider: Provider name ('openai' or 'blablador')
+        
+    Returns:
+        List of available model names for the provider
+    """
+    config = _get_config()
+    return config.get_available_models(provider)
 
 
 def validate_provider_config(provider: str) -> bool:
@@ -168,7 +202,8 @@ def create_supervisor_llm(
     """
     
     # Use supervisor-specific defaults
-    provider = provider or global_config.DEFAULT_PROVIDER
+    config = _get_config()
+    provider = provider or config.DEFAULT_PROVIDER
     
     return create_llm_with_fallback(
         provider=provider,
@@ -196,7 +231,8 @@ def create_module_agent_llm(
     """
     
     # Use module-specific defaults
-    provider = provider or global_config.DEFAULT_PROVIDER
+    config = _get_config()
+    provider = provider or config.DEFAULT_PROVIDER
     
     return create_llm_with_fallback(
         provider=provider,
@@ -255,7 +291,8 @@ def test_all_available_providers() -> Dict[str, bool]:
         if is_configured:
             print(f"  Testing {provider}...")
             # Use default model for each provider
-            model = global_config.DEFAULT_MODEL
+            config = _get_config()
+            model = config.DEFAULT_MODEL
             results[provider] = test_provider_connection(provider, model)
             status = "✅ Working" if results[provider] else "❌ Failed"
             print(f"  {provider}: {status}")

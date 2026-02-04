@@ -1,30 +1,29 @@
 """
 MCP utility functions.
 
-This module provides utility functions for working with MCP tools.
+Only the supervisor uses MCP (Vitess CLI tools). Module agents use LangChain tools.
 """
 
 
 def is_mcp_tool(name: str) -> bool:
-    """Check if a tool name indicates it's an MCP tool.
+    """Check if a tool name is from the supervisor MCP server (Vitess CLI tools).
     
-    MCP tools typically have names like:
-    - validate_*_parameters (validate_guide_parameters, validate_readin_parameters, etc.)
-    - run_simulation
-    - launch_*_gui (launch_picker_gui, launch_instrument_gui)
-    - Other module-specific validation tools
+    Supervisor MCP tools: generate_cli_command, prepare_simulation, run_simulation,
+    inspect_thread_folders, generate_monitor1d_plot. All other tools are LangChain tools.
     
     Args:
         name: Tool name to check
         
     Returns:
-        True if the tool is an MCP tool, False otherwise
+        True if the tool is a supervisor MCP tool, False otherwise
     """
     mcp_patterns = [
-        "validate_",
+        "generate_cli_command",
+        "prepare_simulation",
         "run_simulation",
-        "launch_",
-        "generate_cli",
+        "inspect_thread_folders",
+        "generate_monitor1d_plot",
+        "launch_",  # if any launch_* in supervisor
     ]
-    return any(name.startswith(pattern) for pattern in mcp_patterns)
+    return any(name == pattern or (pattern.endswith("_") and name.startswith(pattern)) for pattern in mcp_patterns)
 

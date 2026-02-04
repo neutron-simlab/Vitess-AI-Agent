@@ -1,5 +1,5 @@
 """
-Tests for writeout_module_tools.py
+Tests for writeout_tools.py (LangChain tools for writeout module).
 """
 import os
 import pytest
@@ -10,17 +10,11 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from vitess_ai.mcp.writeout_module_tools import (
+from vitess_ai.tools.writeout_tools import (
     writeout_params_to_cli,
     _try_load_save_path_from_storage,
 )
 from vitess_ai.schema.base import VtPrgFormat, VtDataFormat
-
-
-# Note: Tests for MCP tool functions (save_file, save_path_status, get_save_path,
-# clear_save_path, validate_writeout_module) are removed because these functions 
-# are wrapped by @mcp.tool() decorator and cannot be called directly.
-# These should be tested through integration tests or by accessing the underlying function if needed.
 
 
 @pytest.mark.unit
@@ -119,7 +113,7 @@ class TestTryLoadSavePathFromStorage:
         mock_storage.list_files.return_value = [{"file_path": "/path/to/output.dat"}]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.mcp.writeout_module_tools._current_save_path', None):
+        with patch('vitess_ai.tools.writeout_tools._current_save_path', None):
             result = _try_load_save_path_from_storage()
             
             assert result is True

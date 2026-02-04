@@ -212,9 +212,11 @@ Your task is to analyze the current state and conversation context to determine 
 {conversation_text}
 **Routing Rules:**
 
-1. **First Interaction**: If this is the first user message (no previous conversation), provide a natural, friendly greeting in the `greeting_message` field. Do NOT use formal welcome messages - be conversational and helpful. 
+1. **First Interaction - MANDATORY**: If this is the first user message (no previous conversation or only system messages), you MUST provide a natural, friendly greeting in the `greeting_message` field. Do NOT use formal welcome messages - be conversational and helpful. 
    
-   **CRITICAL**: Your greeting MUST include information about the registered modules. Mention the modules that are available for configuration (listed in the "Available Modules" section above). For example, you might say something like "I'll help you configure your neutron simulation. We'll work through [module names] step by step." This helps users understand what will be configured.
+   **CRITICAL**: Your greeting MUST include information about the registered modules. Mention the modules that are available for configuration (listed in the "Available Modules" section above). For example, you might say something like "Hello! I'll help you configure your neutron simulation. We'll work through [module names] step by step." This helps users understand what will be configured.
+   
+   **IMPORTANT**: If this is a first interaction, the `greeting_message` field MUST NOT be None or empty. Always provide a greeting for first interactions.
 
 2. **Normal Flow**: If the user is continuing normally and there are pending modules, route to the next pending module in execution order.
 

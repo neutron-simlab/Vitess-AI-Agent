@@ -4,6 +4,7 @@ API endpoints for agent invocation and streaming.
 This module provides endpoints for invoking agents, streaming responses,
 and restarting agents with new configurations.
 """
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -113,6 +114,10 @@ async def message_generator(
             async for sse_string in processor.process_event(stream_event):
                 yield sse_string
         
+    except asyncio.CancelledError:
+        # Client disconnected or request cancelled; re-raise so the task is properly cancelled
+        logger.debug("Stream cancelled (client disconnect or request cancelled)")
+        raise
     except StreamingError as e:
         logger.error(f"Streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': f'Streaming error: {e.message}'})}\n\n"

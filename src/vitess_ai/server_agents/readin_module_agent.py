@@ -49,14 +49,13 @@ class ReadInModuleAgent(BaseModuleAgent):
         return "readin_params"
     
     @classmethod
-    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+    def register_with_supervisor(cls, supervisor) -> None:
         """Register the readin module with the supervisor"""
         module = ModuleBuilder.create(
             name="readin",
             display_name="Read-in Parameters",
             description="Configure neutron input parameters and initial conditions",
             agent_class=cls,
-            config_path=config_path or global_config.READIN_MCP_PATH,
             order=1
         )
         supervisor.register_module(module)

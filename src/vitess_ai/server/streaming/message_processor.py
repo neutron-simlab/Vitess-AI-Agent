@@ -127,6 +127,15 @@ class MessageProcessor:
                 if chat_message.type == "system":
                     continue
                 
+                # Skip AIMessages with empty content that only have tool_calls
+                # These are tool invocation messages - the tool result will be shown separately
+                if (chat_message.type == "ai" and 
+                    chat_message.tool_calls and
+                    (not chat_message.content or (isinstance(chat_message.content, str) and chat_message.content.strip() == ""))):
+                    tool_names = [tc.get('name', 'unknown') for tc in chat_message.tool_calls]
+                    logger.debug(f"Skipping empty AIMessage with tool_calls: {tool_names}")
+                    continue
+                
                 # Deduplication: Check if we've already streamed this message
                 message_id = get_message_identifier(
                     message, 

@@ -49,14 +49,13 @@ class Monitor2DModuleAgent(BaseModuleAgent):
         return "monitor2d_params"
     
     @classmethod
-    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+    def register_with_supervisor(cls, supervisor) -> None:
         """Register the Monitor2D module with the supervisor"""
         module = ModuleBuilder.create(
             name="monitor2d",
             display_name="Monitor2D Parameters",
             description="Configure 2D monitor parameters for neutron detection",
             agent_class=cls,
-            config_path=config_path or global_config.MONITOR_MCP_PATH,
             order=5
         )
         supervisor.register_module(module)

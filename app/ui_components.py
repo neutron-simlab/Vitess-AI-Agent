@@ -268,34 +268,21 @@ def render_content(content: any, color: str, custom_data: Optional[Dict[str, Any
                 )
 
 
-def render_message_header(badge_text: str, message_type: str, tool_names: list[str] = None, is_mcp: bool = False) -> None:
+def render_message_header(badge_text: str, message_type: str) -> None:
     """
     Render consistent message header with badge and type indicator.
     
     Args:
         badge_text: Formatted module badge HTML
-        message_type: Type of message (ai, tool, etc.)
-        tool_names: Optional list of tool names for tool messages
-        is_mcp: Whether this is an MCP tool message
+        message_type: Type of message ("ai" or "tool")
     """
     if message_type == "tool":
-        if is_mcp:
-            st.markdown(
-                f"{badge_text} | ✅ <strong>MCP Tool Result</strong>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f"{badge_text} | 🔧 <strong>Tool Result</strong>",
-                unsafe_allow_html=True,
-            )
-    elif message_type == "ai" and tool_names:
         st.markdown(
-            f"{badge_text} | 🔧 <strong>MCP Tool Call</strong>: {', '.join(tool_names)}",
+            f"{badge_text} | 🔧 <strong>Tool Result</strong>",
             unsafe_allow_html=True,
         )
     else:
-        # Regular AI message - just show badge
+        # AI message - just show badge
         st.markdown(badge_text, unsafe_allow_html=True)
 
 
@@ -335,24 +322,8 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
         with st.chat_message("assistant"):
             badge_text = render_module_badge(module_name, dynamic_modules)
             
-            # Check if this is an MCP tool call
-            is_mcp_call = (
-                custom_data.get("has_mcp_tools", False) or
-                custom_data.get("source") == "mcp"
-            )
-            
-            # Extract tool names if present
-            tool_names = None
-            if message.tool_calls:
-                tool_names = [tc.get("name", "unknown") for tc in message.tool_calls]
-            
-            # Render header (badge + type indicator if needed)
-            render_message_header(
-                badge_text,
-                "ai",
-                tool_names=tool_names if is_mcp_call else None,
-                is_mcp=False
-            )
+            # Render header (badge only for AI messages)
+            render_message_header(badge_text, "ai")
             
             # Render content uniformly
             if message.content:
@@ -363,14 +334,8 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
         with st.chat_message("assistant"):
             badge_text = render_module_badge(module_name, dynamic_modules)
             
-            # Check if this is an MCP tool result
-            is_mcp_tool = (
-                custom_data.get("is_mcp_tool", False) or
-                custom_data.get("source") == "mcp"
-            )
-            
             # Render header (badge + tool indicator)
-            render_message_header(badge_text, "tool", is_mcp=is_mcp_tool)
+            render_message_header(badge_text, "tool")
             
             # Render content uniformly
             if message.content:

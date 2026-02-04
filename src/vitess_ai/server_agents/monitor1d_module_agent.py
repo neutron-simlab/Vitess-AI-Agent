@@ -49,14 +49,13 @@ class Monitor1DModuleAgent(BaseModuleAgent):
         return "monitor1d_params"
     
     @classmethod
-    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+    def register_with_supervisor(cls, supervisor) -> None:
         """Register the Monitor1D module with the supervisor"""
         module = ModuleBuilder.create(
             name="monitor1d",
             display_name="Monitor1D Parameters",
             description="Configure 1D monitor parameters for neutron detection",
             agent_class=cls,
-            config_path=config_path or global_config.MONITOR_MCP_PATH,
             order=4
         )
         supervisor.register_module(module)

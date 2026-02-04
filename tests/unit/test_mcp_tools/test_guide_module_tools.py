@@ -1,5 +1,5 @@
 """
-Tests for guide_module_tools.py
+Tests for guide_tools.py (LangChain tools for guide module).
 """
 import json
 import os
@@ -11,16 +11,11 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from vitess_ai.mcp.guide_module_tools import (
+from vitess_ai.tools.guide_tools import (
     guide_params_to_cli,
     _try_load_files_from_storage,
 )
 from vitess_ai.schema.base import VtGdeShape
-
-
-# Note: Tests for MCP tool functions (validate_guide_parameters, upload_file, file_status, get_file)
-# are removed because these functions are wrapped by @mcp.tool() decorator and cannot be called directly.
-# These should be tested through integration tests or by accessing the underlying function if needed.
 
 
 @pytest.mark.unit
@@ -63,7 +58,7 @@ class TestTryLoadFilesFromStorage:
         mock_storage.get_file_paths_for_module.return_value = ["/path/to/file.dat"]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.mcp.guide_module_tools._current_files', []):
+        with patch('vitess_ai.tools.guide_tools._current_files', []):
             result = _try_load_files_from_storage()
             
             assert result is True

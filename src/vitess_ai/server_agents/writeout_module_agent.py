@@ -49,14 +49,13 @@ class WriteoutModuleAgent(BaseModuleAgent):
         return "writeout_params"
     
     @classmethod
-    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+    def register_with_supervisor(cls, supervisor) -> None:
         """Register the writeout module with the supervisor"""
         module = ModuleBuilder.create(
             name="writeout",
             display_name="Writeout Parameters",
             description="Configure output settings and data formats",
             agent_class=cls,
-            config_path=config_path or global_config.WRITEOUT_MCP_PATH,
             order=3
         )
         supervisor.register_module(module)

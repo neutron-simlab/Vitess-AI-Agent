@@ -9,7 +9,7 @@ management and checkpoint-based resumption.
 import json
 import time
 from typing import Dict, List, Any, Optional
-from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
+from langchain_core.messages import SystemMessage, AIMessage, ToolMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
@@ -154,30 +154,30 @@ class SupervisorAgent:
     # BUILT-IN MODULE BUILDERS - Convenience methods
     # =================
     
-    def add_readin_module(self, config_path: str = None) -> None:
+    def add_readin_module(self) -> None:
         """Add the standard readin module"""
         from vitess_ai.server_agents.readin_module_agent import ReadInModuleAgent
-        ReadInModuleAgent.register_with_supervisor(self, config_path)
+        ReadInModuleAgent.register_with_supervisor(self)
     
-    def add_guide_module(self, config_path: str = None) -> None:
+    def add_guide_module(self) -> None:
         """Add the standard guide module"""  
         from vitess_ai.server_agents.guide_module_agent import GuideModuleAgent
-        GuideModuleAgent.register_with_supervisor(self, config_path)
+        GuideModuleAgent.register_with_supervisor(self)
     
-    def add_writeout_module(self, config_path: str = None) -> None:
+    def add_writeout_module(self) -> None:
         """Add the standard writeout module"""
         from vitess_ai.server_agents.writeout_module_agent import WriteoutModuleAgent
-        WriteoutModuleAgent.register_with_supervisor(self, config_path)
+        WriteoutModuleAgent.register_with_supervisor(self)
     
-    def add_monitor1d_module(self, config_path: str = None) -> None:
+    def add_monitor1d_module(self) -> None:
         """Add the Monitor1D module"""
         from vitess_ai.server_agents.monitor1d_module_agent import Monitor1DModuleAgent
-        Monitor1DModuleAgent.register_with_supervisor(self, config_path)
+        Monitor1DModuleAgent.register_with_supervisor(self)
     
-    def add_monitor2d_module(self, config_path: str = None) -> None:
+    def add_monitor2d_module(self) -> None:
         """Add the Monitor2D module"""
         from vitess_ai.server_agents.monitor2d_module_agent import Monitor2DModuleAgent
-        Monitor2DModuleAgent.register_with_supervisor(self, config_path)
+        Monitor2DModuleAgent.register_with_supervisor(self)
     
     def add_default_modules(self) -> None:
         """Add all default modules (readin, guide, writeout)"""
@@ -781,20 +781,41 @@ Configuration is complete. The simulation parameters are ready for execution.
             llm = self._get_llm_for_invocation(config, use_response_llm=False)
             routing_llm = llm.with_structured_output(RoutingDecisionModel)
             
+            # Detect first interaction: check if there's already a supervisor greeting message
+            # First interaction = no previous supervisor AIMessage (greeting) exists
+            has_supervisor_greeting = any(
+                isinstance(msg, AIMessage) and 
+                hasattr(msg, 'additional_kwargs') and 
+                msg.additional_kwargs.get('module_name') == 'supervisor'
+                for msg in messages
+            )
+            is_first_interaction = not has_supervisor_greeting
+            
             # Invoke LLM for routing decision
-            self.logger.info("[SUPERVISOR ROUTING] Invoking LLM for routing decision")
+            self.logger.info(f"[SUPERVISOR ROUTING] Invoking LLM for routing decision (first_interaction={is_first_interaction})")
             routing_decision = routing_llm.invoke([SystemMessage(content=routing_prompt)])
             
-            self.logger.info(f"[SUPERVISOR ROUTING] LLM routing decision: action={routing_decision.action}, target_module={routing_decision.target_module}, reasoning={routing_decision.reasoning[:100]}...")
+            self.logger.info(f"[SUPERVISOR ROUTING] LLM routing decision: action={routing_decision.action}, target_module={routing_decision.target_module}, has_greeting={bool(routing_decision.greeting_message)}, reasoning={routing_decision.reasoning[:100]}...")
             
-            # Handle greeting message if provided (first interaction)
-            if routing_decision.greeting_message:
+            # Handle greeting message (first interaction)
+            # If LLM didn't provide greeting but this is first interaction, generate one programmatically
+            if is_first_interaction:
+                if routing_decision.greeting_message:
+                    greeting_content = routing_decision.greeting_message
+                    self.logger.info("[SUPERVISOR ROUTING] Using LLM-provided greeting message")
+                else:
+                    # Generate fallback greeting if LLM didn't provide one
+                    self.logger.warning("[SUPERVISOR ROUTING] LLM didn't provide greeting_message for first interaction, generating fallback")
+                    modules_list = ", ".join([m.get('display_name', m.get('name', '')) for m in modules_info])
+                    greeting_content = f"Hello! I'm your Simulation Supervisor. I'll help you configure your neutron simulation step by step. We'll work through the following modules: {modules_list}. Let's start!"
+                
                 greeting_message = AIMessage(
-                    content=routing_decision.greeting_message,
+                    content=greeting_content,
                     additional_kwargs={"module_name": "supervisor"}
                 )
                 state_updates['messages'] = state.get('messages', []) + [greeting_message]
                 state_updates['current_module'] = 'supervisor'
+                self.logger.info(f"[SUPERVISOR ROUTING] Added supervisor greeting message: {greeting_content[:100]}...")
             
             # Initialize execution_order if not set
             if not execution_order:

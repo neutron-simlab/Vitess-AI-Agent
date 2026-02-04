@@ -62,6 +62,7 @@ CRITICAL: POST-VALIDATION BEHAVIOR
 ------------------------------
 - After calling the validate_readin_module tool, check the validation_status in the response
 - If validation_status is True: 
+  * Show a success message: "✅ Configuration validated successfully! We will bring you back to the supervisor."
   * DO NOT ask the user if they want to run simulation
   * DO NOT ask the user if they want to proceed to the next module
   * DO NOT ask for any confirmation
@@ -165,6 +166,7 @@ CRITICAL: POST-VALIDATION BEHAVIOR
 ------------------------------
 - After calling the validate_readin_module tool, check the validation_status in the response
 - If validation_status is True: 
+  * Show a success message: "✅ Configuration validated successfully! We will bring you back to the supervisor."
   * DO NOT ask the user if they want to run simulation
   * DO NOT ask the user if they want to proceed to the next module
   * DO NOT ask for any confirmation

@@ -49,14 +49,13 @@ class GuideModuleAgent(BaseModuleAgent):
         return "guide_params"
     
     @classmethod
-    def register_with_supervisor(cls, supervisor, config_path: str = None) -> None:
+    def register_with_supervisor(cls, supervisor) -> None:
         """Register the guide module with the supervisor"""
         module = ModuleBuilder.create(
             name="guide",
             display_name="Guide Parameters",
             description="Configure neutron guide specifications and geometry",
             agent_class=cls,
-            config_path=config_path or global_config.GUIDE_MCP_PATH,
             order=2
         )
         supervisor.register_module(module)

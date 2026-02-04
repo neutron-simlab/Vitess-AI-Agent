@@ -15,7 +15,9 @@ from vitess_ai.schema.llm_models import (
     OpenAIModelName,
     BlabladorModelName,
     get_blablador_model_display_name,
+    get_default_model_for_provider,
 )
+from vitess_ai.core.llms_providers import get_available_providers, get_available_models
 from file_management import (
     upload_file_to_server,
     delete_file_from_server,
@@ -46,11 +48,31 @@ def render_sidebar() -> None:
 
         # 1. LLM Configuration
         st.subheader("LLM Configuration")
-        provider_options = [Provider.OPENAI.value, Provider.BLABLADOR.value]
+        
+        # Get available providers dynamically (future-proof for new providers)
+        available_providers = get_available_providers()
+        provider_options = [p.value for p in Provider if available_providers.get(p.value, False)]
+        
+        # Handle edge case: No providers available
+        if not provider_options:
+            st.error("❌ No LLM providers are configured. Please configure at least one provider (OpenAI, Blablador, etc.) with valid API keys in your .env file.")
+            return
+        
+        # Auto-select first available provider if current selection is unavailable
+        if st.session_state.selected_provider not in provider_options:
+            st.session_state.selected_provider = provider_options[0]
+            # Also update model to match the new provider
+            try:
+                provider_enum = Provider(st.session_state.selected_provider)
+                st.session_state.selected_model = get_default_model_for_provider(provider_enum)
+            except ValueError:
+                pass  # Provider enum might not have this value yet
+            st.warning(f"⚠️ Previously selected provider is unavailable. Auto-selected: **{st.session_state.selected_provider}**")
+        
         selected_provider = st.radio(
             "Provider",
             options=provider_options,
-            index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 1,  # Default to Blablador (index 1)
+            index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 0,
             help="Select the LLM provider to use"
         )
         # Handle provider change (apply immediately for both OpenAI and Blablador)
@@ -62,11 +84,15 @@ def render_sidebar() -> None:
                 st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
             st.info(f"Switched to **{selected_provider}**. Next message will use the new model.")
         # Model selector based on provider
+        # Get available models from config (filtered by .env if configured)
+        model_options = get_available_models(st.session_state.selected_provider)
+        
         if st.session_state.selected_provider == Provider.OPENAI.value:
-            model_options = [model.value for model in OpenAIModelName]
             # Ensure selected model is valid for current provider
             if st.session_state.selected_model not in model_options:
-                st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+                # Use default model if available, otherwise first available model
+                default_model = get_default_model_for_provider(Provider.OPENAI)
+                st.session_state.selected_model = default_model if default_model in model_options else (model_options[0] if model_options else OpenAIModelName.GPT_4O_MINI.value)
             selected_model = st.selectbox(
                 "Model",
                 options=model_options,
@@ -74,10 +100,11 @@ def render_sidebar() -> None:
                 help="Select the OpenAI model to use"
             )
         else:  # Blablador
-            model_options = [model.value for model in BlabladorModelName]
             # Ensure selected model is valid for current provider, or auto-select GPT-OSS-120b
             if st.session_state.selected_model not in model_options:
-                st.session_state.selected_model = BlabladorModelName.GPT_OSS.value
+                # Use default model if available, otherwise first available model
+                default_model = get_default_model_for_provider(Provider.BLABLADOR)
+                st.session_state.selected_model = default_model if default_model in model_options else (model_options[0] if model_options else BlabladorModelName.GPT_OSS.value)
             selected_model = st.selectbox(
                 "Model",
                 options=model_options,

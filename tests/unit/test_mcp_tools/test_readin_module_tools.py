@@ -1,5 +1,5 @@
 """
-Tests for readin_module_tools.py
+Tests for readin_tools.py (LangChain tools for read-in module).
 """
 import os
 import pytest
@@ -10,19 +10,12 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from vitess_ai.mcp.readin_module_tools import (
+from vitess_ai.tools.readin_tools import (
     readin_params_to_cli,
     _try_load_files_from_storage,
     _try_load_instrument_file_from_storage,
-    NF_MAX,
 )
-
-
-# Note: Tests for MCP tool functions (upload_file, set_files, upload_instrument_file, 
-# file_status, instrument_file_status, get_files, get_instrument_file, clear_files,
-# clear_instrument_file, validate_readin_module) are removed because these functions 
-# are wrapped by @mcp.tool() decorator and cannot be called directly.
-# These should be tested through integration tests or by accessing the underlying function if needed.
+from vitess_ai.schema.readin_module import NF_MAX
 
 
 @pytest.mark.unit
@@ -70,7 +63,7 @@ class TestTryLoadFilesFromStorage:
         mock_storage.get_file_paths_for_module.return_value = ["/path/to/file1.dat", "/path/to/file2.dat"]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.mcp.readin_module_tools._current_files', []):
+        with patch('vitess_ai.tools.readin_tools._current_files', []):
             result = _try_load_files_from_storage("test_thread")
             
             assert result is True
@@ -105,7 +98,7 @@ class TestTryLoadInstrumentFileFromStorage:
         mock_storage.get_file_paths_for_module.return_value = ["/path/to/instrument.inf"]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.mcp.readin_module_tools._current_instrument_file', None):
+        with patch('vitess_ai.tools.readin_tools._current_instrument_file', None):
             result = _try_load_instrument_file_from_storage("test_thread")
             
             assert result is True
