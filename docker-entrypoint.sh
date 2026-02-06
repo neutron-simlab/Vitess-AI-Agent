@@ -72,10 +72,6 @@ if [ "$MCP_TRANSPORT_MODE" = "http" ]; then
     echo "Starting MCP servers in HTTP mode..."
     
     # Set default ports if not provided
-    MCP_READIN_PORT=${MCP_READIN_PORT:-9001}
-    MCP_GUIDE_PORT=${MCP_GUIDE_PORT:-9002}
-    MCP_WRITEOUT_PORT=${MCP_WRITEOUT_PORT:-9003}
-    MCP_MONITOR_PORT=${MCP_MONITOR_PORT:-9004}
     MCP_SUPERVISOR_PORT=${MCP_SUPERVISOR_PORT:-9005}
     MCP_HOST=${MCP_HOST:-0.0.0.0}
     
@@ -84,40 +80,7 @@ if [ "$MCP_TRANSPORT_MODE" = "http" ]; then
     export MCP_HOST=$MCP_HOST
     
     # Set MCP tool paths (use env vars if provided, otherwise use defaults)
-    READIN_MCP_PATH=${READIN_MCP_PATH:-src/vitess_ai/mcp/readin_module_tools.py}
-    GUIDE_MCP_PATH=${GUIDE_MCP_PATH:-src/vitess_ai/mcp/guide_module_tools.py}
-    WRITEOUT_MCP_PATH=${WRITEOUT_MCP_PATH:-src/vitess_ai/mcp/writeout_module_tools.py}
-    MONITOR_MCP_PATH=${MONITOR_MCP_PATH:-src/vitess_ai/mcp/monitor_module_tools.py}
     SUPERVISOR_MCP_PATH=${SUPERVISOR_MCP_PATH:-src/vitess_ai/mcp/supervisor_tools.py}
-    
-    # Start Read-in MCP server
-    echo "  Starting Read-in MCP server on port $MCP_READIN_PORT..."
-    export MCP_READIN_PORT=$MCP_READIN_PORT
-    cd /app
-    uv run python "$READIN_MCP_PATH" > /tmp/mcp_readin.log 2>&1 &
-    MCP_PIDS+=($!)
-    echo "    PID: $!"
-    
-    # Start Guide MCP server
-    echo "  Starting Guide MCP server on port $MCP_GUIDE_PORT..."
-    export MCP_GUIDE_PORT=$MCP_GUIDE_PORT
-    uv run python "$GUIDE_MCP_PATH" > /tmp/mcp_guide.log 2>&1 &
-    MCP_PIDS+=($!)
-    echo "    PID: $!"
-    
-    # Start Writeout MCP server
-    echo "  Starting Writeout MCP server on port $MCP_WRITEOUT_PORT..."
-    export MCP_WRITEOUT_PORT=$MCP_WRITEOUT_PORT
-    uv run python "$WRITEOUT_MCP_PATH" > /tmp/mcp_writeout.log 2>&1 &
-    MCP_PIDS+=($!)
-    echo "    PID: $!"
-    
-    # Start Monitor MCP server
-    echo "  Starting Monitor MCP server on port $MCP_MONITOR_PORT..."
-    export MCP_MONITOR_PORT=$MCP_MONITOR_PORT
-    uv run python "$MONITOR_MCP_PATH" > /tmp/mcp_monitor.log 2>&1 &
-    MCP_PIDS+=($!)
-    echo "    PID: $!"
     
     # Start Supervisor MCP server
     echo "  Starting Supervisor MCP server on port $MCP_SUPERVISOR_PORT..."
@@ -141,9 +104,9 @@ if [ "$MCP_TRANSPORT_MODE" = "http" ]; then
     done
     
     if [ $running_count -eq 5 ]; then
-        echo "✅ All 5 MCP servers started successfully (PIDs: ${MCP_PIDS[*]})"
+        echo "✅ MCP server started successfully (PIDs: ${MCP_PIDS[*]})"
     else
-        echo "⚠️  Warning: Only $running_count out of 5 MCP servers are running"
+        echo "⚠️  Warning: NO MCP server started"
         echo "   Check logs in /tmp/mcp_*.log for details"
     fi
 else

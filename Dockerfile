@@ -9,6 +9,10 @@ FROM ubuntu:22.04 AS vitess-build
 ENV DEBIAN_FRONTEND=noninteractive
 
 ARG TARGETARCH
+ARG VITESS_REPO=https://iffgit.fz-juelich.de/vitess/vitess.git
+ARG VITESS_REF=develop
+ARG VITESS_TARBALL_URL=https://iffgit.fz-juelich.de/vitess/vitess/-/jobs/1074589/artifacts/raw/Downloads/Vitess3.7-Ubuntu-x86_64.tar.gz
+
 
 # Build dependencies (same as .gitlab-ci.yml compile-ubuntu before_script)
 RUN set -eux; \
@@ -36,10 +40,6 @@ RUN set -eux; \
         ca-certificates; \
     fi; \
     rm -rf /var/lib/apt/lists/*
-
-ARG VITESS_REPO=https://iffgit.fz-juelich.de/vitess/vitess.git
-ARG VITESS_REF=develop
-ARG VITESS_TARBALL_URL=https://iffgit.fz-juelich.de/vitess/vitess/-/jobs/1074589/artifacts/raw/Downloads/Vitess3.7-Ubuntu-x86_64.tar.gz
 
 RUN set -eux; \
     arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
@@ -106,7 +106,7 @@ RUN chmod +x docker-entrypoint.sh
 RUN mkdir -p /data/projects /data/logs
 
 # Expose ports
-EXPOSE 8000 8501 9001 9002 9003 9004 9005
+EXPOSE 8000 8501 9005
 
 # Set entrypoint
 ENTRYPOINT ["./docker-entrypoint.sh"]
