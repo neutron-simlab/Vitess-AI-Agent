@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 from typing import Any, Dict, List, Optional
 from vitess_ai.core.config import global_config
 from vitess_ai.core.log import get_logger
+from vitess_ai.modules import get_cli_executable_mapping, get_upload_module_names
 from datetime import datetime
 import json
 import os
@@ -45,14 +46,18 @@ def coerce_json_to_list(value: Any) -> Optional[List[str]]:
     return None
 
 
-# Module to executable mapping (configurable)
-MODULE_EXECUTABLES = {
+# Fallback module-to-executable mapping if catalog is unavailable.
+FALLBACK_MODULE_EXECUTABLES = {
     "readin": "$V/read_in",
     "guide": "$V/guide_parallel",
     "writeout": "$V/writeout",
     "monitor1d": "$V/monitor1D",
     "monitor2d": "$V/monitor2D",
 }
+
+# Backward-compatible export for existing tests/importers.
+# Runtime command generation uses _get_module_executables() to remain catalog-driven.
+MODULE_EXECUTABLES = dict(FALLBACK_MODULE_EXECUTABLES)
 
 # Common parameters that appear in all modules (base, without --P)
 COMMON_PARAMS_BASE = " ".join([
@@ -62,6 +67,17 @@ COMMON_PARAMS_BASE = " ".join([
     "--T0",
     "--B10000",
 ])
+
+
+def _get_module_executables() -> dict[str, str]:
+    """Get CLI executable mapping from central catalog, with safe fallback."""
+    try:
+        mapping = get_cli_executable_mapping()
+        if mapping:
+            return mapping
+    except Exception as e:
+        logger.warning(f"Failed to load CLI executable mapping from catalog: {e}")
+    return dict(FALLBACK_MODULE_EXECUTABLES)
 
 def generate_cli_command(
    module_results: Optional[dict] = None,
@@ -125,6 +141,7 @@ def generate_cli_command(
            logger.warning(f"No execution_order provided, using module order: {execution_order}")
            
        cli_command_lines = []
+       module_executables = _get_module_executables()
        
        for i, module in enumerate(execution_order, 1):  # Start from 1 for ordering
            # Get module result (could be dict or object)
@@ -141,8 +158,11 @@ def generate_cli_command(
                continue
 
            # Check if module executable is defined
-           if module not in MODULE_EXECUTABLES:
-               logger.error(f"Module '{module}' not found in MODULE_EXECUTABLES. Available modules: {list(MODULE_EXECUTABLES.keys())}")
+           if module not in module_executables:
+               logger.error(
+                   f"Module '{module}' not found in executable mapping. "
+                   f"Available modules: {list(module_executables.keys())}"
+               )
                continue
            
            # Build module-specific ordering parameter
@@ -150,7 +170,7 @@ def generate_cli_command(
                
            # Build module command parts
            cli_module = [
-               MODULE_EXECUTABLES[module], 
+               module_executables[module],
                common_params,
                module_order_param, 
                cli_params
@@ -423,8 +443,8 @@ async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]
             folder_structure["uploads"]["exists"] = True
             folder_structure["uploads"]["modules"] = {}
             
-            # Check each module type
-            for module_type in ["readin", "guide", "instrument", "writeout"]:
+            # Check each upload module type from catalog.
+            for module_type in get_upload_module_names(include_auxiliary=True):
                 module_path = uploads_path / module_type
                 if module_path.exists():
                     files = []

@@ -6,10 +6,10 @@ in the Streamlit interface, including server health checks and client initializa
 """
 import streamlit as st
 import httpx
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Iterable
 from io import BytesIO
 
-from vitess_ai.clients.client import AgentClient, AgentClientError
+from vitess_ai.clients.client import AgentClient
 from vitess_ai.schema.server import ChatMessage
 
 
@@ -111,7 +111,10 @@ def load_uploaded_files(thread_id: str, server_url: str) -> Dict[str, List[Dict]
         return {}
 
 
-def get_active_module_from_messages(messages: List[ChatMessage]) -> Optional[str]:
+def get_active_module_from_messages(
+    messages: List[ChatMessage],
+    allowed_modules: Optional[Iterable[str]] = None,
+) -> Optional[str]:
     """
     Detect the currently active module from chat messages.
     
@@ -122,19 +125,26 @@ def get_active_module_from_messages(messages: List[ChatMessage]) -> Optional[str
         messages: List of chat messages
         
     Returns:
-        Active module name (readin, guide, instrument, monitor1d, monitor2d, writeout) or None
+        Active module name or None
     """
     if not messages:
         return None
+
+    allowed_set = set(allowed_modules) if allowed_modules is not None else None
     
     # Look at recent AI messages (most recent first)
     for message in reversed(messages):
         if message.type == "ai" and message.custom_data:
             module_name = message.custom_data.get("module_name")
-            if module_name and module_name in ["readin", "guide", "instrument", "monitor1d", "monitor2d", "writeout"]:
-                # Check if it's not supervisor - supervisor means no specific module is active
-                if module_name != "supervisor" and module_name != "default":
-                    return module_name
+            if not module_name:
+                continue
+
+            # Supervisor/default means no specific module is active.
+            if module_name in {"supervisor", "default"}:
+                continue
+
+            if allowed_set is None or module_name in allowed_set:
+                return module_name
     
     return None
 
@@ -181,4 +191,3 @@ def save_path_metadata_to_server(
     except Exception as e:
         st.error(f"Failed to save path metadata: {e}")
         return None
-

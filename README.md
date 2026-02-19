@@ -283,6 +283,7 @@ vitess-ai-agent/
 ├── app/                    # Streamlit web interface
 ├── src/vitess_ai/
 │   ├── clients/            # API client library
+│   ├── modules/            # Central module catalog (graph + UI + upload metadata)
 │   ├── server/             # FastAPI server and endpoints
 │   │   └── streaming/      # Streaming event processors
 │   ├── server_agents/      # Server-optimized agents
@@ -295,6 +296,68 @@ vitess-ai-agent/
 ├── Dockerfile              # Docker image definition
 └── pyproject.toml          # Python project configuration
 ```
+
+## Dynamic Module Registration (New)
+
+The project now uses a central module catalog at:
+
+- `src/vitess_ai/modules/catalog.py`
+
+This catalog is now the main registration point for:
+
+- Graph module registration order
+- Module tools (via `tool_factory`)
+- Validation tool patterns (completion detection)
+- Upload behavior in Streamlit (`upload_schema_sidebar`)
+- CLI executable mapping for simulation pipeline generation
+
+The backend `GET /config/modules` now returns both:
+
+- `modules`: graph-enabled modules
+- `upload_modules`: upload-enabled modules/resources (including auxiliary entries like `instrument`)
+
+This means adding a module no longer requires hardcoding in multiple places (supervisor, sidebar dropdowns, file storage validation, etc.).
+
+### Example: Add a New Module
+
+1. Create the agent class (for example `src/vitess_ai/server_agents/chopper_module_agent.py`).
+2. Add tools/prompt/schema as needed.
+3. Register it once in `src/vitess_ai/modules/catalog.py`.
+
+Example catalog entry:
+
+```python
+from vitess_ai.server_agents.chopper_module_agent import ChopperModuleAgent
+from vitess_ai.tools.chopper_tools import get_chopper_tools
+
+ModuleBuilder.create(
+    name="chopper",
+    display_name="Chopper Parameters",
+    description="Configure chopper settings",
+    agent_class=ChopperModuleAgent,
+    order=6,
+    tool_factory=get_chopper_tools,
+    validation_tool_patterns=["validate_chopper_module"],
+    cli_executable="$V/chopper",
+    upload_schema_sidebar={
+        "mode": "file_single",     # file_single | file_multi | path_only
+        "label": "Chopper Input File",
+        "help": "Upload one chopper input file.",
+        "extensions": ["dat", "txt"],
+        "max_files": 1,
+    },
+)
+```
+
+After this, the module is picked up by:
+
+- Supervisor graph registration
+- `/config/modules` metadata
+- Streamlit upload module selector/UI
+- File upload module-type validation
+- CLI executable mapping
+
+No additional hardcoded module-list edits are required for these layers.
 
 ## Contributing
 

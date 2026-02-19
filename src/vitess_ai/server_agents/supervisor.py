@@ -153,39 +153,47 @@ class SupervisorAgent:
     # =================
     # BUILT-IN MODULE BUILDERS - Convenience methods
     # =================
+
+    def add_modules_from_catalog(self) -> None:
+        """Register all graph modules from the central module catalog."""
+        from vitess_ai.modules import get_graph_module_metadata
+
+        for module_metadata in get_graph_module_metadata():
+            self.register_module(module_metadata)
+
+    def add_module_by_name(self, module_name: str) -> None:
+        """Register a specific graph module by name from the central catalog."""
+        from vitess_ai.modules import get_graph_module_metadata
+
+        for module_metadata in get_graph_module_metadata():
+            if module_metadata.name == module_name:
+                self.register_module(module_metadata)
+                return
+        raise ValueError(f"Module '{module_name}' not found in catalog")
     
     def add_readin_module(self) -> None:
         """Add the standard readin module"""
-        from vitess_ai.server_agents.readin_module_agent import ReadInModuleAgent
-        ReadInModuleAgent.register_with_supervisor(self)
+        self.add_module_by_name("readin")
     
     def add_guide_module(self) -> None:
-        """Add the standard guide module"""  
-        from vitess_ai.server_agents.guide_module_agent import GuideModuleAgent
-        GuideModuleAgent.register_with_supervisor(self)
+        """Add the standard guide module"""
+        self.add_module_by_name("guide")
     
     def add_writeout_module(self) -> None:
         """Add the standard writeout module"""
-        from vitess_ai.server_agents.writeout_module_agent import WriteoutModuleAgent
-        WriteoutModuleAgent.register_with_supervisor(self)
+        self.add_module_by_name("writeout")
     
     def add_monitor1d_module(self) -> None:
         """Add the Monitor1D module"""
-        from vitess_ai.server_agents.monitor1d_module_agent import Monitor1DModuleAgent
-        Monitor1DModuleAgent.register_with_supervisor(self)
+        self.add_module_by_name("monitor1d")
     
     def add_monitor2d_module(self) -> None:
         """Add the Monitor2D module"""
-        from vitess_ai.server_agents.monitor2d_module_agent import Monitor2DModuleAgent
-        Monitor2DModuleAgent.register_with_supervisor(self)
+        self.add_module_by_name("monitor2d")
     
     def add_default_modules(self) -> None:
-        """Add all default modules (readin, guide, writeout)"""
-        self.add_readin_module()
-        self.add_guide_module()
-        self.add_monitor1d_module()  
-        self.add_monitor2d_module()  
-        self.add_writeout_module()
+        """Add all default graph modules from the module catalog."""
+        self.add_modules_from_catalog()
     
     # =================
     # AGENT INITIALIZATION
@@ -1392,4 +1400,3 @@ async def create_default_supervisor(
     supervisor.add_default_modules()
     await supervisor.initialize()
     return supervisor
-

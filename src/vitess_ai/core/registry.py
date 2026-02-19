@@ -92,7 +92,11 @@ class ModuleRegistry:
                 "display_name": module_metadata.display_name,
                 "description": module_metadata.description,
                 "optional": module_metadata.optional,
-                "order": module_metadata.order
+                "order": module_metadata.order,
+                "agent_enabled": True,
+                "upload_schema_sidebar": getattr(module_metadata, "upload_schema_sidebar", None),
+                "validation_tool_patterns": getattr(module_metadata, "validation_tool_patterns", []),
+                "cli_executable": getattr(module_metadata, "cli_executable", None),
             })
         return sorted(modules, key=lambda x: x["order"])
     

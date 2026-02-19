@@ -8,7 +8,7 @@ into the supervisor graph as nodes.
 """
 
 import json
-from typing import List, Type, Optional, Any
+from typing import List, Type, Optional, Any, Callable
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
@@ -32,6 +32,26 @@ class ModuleMetadata(BaseModel):
     agent_class: Type[Any] = Field(..., description="Agent class for this module (BaseModuleAgent)")
     optional: bool = Field(default=False, description="Whether module can be skipped")
     order: int = Field(default=100, description="Execution order (1, 2, 3, etc.)")
+    # Callable returning module-specific LangChain tools (if any).
+    tool_factory: Optional[Callable[[], List[BaseTool]]] = Field(
+        default=None,
+        description="Factory function that returns a list of tools for this module",
+    )
+    # Patterns used to match validation tool names in tool-call traces.
+    validation_tool_patterns: List[str] = Field(
+        default_factory=list,
+        description="Validation tool-name patterns used to detect completion",
+    )
+    # Optional CLI executable used by simulation command generation.
+    cli_executable: Optional[str] = Field(
+        default=None,
+        description="CLI executable mapping for simulation pipeline generation",
+    )
+    # Optional upload UI schema consumed by frontend sidebar and file-storage validation.
+    upload_schema_sidebar: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Sidebar upload UI schema metadata (mode, extensions, max_files, etc.)",
+    )
     
     class Config:
         arbitrary_types_allowed = True
@@ -47,7 +67,11 @@ class ModuleBuilder:
         description: str,
         agent_class: Type[Any],
         optional: bool = False,
-        order: int = 100
+        order: int = 100,
+        tool_factory: Optional[Callable[[], List[BaseTool]]] = None,
+        validation_tool_patterns: Optional[List[str]] = None,
+        cli_executable: Optional[str] = None,
+        upload_schema_sidebar: Optional[dict[str, Any]] = None,
     ) -> ModuleMetadata:
         """
         Create a module definition - that's it!
@@ -59,6 +83,10 @@ class ModuleBuilder:
             agent_class: Your agent class (inherits BaseModuleAgent)
             optional: Can user skip this? (default False)
             order: Execution order - 1, 2, 3, etc. (default 100)
+            tool_factory: Optional factory returning module tools
+            validation_tool_patterns: Optional list of validation tool patterns
+            cli_executable: Optional executable used in CLI generation
+            upload_schema_sidebar: Optional upload behavior metadata for sidebar UI/storage
         """
         return ModuleMetadata(
             name=name,
@@ -66,7 +94,11 @@ class ModuleBuilder:
             description=description,
             agent_class=agent_class,
             optional=optional,
-            order=order
+            order=order,
+            tool_factory=tool_factory,
+            validation_tool_patterns=validation_tool_patterns or [],
+            cli_executable=cli_executable,
+            upload_schema_sidebar=upload_schema_sidebar,
         )
 
 
@@ -82,7 +114,7 @@ class BaseModuleAgent(ABC):
     - Structured logging throughout
     """
     
-    def __init__(self, provider: str, model: str, tools: List[BaseTool] = []):
+    def __init__(self, provider: str, model: str, tools: Optional[List[BaseTool]] = None):
         """
         Initialize the base agent
         
@@ -93,7 +125,9 @@ class BaseModuleAgent(ABC):
         """
         self.provider = provider
         self.model = model
-        self.tools = tools
+        self.tools = tools or []
+        # Populated by setup_agent_instance, used by wrapper validation logic.
+        self.module_metadata: Optional[ModuleMetadata] = None
         # Enable streaming so module agents emit token chunks to the UI stream
         self.llm = create_llm_with_fallback(
             provider=self.provider,
@@ -320,22 +354,48 @@ class BaseModuleAgent(ABC):
             Initialized BaseModuleAgent instance
         """
         # Load tools: native LangChain tools for readin/guide/writeout/monitor, MCP for supervisor only
-        tools = []
+        tools: List[BaseTool] = []
         module_name = module_metadata.name
-        if module_name in ("readin", "guide", "writeout", "monitor1d", "monitor2d"):
+        if module_metadata.tool_factory:
             try:
-                from vitess_ai.tools import get_guide_tools, get_readin_tools, get_writeout_tools, get_monitor_tools
-                if module_name == "guide":
-                    tools = get_guide_tools()
-                elif module_name == "readin":
-                    tools = get_readin_tools()
-                elif module_name == "writeout":
-                    tools = get_writeout_tools()
-                else:
-                    tools = get_monitor_tools()
-                logger.info(f"Loaded {len(tools)} LangChain tools for {module_name}")
+                tools = module_metadata.tool_factory()
+                logger.info(
+                    f"Loaded {len(tools)} LangChain tools for {module_name} from tool_factory"
+                )
             except Exception as e:
-                logger.warning(f"Failed to load LangChain tools for {module_name}: {e}")
+                logger.warning(
+                    f"Failed to load LangChain tools for {module_name} via tool_factory: {e}"
+                )
+        else:
+            # Backward-compatible fallback for legacy module registrations.
+            try:
+                from vitess_ai.tools import (
+                    get_guide_tools,
+                    get_monitor_tools,
+                    get_readin_tools,
+                    get_writeout_tools,
+                )
+                legacy_tool_factories = {
+                    "guide": get_guide_tools,
+                    "readin": get_readin_tools,
+                    "writeout": get_writeout_tools,
+                    "monitor1d": get_monitor_tools,
+                    "monitor2d": get_monitor_tools,
+                }
+                legacy_factory = legacy_tool_factories.get(module_name)
+                if legacy_factory:
+                    tools = legacy_factory()
+                    logger.info(
+                        f"Loaded {len(tools)} LangChain tools for {module_name} via legacy fallback"
+                    )
+                else:
+                    logger.info(
+                        f"No tool_factory configured for module {module_name}; continuing without tools"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load legacy fallback tools for {module_name}: {e}"
+                )
 
         # Create agent instance
         agent = module_metadata.agent_class(
@@ -343,6 +403,7 @@ class BaseModuleAgent(ABC):
             model=model, 
             tools=tools
         )
+        agent.module_metadata = module_metadata
         
         logger.info(f"Initialized agent for module: {module_metadata.name}")
         return agent
@@ -646,15 +707,18 @@ Based on the user's response to the welcome message, use the appropriate section
                 validation_attempted = False
                 validation_failed = False
                 
-                # Map module names to their validation tool name patterns
-                module_validation_tools = {
-                    'readin': 'validate_readin_module',
-                    'guide': 'validate_guide_parameters',
-                    'writeout': 'validate_writeout_module',
-                    'monitor1d': 'validate_monitor1d_module',
-                    'monitor2d': 'validate_monitor2d_module',
-                }
-                expected_tool_pattern = module_validation_tools.get(module_name, '')
+                validation_patterns = []
+                if self.module_metadata and self.module_metadata.validation_tool_patterns:
+                    validation_patterns = self.module_metadata.validation_tool_patterns
+                if not validation_patterns:
+                    legacy_validation_patterns = {
+                        "readin": ["validate_readin_module"],
+                        "guide": ["validate_guide_parameters"],
+                        "writeout": ["validate_writeout_module"],
+                        "monitor1d": ["validate_monitor1d_module"],
+                        "monitor2d": ["validate_monitor2d_module"],
+                    }
+                    validation_patterns = legacy_validation_patterns.get(module_name, [])
                 
                 # Look for validation tool results indicating completion or failure
                 # Only check result_messages from current invocation to ensure we're checking the right module
@@ -694,15 +758,27 @@ Based on the user's response to the welcome message, use the appropriate section
                                                 if tool_name:
                                                     break
                                     
-                                    # Check if tool belongs to this module
-                                    tool_matches = (not expected_tool_pattern or 
-                                                   (tool_name and expected_tool_pattern in tool_name))
+                                    # Check if tool belongs to this module.
+                                    # If no validation patterns are configured, accept any validation tool.
+                                    tool_matches = (
+                                        not validation_patterns
+                                        or (
+                                            tool_name
+                                            and any(pattern in tool_name for pattern in validation_patterns)
+                                        )
+                                    )
                                     
                                     if not tool_matches:
-                                        self.logger.debug(f"[VALIDATION] Validation result found but tool '{tool_name}' doesn't match expected pattern '{expected_tool_pattern}' for module {module_name}")
+                                        self.logger.debug(
+                                            f"[VALIDATION] Validation result found but tool '{tool_name}' "
+                                            f"doesn't match expected patterns '{validation_patterns}' for module {module_name}"
+                                        )
                                         continue
                                     
-                                    self.logger.debug(f"[VALIDATION] Found validation_status={validation_status} for tool '{tool_name}' (expected pattern: '{expected_tool_pattern}')")
+                                    self.logger.debug(
+                                        f"[VALIDATION] Found validation_status={validation_status} for tool '{tool_name}' "
+                                        f"(expected patterns: '{validation_patterns}')"
+                                    )
                                     
                                     # Handle validation success
                                     if validation_status is True:
@@ -838,4 +914,3 @@ Based on the user's response to the welcome message, use the appropriate section
         
         return wrapper_node
     
-

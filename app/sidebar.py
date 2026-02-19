@@ -6,9 +6,9 @@ Vitess environment configuration, thread management, and file uploads.
 """
 import streamlit as st
 import httpx
-from uuid import uuid4
 from pathlib import Path
 from io import BytesIO
+from typing import Any, Dict, List
 
 from vitess_ai.schema.llm_models import (
     Provider,
@@ -121,87 +121,67 @@ def render_sidebar() -> None:
         # 3. File Upload Section
         st.subheader("File Upload")
         if st.session_state.server_connected:
-            # Load uploaded files for this thread
             if st.session_state.thread_id:
-                    uploaded_files_by_module = load_uploaded_files(
-                        st.session_state.thread_id,
-                        st.session_state.server_url
-                    )
-                    st.session_state.uploaded_files = uploaded_files_by_module
-            
-            # Detect active module from chat messages
-            active_module = get_active_module_from_messages(st.session_state.messages)
-            
-            # Module selection with dropdown menu
-            module_options = {
-                "readin": "Read-in Module",
-                "guide": "Guide Module",
-                "monitor1d": "Monitor1D Module",
-                "monitor2d": "Monitor2D Module",
-                "instrument": "Instrument Module",
-                "writeout": "Writeout Module"
-            }
-            
-            # If there's an active module, show it; otherwise let user select
-            if active_module and active_module in module_options:
-                # Auto-select the active module
-                if st.session_state.selected_upload_module != active_module:
-                    st.session_state.selected_upload_module = active_module
-                    st.rerun()
-                selected_module = active_module
-                st.info(f"Active Module: **{module_options[active_module]}** (upload enabled)")
-            else:
-                # No active module - allow user to select
-                selected_module = st.selectbox(
-                    "Select Module",
-                    options=list(module_options.keys()),
-                    format_func=lambda x: module_options[x],
-                    index=list(module_options.keys()).index(st.session_state.selected_upload_module) if st.session_state.selected_upload_module in module_options else 0,
-                    key="module_selector",
-                    help="Select the module to upload files for"
+                uploaded_files_by_module = load_uploaded_files(
+                    st.session_state.thread_id,
+                    st.session_state.server_url
                 )
-                
-                if selected_module != st.session_state.selected_upload_module:
-                    st.session_state.selected_upload_module = selected_module
-                    st.rerun()
-                
-                if active_module is None:
-                    st.info("No module is currently active. You can still upload files for any module.")
-            
-            st.divider()
-            
-            # Determine if upload should be enabled for this module
-            is_module_active = (active_module == selected_module) if active_module else False
-            
-            # Show upload UI based on selected module
-            _render_file_upload_ui(selected_module, is_module_active)
-            
-            # Summary of all uploaded files
-            st.divider()
-            st.markdown("**Summary of All Uploaded Files**")
-            total_files = sum(len(files) for files in st.session_state.uploaded_files.values())
-            if total_files > 0:
-                summary_cols = st.columns(6)
-                with summary_cols[0]:
-                    readin_count = len(st.session_state.uploaded_files.get("readin", []))
-                    st.metric("Read-in", readin_count, help="Number of read-in files")
-                with summary_cols[1]:
-                    guide_count = len(st.session_state.uploaded_files.get("guide", []))
-                    st.metric("Guide", guide_count, help="Number of guide files")
-                with summary_cols[2]:
-                    monitor1d_count = len(st.session_state.uploaded_files.get("monitor1d", []))
-                    st.metric("Monitor1D", monitor1d_count, help="Number of Monitor1D files")
-                with summary_cols[3]:
-                    monitor2d_count = len(st.session_state.uploaded_files.get("monitor2d", []))
-                    st.metric("Monitor2D", monitor2d_count, help="Number of Monitor2D files")
-                with summary_cols[4]:
-                    instrument_count = len(st.session_state.uploaded_files.get("instrument", []))
-                    st.metric("Instrument", instrument_count, help="Number of instrument files")
-                with summary_cols[5]:
-                    writeout_count = len(st.session_state.uploaded_files.get("writeout", []))
-                    st.metric("Writeout", writeout_count, help="Number of writeout paths")
+                st.session_state.uploaded_files = uploaded_files_by_module
+
+            catalog = _get_modules_catalog_from_backend(st.session_state.server_url)
+            upload_modules = catalog.get("upload_modules", [])
+            module_options = {
+                m.get("name"): m.get("display_name", m.get("name", "Unknown"))
+                for m in upload_modules
+                if m.get("name")
+            }
+
+            if not module_options:
+                st.info("No upload-enabled modules found from server configuration.")
             else:
-                st.info("No files uploaded yet for this thread.")
+                active_module = get_active_module_from_messages(
+                    st.session_state.messages,
+                    allowed_modules=module_options.keys(),
+                )
+
+                if st.session_state.selected_upload_module not in module_options:
+                    st.session_state.selected_upload_module = list(module_options.keys())[0]
+
+                if active_module and active_module in module_options:
+                    if st.session_state.selected_upload_module != active_module:
+                        st.session_state.selected_upload_module = active_module
+                        st.rerun()
+                    selected_module = active_module
+                    st.info(f"Active Module: **{module_options[active_module]}** (upload enabled)")
+                else:
+                    selected_module = st.selectbox(
+                        "Select Module",
+                        options=list(module_options.keys()),
+                        format_func=lambda x: module_options[x],
+                        index=list(module_options.keys()).index(st.session_state.selected_upload_module),
+                        key="module_selector",
+                        help="Select the module to upload files for",
+                    )
+                    if selected_module != st.session_state.selected_upload_module:
+                        st.session_state.selected_upload_module = selected_module
+                        st.rerun()
+                    if active_module is None:
+                        st.info("No module is currently active. You can still upload files for any module.")
+
+                st.divider()
+                is_module_active = (active_module == selected_module) if active_module else False
+                selected_spec = next(
+                    (m for m in upload_modules if m.get("name") == selected_module),
+                    {
+                        "name": selected_module,
+                        "display_name": module_options[selected_module],
+                        "upload_schema_sidebar": {},
+                    },
+                )
+                _render_catalog_upload_ui(selected_spec, is_module_active)
+
+                st.divider()
+                _render_upload_summary(upload_modules)
         else:
             st.info("Connect to server to upload files")
 
@@ -265,564 +245,321 @@ def _get_project_path_from_backend(server_url: str) -> str:
     return default_path
 
 
-def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None:
-    """Render file upload UI for the selected module."""
-    if selected_module == "readin":
-        st.markdown("**Read-in Module Files** (max 3 files)")
-        
-        if not is_module_active:
-            st.warning("Read-in module is not currently active. Upload files when the Read-in module is being configured.")
-        
-        readin_files = st.file_uploader(
-            "Browse input files",
-            type=["dat", "txt", "csv", "nxs", "h5"],
-            accept_multiple_files=True,
-            key="readin_uploader",
-            help="Select up to 3 input files for neutron simulation",
-            disabled=not is_module_active
+def _get_modules_catalog_from_backend(server_url: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Fetch module and upload catalog from backend and cache it in session state."""
+    if "modules_catalog_cache" not in st.session_state:
+        st.session_state.modules_catalog_cache = {}
+
+    cache_key = f"modules_catalog_{server_url}"
+    cached = st.session_state.modules_catalog_cache.get(cache_key)
+
+    try:
+        response = httpx.get(f"{server_url}/config/modules", timeout=5.0)
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get("status") == "success":
+            modules = data.get("modules", [])
+            upload_modules = data.get("upload_modules", [])
+            if not upload_modules:
+                upload_modules = [
+                    module for module in modules
+                    if (
+                        (module.get("upload_schema_sidebar") or module.get("upload_schema") or {})
+                        .get("mode")
+                    )
+                ]
+            payload = {
+                "modules": modules,
+                "upload_modules": upload_modules,
+            }
+            st.session_state.modules_catalog_cache[cache_key] = payload
+            return payload
+    except Exception:
+        pass
+
+    return cached or {"modules": [], "upload_modules": []}
+
+
+def _reload_uploaded_files_from_server() -> None:
+    """Reload uploaded files for the current thread from backend."""
+    if not st.session_state.get("thread_id"):
+        return
+    st.session_state.uploaded_files = load_uploaded_files(
+        st.session_state.thread_id,
+        st.session_state.server_url,
+    )
+
+
+def _build_default_output_path(module_name: str, upload_schema_sidebar: Dict[str, Any]) -> str:
+    """Build a default output path for path-only modules."""
+    thread_id = st.session_state.get("thread_id")
+    if not thread_id:
+        return ""
+
+    default_filename = upload_schema_sidebar.get("default_filename", f"{module_name}.dat")
+    if st.session_state.server_connected:
+        project_path = _get_project_path_from_backend(st.session_state.server_url)
+    else:
+        project_path = "/tmp/vitess_project"
+    return f"{project_path}/{thread_id}/outputs/{default_filename}"
+
+
+def _render_catalog_upload_ui(module_spec: Dict[str, Any], is_module_active: bool) -> None:
+    """Render upload UI dynamically from module upload schema."""
+    module_name = module_spec.get("name", "")
+    display_name = module_spec.get("display_name", module_name.title())
+    upload_schema_sidebar = (
+        module_spec.get("upload_schema_sidebar")
+        or module_spec.get("upload_schema")
+        or {}
+    )
+    mode = upload_schema_sidebar.get("mode", "none")
+
+    if not module_name:
+        st.warning("Invalid upload module configuration.")
+        return
+
+    if not is_module_active:
+        st.warning(
+            f"{display_name} is not currently active. Configure uploads when this module is active."
         )
-        
-        # Get existing files before processing uploads
-        existing_readin = st.session_state.uploaded_files.get("readin", [])
-        existing_filenames = {f.get("filename") for f in existing_readin}
-        
-        # Initialize session state for pending files
-        if "pending_readin_files" not in st.session_state:
-            st.session_state.pending_readin_files = []
-        
-        # Store selected files in session state (read bytes before they're consumed)
-        if readin_files:
-            # Store file data in session state
-            pending_files_data = []
-            for f in readin_files:
-                if f.name not in existing_filenames:
-                    # Read file bytes and store
-                    file_bytes = f.read()
-                    pending_files_data.append({
-                        "name": f.name,
-                        "bytes": file_bytes,
-                        "size": len(file_bytes)
-                    })
-            
-            if pending_files_data:
-                st.session_state.pending_readin_files = pending_files_data
-            else:
-                st.info("All selected files are already uploaded.")
-                st.session_state.pending_readin_files = []
-        else:
-            # Clear pending files if file selection is cleared
-            if st.session_state.pending_readin_files:
-                st.session_state.pending_readin_files = []
-        
-        # Show pending files and upload button
-        if st.session_state.pending_readin_files:
-            current_count = len(existing_readin)
-            remaining_slots = 3 - current_count
-            
-            if remaining_slots <= 0:
-                st.warning(f"Maximum 3 files allowed. You already have {current_count} files uploaded. Please delete some files before uploading new ones.")
-                st.session_state.pending_readin_files = []
-            else:
-                # Show files to be uploaded
-                st.markdown("**Selected files to upload:**")
-                files_to_upload = st.session_state.pending_readin_files[:remaining_slots]
-                for file_data in files_to_upload:
-                    st.text(f"  • {file_data['name']} ({file_data['size']:,} bytes)")
-                
-                if len(st.session_state.pending_readin_files) > remaining_slots:
-                    st.warning(f"Only the first {remaining_slots} of {len(st.session_state.pending_readin_files)} files will be uploaded.")
-                
-                # Upload button
-                if st.button("Upload Files", key="upload_readin_files", width='stretch', disabled=not is_module_active):
-                    uploaded_count = 0
-                    for file_data in files_to_upload:
-                        file_bytes = BytesIO(file_data["bytes"])
-                        result = upload_file_to_server(
-                            file_bytes,
-                            file_data["name"],
-                            st.session_state.thread_id,
-                            "readin",
-                            st.session_state.server_url
-                        )
-                        if result and result.get("status") == "success":
-                            uploaded_count += 1
-                    
-                    if uploaded_count > 0:
-                        st.success(f"Successfully uploaded {uploaded_count} file(s)")
-                        # Clear pending files
-                        st.session_state.pending_readin_files = []
-                        # Reload files from server and rerun
-                        uploaded_files_by_module = load_uploaded_files(
-                            st.session_state.thread_id,
-                            st.session_state.server_url
-                        )
-                        st.session_state.uploaded_files = uploaded_files_by_module
+
+    if mode in {"file_single", "file_multi"}:
+        _render_file_upload_mode(
+            module_name, display_name, upload_schema_sidebar, is_module_active
+        )
+        return
+    if mode == "path_only":
+        _render_path_upload_mode(
+            module_name, display_name, upload_schema_sidebar, is_module_active
+        )
+        return
+
+    st.info(f"No upload UI configured for {display_name}.")
+
+
+def _render_file_upload_mode(
+    module_name: str,
+    display_name: str,
+    upload_schema_sidebar: Dict[str, Any],
+    is_module_active: bool,
+) -> None:
+    """Render file-based upload UI for single/multi file modes."""
+    mode = upload_schema_sidebar.get("mode", "file_single")
+    max_files = int(upload_schema_sidebar.get("max_files", 1))
+    allow_multiple = mode == "file_multi"
+    extensions = upload_schema_sidebar.get("extensions") or ["dat", "txt", "csv", "nxs", "h5"]
+
+    st.markdown(f"**{upload_schema_sidebar.get('label', display_name)}**")
+    uploader_label = "Browse files" if allow_multiple else "Browse file"
+    uploader_help = upload_schema_sidebar.get("help", "Select file(s) for this module.")
+    selected_files_raw = st.file_uploader(
+        uploader_label,
+        type=extensions,
+        accept_multiple_files=allow_multiple,
+        key=f"{module_name}_uploader_dynamic",
+        help=uploader_help,
+        disabled=not is_module_active,
+    )
+
+    selected_files: List[Any] = []
+    if allow_multiple:
+        selected_files = selected_files_raw or []
+    elif selected_files_raw is not None:
+        selected_files = [selected_files_raw]
+
+    existing_files = st.session_state.uploaded_files.get(module_name, [])
+    existing_names = {f.get("filename") for f in existing_files}
+    pending_key = f"pending_upload_{module_name}"
+    if pending_key not in st.session_state:
+        st.session_state[pending_key] = []
+
+    if selected_files:
+        pending = []
+        for selected_file in selected_files:
+            if selected_file.name in existing_names:
+                continue
+            data = selected_file.read()
+            pending.append({
+                "name": selected_file.name,
+                "bytes": data,
+                "size": len(data),
+            })
+        st.session_state[pending_key] = pending
+        if not pending:
+            st.info("All selected files are already uploaded.")
+    elif st.session_state[pending_key]:
+        st.session_state[pending_key] = []
+
+    pending_files = st.session_state[pending_key]
+    remaining_slots = max_files - len(existing_files)
+    if remaining_slots <= 0:
+        st.warning(f"Maximum {max_files} file(s) allowed. Delete existing files to upload new ones.")
+        pending_files = []
+        st.session_state[pending_key] = []
+
+    files_to_upload = pending_files[:remaining_slots] if allow_multiple else pending_files[:1]
+    if files_to_upload:
+        st.markdown("**Selected file(s) to upload:**")
+        for item in files_to_upload:
+            st.text(f"- {item['name']} ({item['size']:,} bytes)")
+
+        if len(pending_files) > len(files_to_upload):
+            st.warning(
+                f"Only {len(files_to_upload)} file(s) will be uploaded due to module file limits."
+            )
+
+        button_label = "Upload Files" if allow_multiple else "Upload File"
+        if st.button(
+            button_label,
+            key=f"upload_button_{module_name}",
+            width='stretch',
+            disabled=not is_module_active,
+        ):
+            uploaded_count = 0
+            for item in files_to_upload:
+                result = upload_file_to_server(
+                    BytesIO(item["bytes"]),
+                    item["name"],
+                    st.session_state.thread_id,
+                    module_name,
+                    st.session_state.server_url,
+                )
+                if result and result.get("status") == "success":
+                    uploaded_count += 1
+
+            if uploaded_count > 0:
+                st.success(f"Uploaded {uploaded_count} file(s).")
+                st.session_state[pending_key] = []
+                _reload_uploaded_files_from_server()
+                st.rerun()
+
+    if existing_files:
+        st.markdown(f"**Uploaded Files ({len(existing_files)})**")
+        for file_meta in existing_files:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.text(
+                    f"{file_meta.get('filename', 'unknown')} "
+                    f"({file_meta.get('file_size', 0):,} bytes)"
+                )
+            with col2:
+                if st.button("Delete", key=f"delete_{module_name}_{file_meta.get('file_id')}"):
+                    if delete_file_from_server(
+                        file_meta.get("file_id"),
+                        st.session_state.thread_id,
+                        module_name,
+                        st.session_state.server_url,
+                    ):
+                        _reload_uploaded_files_from_server()
                         st.rerun()
-        
-        # Display uploaded readin files
-        readin_list = st.session_state.uploaded_files.get("readin", [])
-        if readin_list:
-            st.markdown(f"**Uploaded Read-in Files:** ({len(readin_list)} file(s))")
-            for file_meta in readin_list:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.text(f"{file_meta.get('filename', 'unknown')} ({file_meta.get('file_size', 0):,} bytes)")
-                with col2:
-                    if st.button("Delete", key=f"delete_readin_{file_meta.get('file_id')}"):
-                        if delete_file_from_server(
-                            file_meta.get("file_id"),
-                            st.session_state.thread_id,
-                            "readin",
-                            st.session_state.server_url
-                        ):
-                            # Reload files from server after deletion
-                            uploaded_files_by_module = load_uploaded_files(
-                                st.session_state.thread_id,
-                                st.session_state.server_url
-                            )
-                            st.session_state.uploaded_files = uploaded_files_by_module
-                            st.rerun()
-        else:
-            st.info("No files uploaded yet. Upload files above.")
-    
-    elif selected_module == "guide":
-        st.markdown("**Guide Module File** (single file)")
-        
-        if not is_module_active:
-            st.warning("Guide module is not currently active. Upload files when the Guide module is being configured.")
-        
-        guide_file = st.file_uploader(
-            "Browse guide file",
-            type=["dat", "txt", "csv", "nxs", "h5"],
-            accept_multiple_files=False,
-            key="guide_uploader",
-            help="Select guide input file for neutron simulation",
-            disabled=not is_module_active
-        )
-        
-        # Get existing files before processing upload
-        existing_guide = st.session_state.uploaded_files.get("guide", [])
-        existing_filenames = {f.get("filename") for f in existing_guide}
-        
-        # Initialize session state for pending file
-        if "pending_guide_file" not in st.session_state:
-            st.session_state.pending_guide_file = None
-        
-        # Store selected file in session state
-        if guide_file is not None:
-            # Check if file already exists
-            if guide_file.name in existing_filenames:
-                st.info(f"File '{guide_file.name}' is already uploaded.")
-                st.session_state.pending_guide_file = None
-            else:
-                # Check if we already have a guide file (single file limit)
-                if len(existing_guide) > 0:
-                    st.warning("Guide module allows only one file. Please delete the existing file before uploading a new one.")
-                    st.session_state.pending_guide_file = None
-                else:
-                    # Read file bytes and store
-                    file_bytes = guide_file.read()
-                    st.session_state.pending_guide_file = {
-                        "name": guide_file.name,
-                        "bytes": file_bytes,
-                        "size": len(file_bytes)
-                    }
-        else:
-            # Clear pending file if file selection is cleared
-            if st.session_state.pending_guide_file:
-                st.session_state.pending_guide_file = None
-        
-        # Show pending file and upload button
-        if st.session_state.pending_guide_file:
-            file_data = st.session_state.pending_guide_file
-            st.markdown("**Selected file to upload:**")
-            st.text(f"  • {file_data['name']} ({file_data['size']:,} bytes)")
-            
-            # Upload button
-            if st.button("Upload File", key="upload_guide_file", width='stretch', disabled=not is_module_active):
-                file_bytes = BytesIO(file_data["bytes"])
-                result = upload_file_to_server(
-                    file_bytes,
-                    file_data["name"],
-                    st.session_state.thread_id,
-                    "guide",
-                    st.session_state.server_url
-                )
-                if result and result.get("status") == "success":
-                    st.success(f"Uploaded: {file_data['name']}")
-                    # Clear pending file
-                    st.session_state.pending_guide_file = None
-                    # Reload files from server and rerun
-                    uploaded_files_by_module = load_uploaded_files(
-                        st.session_state.thread_id,
-                        st.session_state.server_url
-                    )
-                    st.session_state.uploaded_files = uploaded_files_by_module
-                    st.rerun()
-        
-        # Display uploaded guide file
-        guide_list = st.session_state.uploaded_files.get("guide", [])
-        if guide_list:
-            st.markdown(f"**Uploaded Guide File:** ({len(guide_list)} file(s))")
-            for file_meta in guide_list:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.text(f"{file_meta.get('filename', 'unknown')} ({file_meta.get('file_size', 0):,} bytes)")
-                with col2:
-                    if st.button("Delete", key=f"delete_guide_{file_meta.get('file_id')}"):
-                        if delete_file_from_server(
-                            file_meta.get("file_id"),
-                            st.session_state.thread_id,
-                            "guide",
-                            st.session_state.server_url
-                        ):
-                            # Reload files from server after deletion
-                            uploaded_files_by_module = load_uploaded_files(
-                                st.session_state.thread_id,
-                                st.session_state.server_url
-                            )
-                            st.session_state.uploaded_files = uploaded_files_by_module
-                            st.rerun()
-        else:
-            st.info("No file uploaded yet. Upload a file above.")
-    
-    elif selected_module == "instrument":
-        st.markdown("**Instrument File** (.inf)")
-        
-        if not is_module_active:
-            st.warning("Instrument module is not currently active. Upload files when the Instrument module is being configured.")
-        
-        instrument_file = st.file_uploader(
-            "Browse instrument file",
-            type=["inf", "dat", "txt"],
-            accept_multiple_files=False,
-            key="instrument_uploader",
-            help="Select instrument file (.inf) for neutron simulation",
-            disabled=not is_module_active
-        )
-        
-        # Get existing files before processing upload
-        existing_instrument = st.session_state.uploaded_files.get("instrument", [])
-        existing_filenames = {f.get("filename") for f in existing_instrument}
-        
-        # Initialize session state for pending file
-        if "pending_instrument_file" not in st.session_state:
-            st.session_state.pending_instrument_file = None
-        
-        # Store selected file in session state
-        if instrument_file is not None:
-            # Check if file already exists
-            if instrument_file.name in existing_filenames:
-                st.info(f"File '{instrument_file.name}' is already uploaded.")
-                st.session_state.pending_instrument_file = None
-            else:
-                # Check if we already have an instrument file (single file limit)
-                if len(existing_instrument) > 0:
-                    st.warning("Instrument module allows only one file. Please delete the existing file before uploading a new one.")
-                    st.session_state.pending_instrument_file = None
-                else:
-                    # Read file bytes and store
-                    file_bytes = instrument_file.read()
-                    st.session_state.pending_instrument_file = {
-                        "name": instrument_file.name,
-                        "bytes": file_bytes,
-                        "size": len(file_bytes)
-                    }
-        else:
-            # Clear pending file if file selection is cleared
-            if st.session_state.pending_instrument_file:
-                st.session_state.pending_instrument_file = None
-        
-        # Show pending file and upload button
-        if st.session_state.pending_instrument_file:
-            file_data = st.session_state.pending_instrument_file
-            st.markdown("**Selected file to upload:**")
-            st.text(f"  • {file_data['name']} ({file_data['size']:,} bytes)")
-            
-            # Upload button
-            if st.button("Upload File", key="upload_instrument_file", width='stretch', disabled=not is_module_active):
-                file_bytes = BytesIO(file_data["bytes"])
-                result = upload_file_to_server(
-                    file_bytes,
-                    file_data["name"],
-                    st.session_state.thread_id,
-                    "instrument",
-                    st.session_state.server_url
-                )
-                if result and result.get("status") == "success":
-                    st.success(f"Uploaded: {file_data['name']}")
-                    # Clear pending file
-                    st.session_state.pending_instrument_file = None
-                    # Reload files from server and rerun
-                    uploaded_files_by_module = load_uploaded_files(
-                        st.session_state.thread_id,
-                        st.session_state.server_url
-                    )
-                    st.session_state.uploaded_files = uploaded_files_by_module
-                    st.rerun()
-        
-        # Display uploaded instrument file
-        instrument_list = st.session_state.uploaded_files.get("instrument", [])
-        if instrument_list:
-            st.markdown(f"**Uploaded Instrument File:** ({len(instrument_list)} file(s))")
-            for file_meta in instrument_list:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.text(f"{file_meta.get('filename', 'unknown')} ({file_meta.get('file_size', 0):,} bytes)")
-                with col2:
-                    if st.button("Delete", key=f"delete_instrument_{file_meta.get('file_id')}"):
-                        if delete_file_from_server(
-                            file_meta.get("file_id"),
-                            st.session_state.thread_id,
-                            "instrument",
-                            st.session_state.server_url
-                        ):
-                            # Reload files from server after deletion
-                            uploaded_files_by_module = load_uploaded_files(
-                                st.session_state.thread_id,
-                                st.session_state.server_url
-                            )
-                            st.session_state.uploaded_files = uploaded_files_by_module
-                            st.rerun()
-        else:
-            st.info("No file uploaded yet. Upload a file above.")
-    
-    elif selected_module == "monitor1d":
-        st.markdown("**Monitor1D Output File Path**")
-        
-        if not is_module_active:
-            st.warning("Monitor1D module is not currently active. Configure output file path when the Monitor1D module is being configured.")
-        
-        # Calculate default path: project_path/{thread_id}/outputs/monitor1D.dat
-        default_path = ""
-        if st.session_state.get("thread_id") and st.session_state.server_connected:
-            # Get project path from backend
-            project_path = _get_project_path_from_backend(st.session_state.server_url)
-            thread_id = st.session_state.thread_id
-            default_path = f"{project_path}/{thread_id}/outputs/monitor1D.dat"
-        elif st.session_state.get("thread_id"):
-            # Fallback if server not connected
-            thread_id = st.session_state.thread_id
-            default_path = f"/tmp/vitess_project/{thread_id}/outputs/monitor1D.dat"
-        
-        # Get current monitor1d path or use default
-        current_path = st.session_state.get("monitor1d_path", default_path)
-        
-        monitor1d_path = st.text_input(
-            "Monitor1D output file path",
-            value=current_path,
-            key="monitor1d_path_input",
-            help=f"Default location: {default_path} (automatically set if left empty). Enter a custom path if you want a different location.",
+    else:
+        st.info("No files uploaded yet.")
+
+
+def _render_path_upload_mode(
+    module_name: str,
+    display_name: str,
+    upload_schema_sidebar: Dict[str, Any],
+    is_module_active: bool,
+) -> None:
+    """Render path-only upload UI for modules that store path metadata."""
+    st.markdown(f"**{upload_schema_sidebar.get('label', display_name)}**")
+    default_path = _build_default_output_path(module_name, upload_schema_sidebar)
+    state_key = f"{module_name}_path"
+    input_key = f"{module_name}_path_input_dynamic"
+    current_path = st.session_state.get(state_key, default_path)
+
+    path_value = st.text_input(
+        upload_schema_sidebar.get("input_label", "Output file path"),
+        value=current_path,
+        key=input_key,
+        help=upload_schema_sidebar.get(
+            "help",
+            f"Default location: {default_path}. Enter a custom path if needed.",
+        ),
+        disabled=not is_module_active,
+        placeholder=default_path if default_path else "Enter output file path...",
+    )
+
+    if default_path:
+        st.info(f"Default location: `{default_path}`")
+
+    if path_value:
+        st.session_state[state_key] = path_value
+        if st.button(
+            upload_schema_sidebar.get("button_text", "Save Path"),
+            key=f"save_path_{module_name}",
+            width='stretch',
             disabled=not is_module_active,
-            placeholder=default_path if default_path else "Enter monitor1D output file path..."
-        )
-        
-        # Show default path info
-        if default_path:
-            st.info(f"**Default location:** `{default_path}`\n\nThis path will be used automatically if you don't specify a custom location.")
-        
-        if monitor1d_path:
-            st.session_state.monitor1d_path = monitor1d_path
-            # Save to file storage as metadata
-            if st.button("Save Path", key="save_monitor1d_path", width='stretch', disabled=not is_module_active):
-                # Save path as metadata to server
-                result = save_path_metadata_to_server(
-                    monitor1d_path,
-                    st.session_state.thread_id,
-                    "monitor1d",
-                    st.session_state.server_url
-                )
-                if result and result.get("status") == "success":
-                    st.success(f"Monitor1D output path saved: {monitor1d_path}")
-                    # Reload files from server
-                    uploaded_files_by_module = load_uploaded_files(
-                        st.session_state.thread_id,
-                        st.session_state.server_url
-                    )
-                    st.session_state.uploaded_files = uploaded_files_by_module
-                    st.rerun()
-                else:
-                    st.error("Failed to save path. Please try again.")
-        
-        # Display saved monitor1d path
-        monitor1d_list = st.session_state.uploaded_files.get("monitor1d", [])
-        if monitor1d_list:
-            st.markdown("**Saved Monitor1D Output Path:**")
-            for file_meta in monitor1d_list:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.text(f"{file_meta.get('filename', file_meta.get('file_path', 'unknown'))}")
-                with col2:
-                    if st.button("Delete", key=f"delete_monitor1d_{file_meta.get('file_id')}"):
-                        if delete_file_from_server(
-                            file_meta.get("file_id"),
-                            st.session_state.thread_id,
-                            "monitor1d",
-                            st.session_state.server_url
-                        ):
-                            st.rerun()
-        else:
-            if default_path:
-                st.info(f"**Default path will be used:** `{default_path}`\n\nYou can enter a custom path above if needed.")
+        ):
+            result = save_path_metadata_to_server(
+                path_value,
+                st.session_state.thread_id,
+                module_name,
+                st.session_state.server_url,
+            )
+            if result and result.get("status") == "success":
+                st.success(f"Saved path for {display_name}: {path_value}")
+                _reload_uploaded_files_from_server()
+                st.rerun()
             else:
-                st.info("No output path saved yet. Enter a path above and click 'Save Path'.")
-    
-    elif selected_module == "monitor2d":
-        st.markdown("**Monitor2D Output File Path**")
-        
-        if not is_module_active:
-            st.warning("Monitor2D module is not currently active. Configure output file path when the Monitor2D module is being configured.")
-        
-        # Calculate default path: project_path/{thread_id}/outputs/monitor2D.dat
-        default_path = ""
-        if st.session_state.get("thread_id") and st.session_state.server_connected:
-            # Get project path from backend
-            project_path = _get_project_path_from_backend(st.session_state.server_url)
-            thread_id = st.session_state.thread_id
-            default_path = f"{project_path}/{thread_id}/outputs/monitor2D.dat"
-        elif st.session_state.get("thread_id"):
-            # Fallback if server not connected
-            thread_id = st.session_state.thread_id
-            default_path = f"/tmp/vitess_project/{thread_id}/outputs/monitor2D.dat"
-        
-        # Get current monitor2d path or use default
-        current_path = st.session_state.get("monitor2d_path", default_path)
-        
-        monitor2d_path = st.text_input(
-            "Monitor2D output file path",
-            value=current_path,
-            key="monitor2d_path_input",
-            help=f"Default location: {default_path} (automatically set if left empty). Enter a custom path if you want a different location.",
-            disabled=not is_module_active,
-            placeholder=default_path if default_path else "Enter monitor2D output file path..."
-        )
-        
-        # Show default path info
-        if default_path:
-            st.info(f"**Default location:** `{default_path}`\n\nThis path will be used automatically if you don't specify a custom location.")
-        
-        if monitor2d_path:
-            st.session_state.monitor2d_path = monitor2d_path
-            # Save to file storage as metadata
-            if st.button("Save Path", key="save_monitor2d_path", width='stretch', disabled=not is_module_active):
-                # Save path as metadata to server
-                result = save_path_metadata_to_server(
-                    monitor2d_path,
-                    st.session_state.thread_id,
-                    "monitor2d",
-                    st.session_state.server_url
-                )
-                if result and result.get("status") == "success":
-                    st.success(f"Monitor2D output path saved: {monitor2d_path}")
-                    # Reload files from server
-                    uploaded_files_by_module = load_uploaded_files(
+                st.error("Failed to save path. Please try again.")
+
+    stored_items = st.session_state.uploaded_files.get(module_name, [])
+    if stored_items:
+        st.markdown("**Saved Path Metadata**")
+        for file_meta in stored_items:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.text(file_meta.get("filename", file_meta.get("file_path", "unknown")))
+            with col2:
+                if st.button("Delete", key=f"delete_path_{module_name}_{file_meta.get('file_id')}"):
+                    if delete_file_from_server(
+                        file_meta.get("file_id"),
                         st.session_state.thread_id,
-                        st.session_state.server_url
-                    )
-                    st.session_state.uploaded_files = uploaded_files_by_module
-                    st.rerun()
-                else:
-                    st.error("Failed to save path. Please try again.")
-        
-        # Display saved monitor2d path
-        monitor2d_list = st.session_state.uploaded_files.get("monitor2d", [])
-        if monitor2d_list:
-            st.markdown("**Saved Monitor2D Output Path:**")
-            for file_meta in monitor2d_list:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.text(f"{file_meta.get('filename', file_meta.get('file_path', 'unknown'))}")
-                with col2:
-                    if st.button("Delete", key=f"delete_monitor2d_{file_meta.get('file_id')}"):
-                        if delete_file_from_server(
-                            file_meta.get("file_id"),
-                            st.session_state.thread_id,
-                            "monitor2d",
-                            st.session_state.server_url
-                        ):
-                            st.rerun()
-        else:
-            if default_path:
-                st.info(f"**Default path will be used:** `{default_path}`\n\nYou can enter a custom path above if needed.")
-            else:
-                st.info("No output path saved yet. Enter a path above and click 'Save Path'.")
-    
-    elif selected_module == "writeout":
-        st.markdown("**Writeout Save Path**")
-        
-        if not is_module_active:
-            st.warning("Writeout module is not currently active. Configure save path when the Writeout module is being configured.")
-        
-        # Calculate default path: project_path/{thread_id}/outputs/output.out
-        default_path = ""
-        if st.session_state.get("thread_id") and st.session_state.server_connected:
-            # Get project path from backend
-            project_path = _get_project_path_from_backend(st.session_state.server_url)
-            thread_id = st.session_state.thread_id
-            default_path = f"{project_path}/{thread_id}/outputs/output.out"
-        elif st.session_state.get("thread_id"):
-            # Fallback if server not connected
-            thread_id = st.session_state.thread_id
-            default_path = f"/tmp/vitess_project/{thread_id}/outputs/output.out"
-        
-        # Get current writeout path or use default
-        current_path = st.session_state.get("writeout_path", default_path)
-        
-        writeout_path = st.text_input(
-            "Output file path",
-            value=current_path,
-            key="writeout_path_input",
-            help=f"Default location: {default_path} (automatically set if left empty). Enter a custom path if you want a different location.",
-            disabled=not is_module_active,
-            placeholder=default_path if default_path else "Enter output file path..."
-        )
-        
-        # Show default path info
-        if default_path:
-            st.info(f"**Default location:** `{default_path}`\n\nThis path will be used automatically if you don't specify a custom location.")
-        
-        if writeout_path:
-            st.session_state.writeout_path = writeout_path
-            # Save to file storage as metadata
-            if st.button("Save Path", key="save_writeout_path", width='stretch', disabled=not is_module_active):
-                # Save path as metadata to server
-                result = save_path_metadata_to_server(
-                    writeout_path,
-                    st.session_state.thread_id,
-                    "writeout",
-                    st.session_state.server_url
-                )
-                if result and result.get("status") == "success":
-                    st.success(f"Output path saved: {writeout_path}")
-                    # Reload files from server
-                    uploaded_files_by_module = load_uploaded_files(
-                        st.session_state.thread_id,
-                        st.session_state.server_url
-                    )
-                    st.session_state.uploaded_files = uploaded_files_by_module
-                    st.rerun()
-                else:
-                    st.error("Failed to save path. Please try again.")
-        
-        # Display saved writeout path
-        writeout_list = st.session_state.uploaded_files.get("writeout", [])
-        if writeout_list:
-            st.markdown("**Saved Output Path:**")
-            for file_meta in writeout_list:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.text(f"{file_meta.get('filename', file_meta.get('file_path', 'unknown'))}")
-                with col2:
-                    if st.button("Delete", key=f"delete_writeout_{file_meta.get('file_id')}"):
-                        if delete_file_from_server(
-                            file_meta.get("file_id"),
-                            st.session_state.thread_id,
-                            "writeout",
-                            st.session_state.server_url
-                        ):
-                            st.rerun()
-        else:
-            if default_path:
-                st.info(f"**Default path will be used:** `{default_path}`\n\nYou can enter a custom path above if needed.")
-            else:
-                st.info("No output path saved yet. Enter a path above and click 'Save Path'.")
+                        module_name,
+                        st.session_state.server_url,
+                    ):
+                        _reload_uploaded_files_from_server()
+                        st.rerun()
+    elif default_path:
+        st.info(f"No saved path metadata yet. Default path will be used: `{default_path}`")
+
+
+def _render_upload_summary(upload_modules: List[Dict[str, Any]]) -> None:
+    """Render summary counts for upload modules."""
+    st.markdown("**Summary of Uploaded Files**")
+    total_files = sum(len(files) for files in st.session_state.uploaded_files.values())
+    if total_files <= 0:
+        st.info("No files uploaded yet for this thread.")
+        return
+
+    for module in upload_modules:
+        module_name = module.get("name")
+        if not module_name:
+            continue
+        display_name = module.get("display_name", module_name)
+        count = len(st.session_state.uploaded_files.get(module_name, []))
+        st.text(f"{display_name}: {count}")
+
+
+def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None:
+    """
+    Backward-compatible wrapper for legacy callers.
+
+    This now routes to the central catalog-driven upload renderer instead of the
+    old hardcoded per-module implementation.
+    """
+    catalog = _get_modules_catalog_from_backend(st.session_state.server_url)
+    upload_modules = catalog.get("upload_modules", [])
+    selected_spec = next(
+        (module for module in upload_modules if module.get("name") == selected_module),
+        {
+            "name": selected_module,
+            "display_name": selected_module.replace("_", " ").title(),
+            "upload_schema_sidebar": {},
+        },
+    )
+    _render_catalog_upload_ui(selected_spec, is_module_active)

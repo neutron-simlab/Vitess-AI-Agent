@@ -13,22 +13,23 @@ from datetime import datetime
 
 from vitess_ai.core.log import get_logger
 from vitess_ai.core.config import global_config
+from vitess_ai.modules import get_upload_module_names
 
 logger = get_logger(__name__)
 
 
 class FileStorageService:
     """Service for managing uploaded files associated with threads."""
-    
-    # Module types for file organization
-    MODULE_TYPES = {
-        "readin": "readin",
-        "guide": "guide", 
-        "instrument": "instrument",
-        "monitor1d": "monitor1d",
-        "monitor2d": "monitor2d",
-        "writeout": "writeout"
-    }
+
+    # Safe fallback if catalog loading fails at runtime.
+    FALLBACK_MODULE_TYPES = [
+        "readin",
+        "guide",
+        "instrument",
+        "monitor1d",
+        "monitor2d",
+        "writeout",
+    ]
     
     def __init__(self):
         """Initialize file storage service."""
@@ -43,6 +44,20 @@ class FileStorageService:
     def _get_upload_path(self, thread_id: str, module_type: str) -> Path:
         """Get upload path for a specific module type in a thread."""
         return self.root_path / thread_id / "uploads" / module_type
+
+    def _get_allowed_module_types(self) -> list[str]:
+        """
+        Return allowed upload module types from the central module catalog.
+
+        Falls back to static defaults if catalog loading fails.
+        """
+        try:
+            return get_upload_module_names(include_auxiliary=True)
+        except Exception as e:
+            logger.warning(
+                f"Failed to load upload module names from catalog, using fallback types: {e}"
+            )
+            return list(self.FALLBACK_MODULE_TYPES)
     
     def _get_module_path(self, thread_id: str, module_type: str) -> Path:
         """Get storage path for a specific module type in a thread (legacy method for compatibility)."""
@@ -91,8 +106,11 @@ class FileStorageService:
             Dictionary with file metadata
         """
         # Validate module type
-        if module_type not in self.MODULE_TYPES.values():
-            raise ValueError(f"Invalid module_type: {module_type}. Must be one of {list(self.MODULE_TYPES.values())}")
+        allowed_module_types = self._get_allowed_module_types()
+        if module_type not in allowed_module_types:
+            raise ValueError(
+                f"Invalid module_type: {module_type}. Must be one of {allowed_module_types}"
+            )
         
         # Validate file
         is_valid, error_msg = self._validate_file(filename, len(file_content))
@@ -210,7 +228,7 @@ class FileStorageService:
                             })
         else:
             # List files for all modules
-            for mod_type in self.MODULE_TYPES.values():
+            for mod_type in self._get_allowed_module_types():
                 module_path = self._get_upload_path(thread_id, mod_type)
                 if module_path.exists():
                     matching_files = list(module_path.glob("*_*"))
