@@ -378,3 +378,39 @@ def render_streaming_token(
         unsafe_allow_html=True,
     )
 
+
+def finalize_streaming_message(
+    message_placeholder,
+    content: any,
+    module_name: str,
+    custom_data: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Finalize a streaming message by clearing the placeholder and rendering
+    final content with the same logic as history (JSON or markdown).
+    
+    This ensures the streamed message looks identical to how it will appear
+    after st.rerun(), avoiding visual jumps.
+    
+    Args:
+        message_placeholder: Streamlit placeholder (st.empty()) to finalize
+        content: Message content (string, dict, list, or JSON string)
+        module_name: Module name for badge and color styling
+        custom_data: Optional custom data that may contain plot information
+    """
+    # Get dynamic module info if available
+    dynamic_modules = None
+    if "server_url" in st.session_state:
+        dynamic_modules = get_module_info_from_server(st.session_state.server_url)
+    
+    color = get_module_color(module_name, dynamic_modules)
+    badge_text = render_module_badge(module_name, dynamic_modules)
+    
+    # Clear the placeholder and render final content in a container
+    with message_placeholder.container():
+        # Render header (badge)
+        render_message_header(badge_text, "ai")
+        # Render content with JSON/markdown logic
+        if content:
+            render_content(content, color, custom_data=custom_data)
+

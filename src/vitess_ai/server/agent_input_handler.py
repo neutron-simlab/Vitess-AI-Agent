@@ -3,7 +3,7 @@ Agent input preparation utilities for LangGraph agents.
 
 This module provides utilities for preparing input for LangGraph agent execution
 in the react-agent architecture. With react-agent architecture, modules use the
-END pattern (ending when user input is needed) rather than interrupts.
+END pattern (ending when user input is needed).
 LangGraph automatically resumes from checkpoint when invoked with the same thread_id.
 """
 

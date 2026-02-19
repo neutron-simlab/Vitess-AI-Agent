@@ -2,8 +2,7 @@
 Writeout Module Agent - Writeout module agent
 
 This agent implements the writeout module functionality using the flat graph
-architecture, enabling unified state management and
-centralized interrupt handling.
+architecture, enabling unified state management.
 """
 
 from vitess_ai.server_agents.base_module_agent import BaseModuleAgent, ModuleBuilder

@@ -3,7 +3,7 @@ Unified State Management for Server Agents
 
 This module defines the unified state structure that is shared between
 the supervisor and all module agents in server mode. This enables
-seamless state sharing and centralized interrupt handling.
+seamless state sharing across the agent graph.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class UnifiedState(MessagesState):
     Unified state structure shared between supervisor and all module agents.
     
     This state combines supervisor-level coordination with module-level
-    execution details, enabling seamless state sharing during interrupts.
+    execution details, enabling seamless state sharing across the agent graph.
     
     Note: MessagesState is a pre-built TypedDict from LangGraph 1.x that
     automatically handles message accumulation. Additional fields are

@@ -12,7 +12,6 @@ from vitess_ai.schema.server import (
     ServiceMetadata,
     StreamInput,
     UserInput,
-    ModuleInterruptResponse,
 )
 
 
@@ -195,7 +194,7 @@ class AgentClient:
         Extract module name from token type string.
         
         Args:
-            token_type: Token type string (e.g., "token_module_readin", "token_supervisor")
+            token_type: Token type string (e.g., "token_module_readin", "token_readin")
             
         Returns:
             Module name (e.g., "readin", "supervisor", "default")
@@ -210,6 +209,10 @@ class AgentClient:
             # Extract module name: "token_module_readin" -> "readin"
             module_name = token_type.replace("token_module_", "", 1)
             return module_name
+        elif token_type.startswith("token_"):
+            # Support server tokens like "token_readin"
+            module_name = token_type.replace("token_", "", 1)
+            return module_name or "default"
         return "default"
     
     def _normalize_token(self, token_type: str, content: str) -> dict:
@@ -230,12 +233,12 @@ class AgentClient:
             "content": content
         }
     
-    def _parse_stream_line(self, line: str) -> ChatMessage | str | ModuleInterruptResponse | dict | None:
+    def _parse_stream_line(self, line: str) -> ChatMessage | str | dict | None:
         """
         Parse a single SSE line into a normalized message or token.
         
         Returns:
-            ChatMessage, normalized token dict, ModuleInterruptResponse, or None
+            ChatMessage, normalized token dict, or None
         """
         line = line.strip()
         if line.startswith("data: "):
@@ -255,13 +258,6 @@ class AgentClient:
                     return ChatMessage.model_validate(parsed["content"])
                 except Exception as e:
                     raise Exception(f"Server returned invalid message: {e}")
-            
-            # Handle module interrupts
-            elif parsed_type == "module_interrupt":
-                try:
-                    return ModuleInterruptResponse.model_validate(parsed["content"])
-                except Exception as e:
-                    raise Exception(f"Server returned invalid module interrupt: {e}")
             
             # Handle errors
             elif parsed_type == "error":
@@ -288,7 +284,7 @@ class AgentClient:
         user_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
         stream_tokens: bool = True,
-    ) -> Generator[ChatMessage | str | ModuleInterruptResponse | dict, None, None]:
+    ) -> Generator[ChatMessage | str | dict, None, None]:
         """
         Stream the agent's response synchronously.
 
@@ -307,7 +303,7 @@ class AgentClient:
                 Default: True
 
         Returns:
-            Generator[ChatMessage | str, None, None]: The response from the agent
+            Generator[ChatMessage | str | dict, None, None]: The response from the agent
         """
         if not self.agent:
             raise AgentClientError("No agent selected. Use update_agent() to select an agent.")
@@ -353,7 +349,7 @@ class AgentClient:
         user_id: str | None = None,
         agent_config: dict[str, Any] | None = None,
         stream_tokens: bool = True,
-    ) -> AsyncGenerator[ChatMessage | str | ModuleInterruptResponse | dict, None]:
+    ) -> AsyncGenerator[ChatMessage | str | dict, None]:
         """
         Stream the agent's response asynchronously.
 
@@ -435,7 +431,7 @@ class AgentClient:
                 raise AgentClientError(f"Error: {e}")
 
 
-    def is_token_message(self, message: ChatMessage | str | ModuleInterruptResponse | dict) -> bool:
+    def is_token_message(self, message: ChatMessage | str | dict) -> bool:
         """
         Check if a message is a token message (normalized or legacy format).
         
@@ -454,11 +450,7 @@ class AgentClient:
             return msg_type == "token" or msg_type.startswith("token_")
         return False
 
-    def is_module_interrupt(self, message: ChatMessage | str | ModuleInterruptResponse | dict) -> bool:
-        """Check if a message is a module interrupt."""
-        return isinstance(message, ModuleInterruptResponse)
-
-    def get_token_module(self, message: ChatMessage | str | ModuleInterruptResponse | dict) -> str | None:
+    def get_token_module(self, message: ChatMessage | str | dict) -> str | None:
         """
         Get the module name from a normalized token message.
         
@@ -482,7 +474,7 @@ class AgentClient:
         # Legacy string token
         return "default"
 
-    def get_token_content(self, message: ChatMessage | str | ModuleInterruptResponse | dict) -> str | None:
+    def get_token_content(self, message: ChatMessage | str | dict) -> str | None:
         """
         Get the content from a token message (normalized or legacy format).
         
@@ -498,79 +490,6 @@ class AgentClient:
             return message.get("content")
         return None
 
-    def respond_to_module_interrupt(
-        self,
-        message: str,
-        thread_id: str,
-        model: str | None = None,
-        provider: str | None = None,
-        user_id: str | None = None,
-        stream_tokens: bool = True,
-    ) -> Generator[ChatMessage | str | ModuleInterruptResponse | dict, None, None]:
-        """
-        Respond to a module interrupt synchronously.
-        
-        This uses the regular stream endpoint, as interrupts are handled through
-        the normal streaming mechanism with Command(resume=...) messages.
-
-        Args:
-            message (str): The user's response to the module interrupt
-            thread_id (str): Thread ID of the conversation (shared by supervisor and modules)
-            model (str, optional): LLM model to use for the agent
-            provider (str, optional): LLM provider to use (openai or blablador)
-            user_id (str, optional): User ID for continuing a conversation across multiple threads
-            stream_tokens (bool, optional): Stream tokens as they are generated
-
-        Returns:
-            Generator[ChatMessage | str, None, None]: The response from the agent
-        """
-        # Use the regular stream endpoint - interrupts are handled through it
-        yield from self.stream(
-            message=message,
-            thread_id=thread_id,
-            model=model,
-            provider=provider,
-            user_id=user_id,
-            stream_tokens=stream_tokens
-        )
-
-    async def arespond_to_module_interrupt(
-        self,
-        message: str,
-        thread_id: str,
-        model: str | None = None,
-        provider: str | None = None,
-        user_id: str | None = None,
-        stream_tokens: bool = True,
-    ) -> AsyncGenerator[ChatMessage | str | ModuleInterruptResponse | dict, None]:
-        """
-        Respond to a module interrupt asynchronously.
-        
-        This uses the regular stream endpoint, as interrupts are handled through
-        the normal streaming mechanism with Command(resume=...) messages.
-
-        Args:
-            message (str): The user's response to the module interrupt
-            thread_id (str): Thread ID of the conversation (shared by supervisor and modules)
-            model (str, optional): LLM model to use for the agent
-            provider (str, optional): LLM provider to use (openai or blablador)
-            user_id (str, optional): User ID for continuing a conversation across multiple threads
-            stream_tokens (bool, optional): Stream tokens as they are generated
-
-        Returns:
-            AsyncGenerator[ChatMessage | str, None]: The response from the agent
-        """
-        # Use the regular stream endpoint - interrupts are handled through it
-        async for chunk in self.astream(
-            message=message,
-            thread_id=thread_id,
-            model=model,
-            provider=provider,
-            user_id=user_id,
-            stream_tokens=stream_tokens
-        ):
-            yield chunk
-    
     def restart(
         self,
         model: str | None = None,

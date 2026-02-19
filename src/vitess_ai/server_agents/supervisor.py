@@ -47,7 +47,7 @@ class SupervisorAgent:
     This agent creates a supervisor graph that orchestrates module react-agents.
     Module agents are created using LangChain's create_agent and integrated
     as nodes, enabling unified state management and checkpoint-based resumption
-    with END pattern (no interrupts needed).
+    with END pattern.
     """
     
     def __init__(self, config: SupervisorConfig = None, simulation_tools_path: str = None):
@@ -255,12 +255,6 @@ class SupervisorAgent:
         # Create and compile flat graph
         self.graph = self._create_flat_graph(execution_order)
         # Compile with checkpointer for state persistence (LangGraph 1.x compatible)
-        # Note: For enhanced control, consider using static interrupts:
-        #   self.app = self.graph.compile(
-        #       checkpointer=self.memory,
-        #       interrupt_before=["node_name"],  # Interrupt before specific nodes
-        #       interrupt_after=["node_name"]     # Interrupt after specific nodes
-        #   )
         self.app = self.graph.compile(checkpointer=self.memory)
         
         self.initialized = True

@@ -2,19 +2,16 @@
 Chat interface for Streamlit app.
 
 This module provides functions for handling chat interactions, streaming responses,
-interrupt handling, and message display.
+and message display.
 """
 import streamlit as st
 from vitess_ai.clients.client import AgentClient, AgentClientError
-from vitess_ai.schema.server import ChatMessage, ModuleInterruptResponse
+from vitess_ai.schema.server import ChatMessage
 from ui_components import (
     render_header_with_logo,
     render_message,
-    render_module_badge,
     render_streaming_token,
-    get_module_color,
-    get_module_info_from_server,
-    markdown_to_html
+    finalize_streaming_message
 )
 
 
@@ -31,7 +28,7 @@ def process_stream_chunk(
     Process a single chunk from the stream and update UI.
     
     Args:
-        chunk: Stream chunk (ChatMessage, token dict, ModuleInterruptResponse, etc.)
+        chunk: Stream chunk (ChatMessage, token dict, etc.)
         client: AgentClient instance for helper methods
         current_streaming_module: Current module name
         response_text: Accumulated response text
@@ -42,11 +39,7 @@ def process_stream_chunk(
     Returns:
         Tuple of (updated_response_text, updated_module, updated_complete_flag)
     """
-    if isinstance(chunk, ModuleInterruptResponse):
-        # Module interrupt - return as-is for caller to handle
-        return response_text, current_streaming_module, received_complete_message
-    
-    elif isinstance(chunk, ChatMessage):
+    if isinstance(chunk, ChatMessage):
         # Complete message received
         content_str = str(chunk.content) if chunk.content is not None else ""
         # Skip stray 'Start' messages
@@ -58,7 +51,16 @@ def process_stream_chunk(
         messages.append(chunk)
         
         if chunk.type == "ai":
-            message_placeholder.markdown(chunk.content)
+            # Extract module name from custom_data if available
+            custom_data = chunk.custom_data or {}
+            module_name = custom_data.get("module_name", current_streaming_module)
+            # Render final content with JSON/markdown logic (same as history)
+            finalize_streaming_message(
+                message_placeholder,
+                chunk.content,
+                module_name,
+                custom_data=chunk.custom_data
+            )
             response_text = chunk.content
         
         return response_text, current_streaming_module, received_complete_message
@@ -97,7 +99,6 @@ def render_chat_interface() -> None:
         and st.session_state.client
         and not st.session_state.messages
         and not st.session_state.get("welcome_initialized", False)
-        and not st.session_state.current_interrupt
     ):
         st.session_state.welcome_initialized = True
         with st.chat_message("assistant"):
@@ -115,10 +116,6 @@ def render_chat_interface() -> None:
                     model=st.session_state.selected_model,
                     stream_tokens=True,
                 ):
-                    if isinstance(chunk, ModuleInterruptResponse):
-                        st.session_state.current_interrupt = chunk
-                        st.rerun()
-                    
                     # Process chunk using unified helper
                     response_text, current_streaming_module, received_complete_message = process_stream_chunk(
                         chunk,
@@ -141,24 +138,19 @@ def render_chat_interface() -> None:
             finally:
                 # Finalize message if we streamed tokens only
                 if response_text and not received_complete_message:
-                    # Get dynamic module info if available
-                    dynamic_modules = None
-                    if st.session_state.server_connected and st.session_state.server_url:
-                        dynamic_modules = get_module_info_from_server(st.session_state.server_url)
-                    color = get_module_color(current_streaming_module, dynamic_modules)
-                    badge_text = render_module_badge(current_streaming_module, dynamic_modules)
-                    # Convert markdown to HTML first, then wrap in styled div
-                    html_content = markdown_to_html(response_text)
-                    message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
-                    message_placeholder.markdown(
-                        f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
-                        unsafe_allow_html=True,
+                    custom_data = {"module_name": current_streaming_module}
+                    # Render final content with JSON/markdown logic (same as history)
+                    finalize_streaming_message(
+                        message_placeholder,
+                        response_text,
+                        current_streaming_module,
+                        custom_data=custom_data
                     )
                     # Backend handles deduplication, so we can always append
                     ai_message = ChatMessage(
                         type="ai",
                         content=response_text,
-                        custom_data={"module_name": current_streaming_module},
+                        custom_data=custom_data,
                     )
                     st.session_state.messages.append(ai_message)
                 st.rerun()
@@ -167,84 +159,8 @@ def render_chat_interface() -> None:
     for message in st.session_state.messages:
         render_message(message, show_system=st.session_state.show_system_messages)
 
-    # Handle module interrupt
-    if st.session_state.current_interrupt:
-        interrupt: ModuleInterruptResponse = st.session_state.current_interrupt
-        st.warning(
-            f"**Module Interrupt from {interrupt.module_name}:**\n\n{interrupt.interrupt_value}"
-        )
-        
-        with st.form("interrupt_response", clear_on_submit=True):
-            interrupt_input = st.text_input("Your response:")
-            submitted = st.form_submit_button("Send Response")
-
-            if submitted and interrupt_input:
-                if not st.session_state.client:
-                    st.error("Server not connected. Please check server status.")
-                else:
-                    try:
-                        # Stream response to interrupt
-                        response_text = ""
-                        current_streaming_module = "default"
-                        received_complete_message = False
-                        with st.chat_message("assistant"):
-                            message_placeholder = st.empty()
-                            
-                            for chunk in st.session_state.client.respond_to_module_interrupt(
-                                message=interrupt_input,
-                                thread_id=st.session_state.thread_id,
-                                user_id=st.session_state.user_id,
-                                provider=st.session_state.selected_provider,
-                                model=st.session_state.selected_model,
-                                stream_tokens=True
-                            ):
-                                if isinstance(chunk, ModuleInterruptResponse):
-                                    # New interrupt detected
-                                    st.session_state.current_interrupt = chunk
-                                    st.rerun()
-                                
-                                # Process chunk using unified helper
-                                response_text, current_streaming_module, received_complete_message = process_stream_chunk(
-                                    chunk,
-                                    st.session_state.client,
-                                    current_streaming_module,
-                                    response_text,
-                                    received_complete_message,
-                                    message_placeholder,
-                                    st.session_state.messages
-                                )
-                            
-                            # Finalize message if we streamed tokens only
-                            if response_text and not received_complete_message:
-                                # Get dynamic module info if available
-                                dynamic_modules = None
-                                if st.session_state.server_connected and st.session_state.server_url:
-                                    dynamic_modules = get_module_info_from_server(st.session_state.server_url)
-                                color = get_module_color(current_streaming_module, dynamic_modules)
-                                badge_text = render_module_badge(current_streaming_module, dynamic_modules)
-                                # Convert markdown to HTML first, then wrap in styled div
-                                html_content = markdown_to_html(response_text)
-                                message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
-                                message_placeholder.markdown(
-                                    f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
-                                    unsafe_allow_html=True,
-                                )
-                                # Backend handles deduplication, so we can always append
-                                ai_message = ChatMessage(
-                                    type="ai",
-                                    content=response_text,
-                                    custom_data={"module_name": current_streaming_module}
-                                )
-                                st.session_state.messages.append(ai_message)
-                        
-                        st.session_state.current_interrupt = None
-                        st.rerun()
-                    except AgentClientError as e:
-                        st.error(f"Error responding to interrupt: {e}")
-
     # Chat input
-    if not st.session_state.current_interrupt:
-        if prompt := st.chat_input("Type your message here..."):
+    if prompt := st.chat_input("Type your message here..."):
             if not st.session_state.client:
                 st.error("Server not connected. Please check server status in the sidebar.")
             else:
@@ -269,11 +185,6 @@ def render_chat_interface() -> None:
                             model=st.session_state.selected_model,
                             stream_tokens=True
                         ):
-                            if isinstance(chunk, ModuleInterruptResponse):
-                                # Module interrupt detected
-                                st.session_state.current_interrupt = chunk
-                                st.rerun()
-                            
                             # Process chunk using unified helper
                             response_text, current_streaming_module, received_complete_message = process_stream_chunk(
                                 chunk,
@@ -288,36 +199,34 @@ def render_chat_interface() -> None:
                         # Finalize message display
                         # Only add accumulated token text if we didn't receive a complete ChatMessage
                         if response_text and not received_complete_message:
-                            # Get dynamic module info if available
-                            dynamic_modules = None
-                            if st.session_state.server_connected and st.session_state.server_url:
-                                dynamic_modules = get_module_info_from_server(st.session_state.server_url)
-                            # Apply final color styling
-                            color = get_module_color(current_streaming_module, dynamic_modules)
-                            badge_text = render_module_badge(current_streaming_module, dynamic_modules)
-                            
-                            # Convert markdown to HTML first, then wrap in styled div
-                            html_content = markdown_to_html(response_text)
-                            
-                            # Display final message with color and badge
-                            message_placeholder.markdown(f"{badge_text}", unsafe_allow_html=True)
-                            message_placeholder.markdown(
-                                f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
-                                unsafe_allow_html=True
+                            custom_data = {"module_name": current_streaming_module}
+                            # Render final content with JSON/markdown logic (same as history)
+                            finalize_streaming_message(
+                                message_placeholder,
+                                response_text,
+                                current_streaming_module,
+                                custom_data=custom_data
                             )
-                            
                             # Backend handles deduplication, so we can always append
                             ai_message = ChatMessage(
                                 type="ai", 
                                 content=response_text,
-                                custom_data={"module_name": current_streaming_module}
+                                custom_data=custom_data
                             )
                             st.session_state.messages.append(ai_message)
                         elif not response_text and st.session_state.messages:
                             # If no response text accumulated, check for last message
                             last_msg = st.session_state.messages[-1]
                             if isinstance(last_msg, ChatMessage) and last_msg.type == "ai":
-                                message_placeholder.markdown(last_msg.content)
+                                # Render using same logic as history for consistency
+                                last_custom_data = last_msg.custom_data or {}
+                                module_name = last_custom_data.get("module_name", "default")
+                                finalize_streaming_message(
+                                    message_placeholder,
+                                    last_msg.content,
+                                    module_name,
+                                    custom_data=last_msg.custom_data
+                                )
                         
                         # After streaming completes, rerun to display any tool messages that were added
                         # This ensures all messages (including tool messages) are displayed in correct order

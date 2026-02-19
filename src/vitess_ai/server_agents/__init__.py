@@ -2,12 +2,11 @@
 Server Agents Package
 
 This package contains server-optimized components that use a flat graph architecture
-for better interrupt handling and state management in server mode.
+for state management in server mode.
 
 Key features:
 - Flat graph architecture (no subgraphs)
 - Unified state management
-- Centralized interrupt handling
 - Server-optimized module agents
 - Optimized for server deployment
 """

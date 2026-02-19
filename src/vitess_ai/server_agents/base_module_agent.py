@@ -23,8 +23,6 @@ from vitess_ai.server_agents.module_middleware import (
     MessageFilterMiddleware,
     DynamicModelMiddleware,
 )
-from vitess_ai.core.config import global_config
-
 
 class ModuleMetadata(BaseModel):
     """Definition of a registerable module"""
@@ -96,7 +94,12 @@ class BaseModuleAgent(ABC):
         self.provider = provider
         self.model = model
         self.tools = tools
-        self.llm = create_llm_with_fallback(provider=self.provider, model=self.model)
+        # Enable streaming so module agents emit token chunks to the UI stream
+        self.llm = create_llm_with_fallback(
+            provider=self.provider,
+            model=self.model,
+            streaming=True
+        )
         
         # Setup logging
         self.logger = get_logger(f"vitess_ai.server_agents.{self.module_name}")

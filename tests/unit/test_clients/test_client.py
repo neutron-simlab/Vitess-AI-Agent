@@ -19,7 +19,6 @@ from vitess_ai.schema.server import (
     ChatMessage,
     ServiceMetadata,
     AgentInfo,
-    ModuleInterruptResponse,
     Provider,
 )
 
@@ -362,29 +361,6 @@ class TestStream:
             # Should have ChatMessage
             assert any(isinstance(r, ChatMessage) for r in results)
     
-    def test_module_interrupt_handling(self):
-        """Test module interrupt handling"""
-        client = AgentClient(get_info=False)
-        client.agent = "supervisor"
-        
-        # Use correct format for ModuleInterruptResponse with all required fields
-        sse_lines = [
-            "data: {\"type\": \"module_interrupt\", \"content\": {\"module_name\": \"readin\", \"interrupt_value\": \"Need input\", \"thread_id\": \"test_thread\", \"message\": \"Need input\"}}\n",
-            "data: [DONE]\n"
-        ]
-        
-        with patch('vitess_ai.clients.client.httpx.stream') as mock_stream:
-            mock_response = MagicMock()
-            mock_response.raise_for_status = MagicMock()
-            mock_response.iter_lines.return_value = sse_lines
-            mock_stream.return_value.__enter__.return_value = mock_response
-            
-            results = list(client.stream("Test message"))
-            
-            assert len(results) > 0
-            # Should have ModuleInterruptResponse or dict
-            assert any(isinstance(r, (ModuleInterruptResponse, dict)) for r in results)
-    
     def test_sse_format_parsing(self):
         """Test SSE format parsing"""
         client = AgentClient(get_info=False)
@@ -443,19 +419,6 @@ class TestParseStreamLine:
         assert result["type"] == "token"
         assert result["module"] == "readin"
         assert result["content"] == "token"
-    
-    def test_module_interrupt_parsing(self):
-        """Test module interrupt parsing"""
-        client = AgentClient(get_info=False)
-        
-        # Use correct format for ModuleInterruptResponse with all required fields
-        line = 'data: {"type": "module_interrupt", "content": {"module_name": "readin", "interrupt_value": "Need input", "thread_id": "test_thread", "message": "Need input"}}'
-        result = client._parse_stream_line(line)
-        
-        # Should return ModuleInterruptResponse or dict
-        assert isinstance(result, (ModuleInterruptResponse, dict))
-        if isinstance(result, dict):
-            assert result.get("type") == "module_interrupt" or "module_name" in result or "module" in result
     
     def test_error_message_handling(self):
         """Test error message handling"""
@@ -541,49 +504,6 @@ class TestTokenHelpers:
         
         # Not a token
         assert client.get_token_content(ChatMessage(type="ai", content="message")) is None
-
-
-@pytest.mark.unit
-class TestRespondToModuleInterrupt:
-    """Tests for respond_to_module_interrupt methods"""
-    
-    def test_response_handling(self):
-        """Test response handling"""
-        client = AgentClient(get_info=False)
-        client.agent = "supervisor"
-        
-        sse_lines = [
-            "data: {\"type\": \"message\", \"content\": {\"type\": \"ai\", \"content\": \"Response\"}}\n",
-            "data: [DONE]\n"
-        ]
-        
-        with patch('vitess_ai.clients.client.httpx.stream') as mock_stream:
-            mock_response = MagicMock()
-            mock_response.raise_for_status = MagicMock()
-            mock_response.iter_lines.return_value = sse_lines
-            mock_stream.return_value.__enter__.return_value = mock_response
-            
-            results = list(client.respond_to_module_interrupt("Response", "test_thread"))
-            
-            assert len(results) > 0
-    
-    def test_thread_id_usage(self):
-        """Test thread ID usage"""
-        client = AgentClient(get_info=False)
-        client.agent = "supervisor"
-        
-        with patch('vitess_ai.clients.client.httpx.stream') as mock_stream:
-            mock_response = MagicMock()
-            mock_response.raise_for_status = MagicMock()
-            mock_response.iter_lines.return_value = ["data: [DONE]\n"]
-            mock_stream.return_value.__enter__.return_value = mock_response
-            
-            list(client.respond_to_module_interrupt("Response", "test_thread"))
-            
-            # Check that thread_id was used
-            call_kwargs = mock_stream.call_args[1]
-            request_data = call_kwargs["json"]
-            assert request_data["thread_id"] == "test_thread"
 
 
 @pytest.mark.unit

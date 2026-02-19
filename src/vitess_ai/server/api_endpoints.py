@@ -11,7 +11,6 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage
 from langgraph.graph.state import CompiledStateGraph
 
 from vitess_ai.core.log import get_logger
@@ -140,12 +139,6 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
     Use user_id to persist and continue a conversation across multiple threads.
     Provider and model can be specified in the request to use different LLMs.
     """
-    # NOTE: Currently this only returns the last message or interrupt.
-    # In the case of an agent outputting multiple AIMessages (such as the background step
-    # in interrupt-agent, or a tool step in research-assistant), it's omitted. Arguably,
-    # you'd want to include it. You could update the API to return a list of ChatMessages
-    # in that case.
-    
     # Extract provider and model from request
     provider = user_input.provider.value if user_input.provider else None
     model = user_input.model
@@ -183,13 +176,6 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
         if response_type == "values":
             # Normal response, the agent completed successfully
             output = langchain_to_chat_message(response["messages"][-1])
-        elif response_type == "updates" and "__interrupt__" in response:
-            # The last thing to occur was an interrupt
-            # Return the value of the first interrupt as an AIMessage
-            interrupt_value = response["__interrupt__"][0].value
-            output = langchain_to_chat_message(
-                AIMessage(content=interrupt_value if isinstance(interrupt_value, str) else str(interrupt_value))
-            )
         else:
             logger.error(f"Unexpected response type: {response_type}")
             raise HTTPException(

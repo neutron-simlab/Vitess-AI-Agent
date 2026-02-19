@@ -8,7 +8,6 @@ to process and convert LangGraph streaming events into chat messages.
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
-from langgraph.types import Interrupt
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.runnables import RunnableConfig
 
@@ -55,14 +54,6 @@ class UpdatesStreamHandler:
         new_messages = []
         
         for node, updates in event.items():
-            # Handle interrupts
-            if node == "__interrupt__":
-                interrupt: Interrupt
-                for interrupt in updates:
-                    interrupt_msg = AIMessage(content=interrupt.value)
-                    new_messages.append(interrupt_msg)
-                continue
-            
             # Extract messages from updates
             updates = updates or {}
             update_messages = updates.get("messages", [])
