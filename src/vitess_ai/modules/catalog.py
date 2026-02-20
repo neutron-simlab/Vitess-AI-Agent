@@ -15,18 +15,23 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from vitess_ai.server_agents.base_module_agent import ModuleBuilder, ModuleMetadata
-from vitess_ai.server_agents.readin_module_agent import ReadInModuleAgent
-from vitess_ai.server_agents.guide_module_agent import GuideModuleAgent
-from vitess_ai.server_agents.monitor1d_module_agent import Monitor1DModuleAgent
-from vitess_ai.server_agents.monitor2d_module_agent import Monitor2DModuleAgent
-from vitess_ai.server_agents.writeout_module_agent import WriteoutModuleAgent
-from vitess_ai.tools import (
+from vitess_ai.agents.simulator.base_agent import ModuleBuilder, ModuleMetadata
+from vitess_ai.agents.simulator.modules.readin import ReadInModuleAgent
+from vitess_ai.agents.simulator.modules.guide import GuideModuleAgent
+from vitess_ai.agents.simulator.modules.monitor1d import Monitor1DModuleAgent
+from vitess_ai.agents.simulator.modules.monitor2d import Monitor2DModuleAgent
+from vitess_ai.agents.simulator.modules.writeout import WriteoutModuleAgent
+from vitess_ai.agents.simulator.tools import (
     get_guide_tools,
-    get_monitor_tools,
     get_readin_tools,
     get_writeout_tools,
+    get_monitor1d_tools,
+    get_monitor2d_tools,
 )
+
+def get_monitor_tools():
+    """Backward compatible - return combined monitor tools."""
+    return get_monitor1d_tools() + get_monitor2d_tools()
 
 
 DEFAULT_DATA_FILE_EXTENSIONS = ["dat", "txt", "csv", "nxs", "h5"]

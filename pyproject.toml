@@ -19,6 +19,7 @@ dependencies = [
     "fastmcp>=2.9.2",
     "langchain-mcp-adapters>=0.1.7",
     "langchain-community>=0.4.1",
+    "deepagents",
     "langgraph-api>=0.4.48",
     "matplotlib>=3.10.7",
     "numpy>=2.3.4",

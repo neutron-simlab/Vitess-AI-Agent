@@ -5,10 +5,9 @@ import tempfile
 import shutil
 from pathlib import Path
 from typing import Generator
-from unittest.mock import MagicMock
 import pytest
 
-from vitess_ai.server_agents.base_module_agent import ModuleMetadata
+from vitess_ai.agents.simulator import ModuleMetadata, BaseModuleAgent
 
 
 @pytest.fixture
@@ -51,8 +50,6 @@ def mock_env(monkeypatch):
 def sample_module_metadata():
     """Sample module metadata for testing"""
     def _create(name: str = "test_module", order: int = 1, optional: bool = False):
-        from vitess_ai.server_agents.base_module_agent import BaseModuleAgent
-        
         class TestAgent(BaseModuleAgent):
             pass
         

@@ -25,7 +25,7 @@ class TestModuleCatalog:
         names = [module.name for module in modules]
         orders = [module.order for module in modules]
 
-        assert names == ["readin", "guide", "monitor1d", "monitor2d", "writeout"]
+        assert names == ["readin", "guide", "writeout", "monitor1d", "monitor2d"]
         assert orders == sorted(orders)
 
     def test_graph_modules_have_validation_patterns(self):

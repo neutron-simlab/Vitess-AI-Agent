@@ -17,9 +17,9 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from vitess_ai.core.log import get_logger
-from vitess_ai.server_agents.unified_state import UnifiedState, ModuleResult
+from vitess_ai.agents.simulator.state import UnifiedState, ModuleResult
 from vitess_ai.schema.base import FillingStage
-from vitess_ai.server_agents.module_middleware import (
+from vitess_ai.agents.simulator.middleware import (
     MessageFilterMiddleware,
     DynamicModelMiddleware,
 )

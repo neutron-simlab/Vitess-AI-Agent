@@ -98,7 +98,8 @@ async def message_generator(
             agent,
             kwargs["config"],
             str(run_id),
-            user_input.message
+            user_input.message,
+            default_module=agent_id,
         )
         
         # Initialize streamed_message_ids from existing state to prevent duplicates
@@ -175,7 +176,7 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
         
         if response_type == "values":
             # Normal response, the agent completed successfully
-            output = langchain_to_chat_message(response["messages"][-1])
+            output = langchain_to_chat_message(response["messages"][-1], module_name=agent_id)
         else:
             logger.error(f"Unexpected response type: {response_type}")
             raise HTTPException(
@@ -264,4 +265,3 @@ async def restart(
     except Exception as e:
         logger.error(f"Failed to restart agent: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to restart agent: {str(e)}")
-

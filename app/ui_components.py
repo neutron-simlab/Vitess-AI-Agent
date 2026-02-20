@@ -25,9 +25,11 @@ _logo_path = _assets_dir / "logo.png"
 # Module color mapping for visual differentiation (fallback for when dynamic info unavailable)
 MODULE_COLORS = {
     "supervisor": "blue",      # Streamlit's primary blue
+    "deep_analysis": "teal",   # Advanced analysis mode
     "readin": "green",         # Success green
     "guide": "orange",         # Warning orange  
     "writeout": "violet",      # Violet/purple
+    "sim-runner": "red",       # Simulation execution specialist
     "tool": "gray",            # Neutral gray for tools
     "default": "blue"          # Fallback
 }
@@ -35,9 +37,11 @@ MODULE_COLORS = {
 # Module display names and icons (fallback for when dynamic info unavailable)
 MODULE_INFO = {
     "supervisor": {"name": "SUPERVISOR", "icon": ""},
+    "deep_analysis": {"name": "DEEP ANALYSIS", "icon": ""},
     "readin": {"name": "READ-IN", "icon": ""},
     "guide": {"name": "GUIDE", "icon": ""},
     "writeout": {"name": "WRITE-OUT", "icon": ""},
+    "sim-runner": {"name": "SIM RUNNER", "icon": ""},
     "tool": {"name": "TOOL", "icon": "🔧"},
     "default": {"name": "AI", "icon": ""}
 }
@@ -413,4 +417,3 @@ def finalize_streaming_message(
         # Render content with JSON/markdown logic
         if content:
             render_content(content, color, custom_data=custom_data)
-

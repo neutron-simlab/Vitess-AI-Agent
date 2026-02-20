@@ -22,14 +22,14 @@ def check_server_health(server_url: str) -> bool:
         return False
 
 
-def initialize_client(server_url: str) -> Optional[AgentClient]:
+def initialize_client(server_url: str, agent_id: str = "supervisor") -> Optional[AgentClient]:
     """Initialize AgentClient with server URL."""
     try:
         # Set get_info=False since /info endpoint doesn't exist in the service
         # Initialize without agent first, then set it with verify=False
         client = AgentClient(base_url=server_url, agent=None, get_info=False)
-        # Set agent to "supervisor" without verification
-        client.update_agent("supervisor", verify=False)
+        # Set selected agent without verification
+        client.update_agent(agent_id, verify=False)
         return client
     except Exception as e:
         st.error(f"Failed to initialize client: {e}")

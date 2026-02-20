@@ -1,61 +1,61 @@
 """
-ReadIn Module Agent - Readin module agent
+Writeout Module Agent - Writeout module agent
 
-This agent implements the readin module functionality using the flat graph
+This agent implements the writeout module functionality using the flat graph
 architecture, enabling unified state management.
 """
 
-from vitess_ai.server_agents.base_module_agent import BaseModuleAgent, ModuleBuilder
-from vitess_ai.prompts.readin_module import READIN_AGENT_WELCOME, READIN_AGENT_DEFAULT_PROMPT, READIN_AGENT_CUSTOM_PROMPT
+from vitess_ai.agents.simulator.base_agent import BaseModuleAgent, ModuleBuilder
+from vitess_ai.agents.simulator.prompts.writeout import WRITEOUT_AGENT_WELCOME, WRITEOUT_AGENT_DEFAULT_PROMPT, WRITEOUT_AGENT_CUSTOM_PROMPT
 from vitess_ai.core.config import global_config
 
 
-class ReadInModuleAgent(BaseModuleAgent):
+class WriteoutModuleAgent(BaseModuleAgent):
     """
-    Readin module agent.
+    Writeout module agent.
     
-    This agent handles neutron input parameters and initial conditions
-    configuration using a flat graph architecture.
+    This agent handles output settings and data formats configuration
+    using a flat graph architecture.
     """
     
     @property
     def name(self) -> str:
         """Agent name"""
-        return "Read-in Parameters"
+        return "Writeout Parameters"
     
     @property
     def module_name(self) -> str:
         """Module name"""
-        return "readin"
+        return "writeout"
     
     @property
     def welcome_message(self) -> str:
-        """Welcome message for the readin module"""
-        return READIN_AGENT_WELCOME
+        """Welcome message for the writeout module"""
+        return WRITEOUT_AGENT_WELCOME
     
     @property
     def default_prompt(self) -> str:
-        """Default prompt for the readin module"""
-        return READIN_AGENT_DEFAULT_PROMPT
+        """Default prompt for the writeout module"""
+        return WRITEOUT_AGENT_DEFAULT_PROMPT
     
     @property
     def custom_prompt(self) -> str:
-        """Custom prompt for the readin module"""
-        return READIN_AGENT_CUSTOM_PROMPT
+        """Custom prompt for the writeout module"""
+        return WRITEOUT_AGENT_CUSTOM_PROMPT
     
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
-        return "readin_params"
+        return "writeout_params"
     
     @classmethod
     def register_with_supervisor(cls, supervisor) -> None:
-        """Register the readin module with the supervisor"""
+        """Register the writeout module with the supervisor"""
         module = ModuleBuilder.create(
-            name="readin",
-            display_name="Read-in Parameters",
-            description="Configure neutron input parameters and initial conditions",
+            name="writeout",
+            display_name="Writeout Parameters",
+            description="Configure output settings and data formats",
             agent_class=cls,
-            order=1
+            order=3
         )
         supervisor.register_module(module)
     
@@ -78,13 +78,13 @@ class ReadInModuleAgent(BaseModuleAgent):
             )
             next_message = f"Next, we'll proceed to the {next_module_display.lower()} configuration."
         else:
-            next_message = "Next, we'll proceed to the simulation execution."
+            next_message = "All modules have been configured. The simulation will now be executed."
         
-        message = f"""Read-in Parameters configuration completed successfully!
+        message = f"""✅ Writeout Parameters configuration completed successfully!
 
-Your neutron input parameters have been configured and validated. 
+Your output settings have been configured and validated. 
 The system has generated the appropriate CLI parameters for the 
-readin module that will be used in the simulation execution.
+writeout module that will be used in the simulation execution.
 
 {next_message}"""
         return message

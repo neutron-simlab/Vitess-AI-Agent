@@ -103,7 +103,7 @@ if [ "$MCP_TRANSPORT_MODE" = "http" ]; then
         fi
     done
     
-    if [ $running_count -eq 5 ]; then
+    if [ $running_count -ge 1 ]; then
         echo "✅ MCP server started successfully (PIDs: ${MCP_PIDS[*]})"
     else
         echo "⚠️  Warning: NO MCP server started"

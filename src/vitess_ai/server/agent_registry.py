@@ -8,7 +8,12 @@ from typing import Any, Callable, Optional, Awaitable
 from langgraph.graph.state import CompiledStateGraph
 
 from vitess_ai.core.log import get_logger
-from vitess_ai.server_agents.supervisor import create_default_supervisor, SupervisorAgent
+from vitess_ai.agents.simulator import SimulatorAgent, create_default_simulator
+from vitess_ai.agents.high_throughput import HighThroughputAgent, create_default_high_throughput
+
+# Backward compatibility alias
+SupervisorAgent = SimulatorAgent
+create_default_supervisor = create_default_simulator
 from vitess_ai.core.config import global_config
 from vitess_ai.schema.llm_models import Provider, get_default_model_for_provider
 from vitess_ai.server.errors import AgentNotFoundError
@@ -53,8 +58,16 @@ async def _create_supervisor_agent(provider: str, model: str) -> tuple[Superviso
     return (supervisor, supervisor.app)
 
 
-# Register default supervisor factory
+async def _create_high_throughput_agent(provider: str, model: str) -> tuple[HighThroughputAgent, CompiledStateGraph]:
+    """Factory function for creating high-throughput agents."""
+    agent = await create_default_high_throughput(provider=provider, model=model)
+    return (agent, agent.app)
+
+
+# Register default agent factories
 register_agent_factory("supervisor", _create_supervisor_agent)
+register_agent_factory("simulator", _create_supervisor_agent)  # Alias
+register_agent_factory("high_throughput", _create_high_throughput_agent)
 
 
 def _normalize_provider_model(provider: str | None, model: str | None) -> tuple[str, str]:

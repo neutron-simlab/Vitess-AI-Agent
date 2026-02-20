@@ -1,7 +1,6 @@
 """
 Tests for guide_tools.py (LangChain tools for guide module).
 """
-import json
 import os
 import pytest
 from pathlib import Path
@@ -11,7 +10,7 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from vitess_ai.tools.guide_tools import (
+from vitess_ai.agents.simulator.tools.guide import (
     guide_params_to_cli,
     _try_load_files_from_storage,
 )
@@ -58,7 +57,7 @@ class TestTryLoadFilesFromStorage:
         mock_storage.get_file_paths_for_module.return_value = ["/path/to/file.dat"]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.tools.guide_tools._current_files', []):
+        with patch('vitess_ai.agents.simulator.tools.guide._current_files', []):
             result = _try_load_files_from_storage()
             
             assert result is True

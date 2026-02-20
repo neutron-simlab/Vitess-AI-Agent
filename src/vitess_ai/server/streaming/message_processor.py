@@ -31,13 +31,15 @@ class MessageProcessor:
         config: RunnableConfig,
         run_id: str,
         user_input_message: str,
-        streamed_message_ids: set[str]
+        streamed_message_ids: set[str],
+        default_module: str = "supervisor",
     ):
         self.agent = agent
         self.config = config
         self.run_id = run_id
         self.user_input_message = user_input_message
         self.streamed_message_ids = streamed_message_ids
+        self.default_module = default_module
     
     def _create_ai_message(self, parts: dict) -> AIMessage:
         """Create an AIMessage from parts dictionary."""
@@ -112,7 +114,8 @@ class MessageProcessor:
                 # Determine module for this message
                 module_for_message = ModuleTracker.get_module_for_message(
                     current_module,
-                    node_path
+                    node_path,
+                    default=self.default_module,
                 )
                 
                 # Convert to ChatMessage
@@ -161,4 +164,3 @@ class MessageProcessor:
                     details={"error": str(e)}
                 )
                 yield f"data: {json.dumps({'type': 'error', 'content': error_msg.message})}\n\n"
-

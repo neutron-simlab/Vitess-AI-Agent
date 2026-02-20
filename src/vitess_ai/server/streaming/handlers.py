@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Overwrite
 from langchain_core.runnables import RunnableConfig
 
 from vitess_ai.server.module_tracker import ModuleTracker
@@ -56,12 +57,20 @@ class UpdatesStreamHandler:
         for node, updates in event.items():
             # Extract messages from updates
             updates = updates or {}
-            update_messages = updates.get("messages", [])
-            
+            raw_messages = updates.get("messages", [])
+
+            # LangGraph can send Overwrite(value=[...]) for reducer channels; unwrap to get the list
+            if isinstance(raw_messages, Overwrite):
+                update_messages = list(raw_messages.value) if raw_messages.value else []
+            elif isinstance(raw_messages, (list, tuple)):
+                update_messages = raw_messages
+            else:
+                update_messages = []
+
             # Filter out internal supervisor nodes that don't emit user-facing messages
             if ModuleTracker.is_internal_node(node):
                 update_messages = []
-            
+
             new_messages.extend(update_messages)
         
         return new_messages
@@ -73,10 +82,12 @@ class MessagesStreamHandler:
     def __init__(
         self,
         run_id: str,
-        current_module: Optional[str]
+        current_module: Optional[str],
+        default_module: str = "supervisor",
     ):
         self.run_id = run_id
         self.current_module = current_module
+        self.default_module = default_module
     
     def process_messages(
         self,
@@ -108,7 +119,7 @@ class MessagesStreamHandler:
             return None
         
         # Include module info in token type for color coding
-        token_module = self.current_module if self.current_module else 'supervisor'
+        token_module = self.current_module if self.current_module else self.default_module
         token_type = f"token_{token_module}"
         
         token_content = convert_message_content_to_string(content)
@@ -130,4 +141,3 @@ class CustomStreamHandler:
             List containing the custom event as a message
         """
         return [event]
-

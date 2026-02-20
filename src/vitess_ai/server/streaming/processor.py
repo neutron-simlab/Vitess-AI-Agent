@@ -35,12 +35,14 @@ class StreamEventProcessor:
         agent: CompiledStateGraph,
         config: RunnableConfig,
         run_id: str,
-        user_input_message: str
+        user_input_message: str,
+        default_module: str = "supervisor",
     ):
         self.agent = agent
         self.config = config
         self.run_id = run_id
         self.user_input_message = user_input_message
+        self.default_module = default_module
         
         # Track already-streamed messages to prevent duplicates
         # Uses message IDs (from LangChain BaseMessage.id) or hash fallback
@@ -49,7 +51,12 @@ class StreamEventProcessor:
         # Initialize handlers
         self.updates_handler = UpdatesStreamHandler(agent, config, run_id, user_input_message)
         self.message_processor = MessageProcessor(
-            agent, config, run_id, user_input_message, self._streamed_message_ids
+            agent,
+            config,
+            run_id,
+            user_input_message,
+            self._streamed_message_ids,
+            default_module=default_module,
         )
         
         # Track current module
@@ -130,6 +137,8 @@ class StreamEventProcessor:
                     module_for_message = current_module_from_state
                     if not module_for_message and hasattr(message, 'additional_kwargs'):
                         module_for_message = message.additional_kwargs.get('module_name')
+                    if not module_for_message:
+                        module_for_message = self.default_module
                     
                     # Convert to ChatMessage to get consistent format
                     chat_message = langchain_to_chat_message(
@@ -195,7 +204,11 @@ class StreamEventProcessor:
                     yield sse_string
             
             elif stream_mode == "messages":
-                handler = MessagesStreamHandler(self.run_id, self.current_module)
+                handler = MessagesStreamHandler(
+                    self.run_id,
+                    self.current_module,
+                    default_module=self.default_module,
+                )
                 token_data = handler.process_messages(event, self.user_input_message)
                 if token_data:
                     yield token_data
@@ -217,4 +230,3 @@ class StreamEventProcessor:
                 details={"error": str(e)}
             )
             yield f"data: {json.dumps({'type': 'error', 'content': error.message})}\n\n"
-

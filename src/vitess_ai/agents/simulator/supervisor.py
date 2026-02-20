@@ -21,23 +21,23 @@ from vitess_ai.schema.supervisor import (
 )
 from vitess_ai.core.registry import ModuleRegistry
 from vitess_ai.core.log import get_logger
-from vitess_ai.server_agents.base_module_agent import (
+from vitess_ai.agents.simulator.base_agent import (
     BaseModuleAgent,
     ModuleMetadata,
 )
-from vitess_ai.server_agents.unified_state import UnifiedState
-from vitess_ai.server_agents.module_middleware import (
+from vitess_ai.agents.simulator.state import UnifiedState
+from vitess_ai.agents.simulator.middleware import (
     MessageFilterMiddleware, 
     ThreadIdMiddleware,
     RelevanceGuardrailMiddleware
 )
 from vitess_ai.core.config import global_config
-from vitess_ai.prompts.supervisor import (
+from vitess_ai.agents.simulator.prompts.supervisor import (
     get_simulation_execution_prompt, 
     get_post_simulation_response_prompt,
     get_supervisor_routing_prompt
 )
-from vitess_ai.server_agents.tool_wrapper import create_thread_id_tool_node
+from vitess_ai.agents.simulator.tool_wrapper import create_thread_id_tool_node
 
 
 class SupervisorAgent:

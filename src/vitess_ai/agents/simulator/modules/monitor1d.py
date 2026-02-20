@@ -1,61 +1,61 @@
 """
-Guide Module Agent - Guide module agent
+Monitor1D Module Agent - Monitor1D module agent
 
-This agent implements the guide module functionality using the flat graph
+This agent implements the Monitor1D module functionality using the flat graph
 architecture, enabling unified state management.
 """
 
-from vitess_ai.server_agents.base_module_agent import BaseModuleAgent, ModuleBuilder
-from vitess_ai.prompts.guide_module import GUIDE_AGENT_WELCOME, GUIDE_AGENT_DEFAULT_PROMPT, GUIDE_AGENT_CUSTOM_PROMPT
+from vitess_ai.agents.simulator.base_agent import BaseModuleAgent, ModuleBuilder
+from vitess_ai.agents.simulator.prompts.monitor1d import MONITOR1D_AGENT_WELCOME, MONITOR1D_AGENT_DEFAULT_PROMPT, MONITOR1D_AGENT_CUSTOM_PROMPT
 from vitess_ai.core.config import global_config
 
 
-class GuideModuleAgent(BaseModuleAgent):
+class Monitor1DModuleAgent(BaseModuleAgent):
     """
-    Guide module agent.
+    Monitor1D module agent.
     
-    This agent handles neutron guide specifications and geometry
-    configuration using a flat graph architecture.
+    This agent handles 1D monitor parameter configuration
+    using a flat graph architecture.
     """
     
     @property
     def name(self) -> str:
         """Agent name"""
-        return "Guide Parameters"
+        return "Monitor1D Parameters"
     
     @property
     def module_name(self) -> str:
         """Module name"""
-        return "guide"
+        return "monitor1d"
     
     @property
     def welcome_message(self) -> str:
-        """Welcome message for the guide module"""
-        return GUIDE_AGENT_WELCOME
+        """Welcome message for the Monitor1D module"""
+        return MONITOR1D_AGENT_WELCOME
     
     @property
     def default_prompt(self) -> str:
-        """Default prompt for the guide module"""
-        return GUIDE_AGENT_DEFAULT_PROMPT
+        """Default prompt for the Monitor1D module"""
+        return MONITOR1D_AGENT_DEFAULT_PROMPT
     
     @property
     def custom_prompt(self) -> str:
-        """Custom prompt for the guide module"""
-        return GUIDE_AGENT_CUSTOM_PROMPT
+        """Custom prompt for the Monitor1D module"""
+        return MONITOR1D_AGENT_CUSTOM_PROMPT
     
     def get_result_key(self) -> str:
         """Return the key name for storing results"""
-        return "guide_params"
+        return "monitor1d_params"
     
     @classmethod
     def register_with_supervisor(cls, supervisor) -> None:
-        """Register the guide module with the supervisor"""
+        """Register the Monitor1D module with the supervisor"""
         module = ModuleBuilder.create(
-            name="guide",
-            display_name="Guide Parameters",
-            description="Configure neutron guide specifications and geometry",
+            name="monitor1d",
+            display_name="Monitor1D Parameters",
+            description="Configure 1D monitor parameters for neutron detection",
             agent_class=cls,
-            order=2
+            order=4
         )
         supervisor.register_module(module)
     
@@ -68,6 +68,8 @@ class GuideModuleAgent(BaseModuleAgent):
         module_display_map = {
             'readin': 'Read-in Parameters',
             'guide': 'Guide Parameters',
+            'monitor1d': 'Monitor1D Parameters',
+            'monitor2d': 'Monitor2D Parameters',
             'writeout': 'Writeout Parameters'
         }
         
@@ -80,11 +82,11 @@ class GuideModuleAgent(BaseModuleAgent):
         else:
             next_message = "Next, we'll proceed to the simulation execution."
         
-        message = f"""✅ Guide Parameters configuration completed successfully!
+        message = f"""✅ Monitor1D Parameters configuration completed successfully!
 
-Your neutron guide specifications have been configured and validated. 
+Your 1D monitor specifications have been configured and validated. 
 The system has generated the appropriate CLI parameters for the 
-guide module that will be used in the simulation execution.
+Monitor1D module that will be used in the simulation execution.
 
 {next_message}"""
         return message

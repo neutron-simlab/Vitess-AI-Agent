@@ -12,7 +12,7 @@ from vitess_ai.core.config import global_config
 from vitess_ai.modules import get_graph_modules_info, get_upload_modules_info
 from vitess_ai.server.file_storage import get_file_storage_service
 from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_agent_instance
-from vitess_ai.server_agents.supervisor import SupervisorAgent
+from vitess_ai.agents.simulator import SupervisorAgent
 
 logger = get_logger(__name__)
 

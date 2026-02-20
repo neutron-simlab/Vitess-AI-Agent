@@ -10,7 +10,7 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from vitess_ai.tools.readin_tools import (
+from vitess_ai.agents.simulator.tools.readin import (
     readin_params_to_cli,
     _try_load_files_from_storage,
     _try_load_instrument_file_from_storage,
@@ -63,7 +63,7 @@ class TestTryLoadFilesFromStorage:
         mock_storage.get_file_paths_for_module.return_value = ["/path/to/file1.dat", "/path/to/file2.dat"]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.tools.readin_tools._current_files', []):
+        with patch('vitess_ai.agents.simulator.tools.readin._current_files', []):
             result = _try_load_files_from_storage("test_thread")
             
             assert result is True
@@ -98,7 +98,7 @@ class TestTryLoadInstrumentFileFromStorage:
         mock_storage.get_file_paths_for_module.return_value = ["/path/to/instrument.inf"]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.tools.readin_tools._current_instrument_file', None):
+        with patch('vitess_ai.agents.simulator.tools.readin._current_instrument_file', None):
             result = _try_load_instrument_file_from_storage("test_thread")
             
             assert result is True

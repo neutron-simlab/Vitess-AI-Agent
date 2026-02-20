@@ -9,6 +9,7 @@ import httpx
 from pathlib import Path
 from io import BytesIO
 from typing import Any, Dict, List
+from uuid import uuid4
 
 from vitess_ai.schema.llm_models import (
     Provider,
@@ -46,7 +47,46 @@ def render_sidebar() -> None:
         
         st.divider()
 
-        # 1. LLM Configuration
+        # 1. Agent mode
+        st.subheader("Agent Mode")
+        mode_to_agent = {
+            "Simulator": "supervisor",
+            "Advanced Analysis": "deep_analysis",
+        }
+        mode_options = list(mode_to_agent.keys())
+        current_mode = st.session_state.get("selected_agent_mode", "Simulator")
+        if current_mode not in mode_options:
+            current_mode = "Simulator"
+
+        selected_mode = st.radio(
+            "Mode",
+            options=mode_options,
+            index=mode_options.index(current_mode),
+            help="Simulator uses the deterministic supervisor flow. Advanced Analysis uses deep-agent orchestration.",
+        )
+
+        selected_agent_id = mode_to_agent[selected_mode]
+        previous_agent_id = st.session_state.get("selected_agent_id", "supervisor")
+        st.session_state.selected_agent_mode = selected_mode
+        st.session_state.selected_agent_id = selected_agent_id
+
+        if selected_agent_id != previous_agent_id:
+            if st.session_state.get("client"):
+                try:
+                    st.session_state.client.update_agent(selected_agent_id, verify=False)
+                except Exception as exc:
+                    st.error(f"Failed to switch agent mode: {exc}")
+            # Keep modes isolated by resetting conversation/thread context.
+            st.session_state.thread_id = str(uuid4())
+            st.session_state.messages = []
+            st.session_state.uploaded_files = {}
+            st.session_state.welcome_initialized = False
+            st.info(f"Switched to **{selected_mode}** mode.")
+            st.rerun()
+
+        st.divider()
+
+        # 2. LLM Configuration
         st.subheader("LLM Configuration")
         
         # Get available providers dynamically (future-proof for new providers)
@@ -321,8 +361,8 @@ def _render_catalog_upload_ui(module_spec: Dict[str, Any], is_module_active: boo
         return
 
     if not is_module_active:
-        st.warning(
-            f"{display_name} is not currently active. Configure uploads when this module is active."
+        st.info(
+            f"{display_name} is not the current chat focus. You can still upload files for it to use when the module runs."
         )
 
     if mode in {"file_single", "file_multi"}:
@@ -360,7 +400,7 @@ def _render_file_upload_mode(
         accept_multiple_files=allow_multiple,
         key=f"{module_name}_uploader_dynamic",
         help=uploader_help,
-        disabled=not is_module_active,
+        disabled=False,
     )
 
     selected_files: List[Any] = []
@@ -415,7 +455,7 @@ def _render_file_upload_mode(
             button_label,
             key=f"upload_button_{module_name}",
             width='stretch',
-            disabled=not is_module_active,
+            disabled=False,
         ):
             uploaded_count = 0
             for item in files_to_upload:
@@ -479,7 +519,7 @@ def _render_path_upload_mode(
             "help",
             f"Default location: {default_path}. Enter a custom path if needed.",
         ),
-        disabled=not is_module_active,
+        disabled=False,
         placeholder=default_path if default_path else "Enter output file path...",
     )
 
@@ -492,7 +532,7 @@ def _render_path_upload_mode(
             upload_schema_sidebar.get("button_text", "Save Path"),
             key=f"save_path_{module_name}",
             width='stretch',
-            disabled=not is_module_active,
+            disabled=False,
         ):
             result = save_path_metadata_to_server(
                 path_value,

@@ -3,14 +3,13 @@ Tests for registry.py
 """
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 import sys
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from vitess_ai.core.registry import ModuleRegistry
-from vitess_ai.server_agents.base_module_agent import ModuleMetadata, BaseModuleAgent
+from vitess_ai.agents.simulator import ModuleMetadata, BaseModuleAgent
 
 
 @pytest.mark.unit

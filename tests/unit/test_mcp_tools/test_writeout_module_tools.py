@@ -10,7 +10,7 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from vitess_ai.tools.writeout_tools import (
+from vitess_ai.agents.simulator.tools.writeout import (
     writeout_params_to_cli,
     _try_load_save_path_from_storage,
 )
@@ -113,7 +113,7 @@ class TestTryLoadSavePathFromStorage:
         mock_storage.list_files.return_value = [{"file_path": "/path/to/output.dat"}]
         mock_get_storage.return_value = mock_storage
         
-        with patch('vitess_ai.tools.writeout_tools._current_save_path', None):
+        with patch('vitess_ai.agents.simulator.tools.writeout._current_save_path', None):
             result = _try_load_save_path_from_storage()
             
             assert result is True
