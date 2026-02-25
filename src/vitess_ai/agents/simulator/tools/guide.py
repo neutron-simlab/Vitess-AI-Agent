@@ -47,6 +47,9 @@ def guide_params_to_cli(params: dict) -> str:
         flag = get_field_flag(GuideParameters, key)
         if value is None:
             continue
+        # Omit -S when ShapeFileName is empty (default: no guide file)
+        if key == "ShapeFileName" and (value == "" or (isinstance(value, str) and value.strip() == "")):
+            continue
         if isinstance(value, (int, float, str)):
             cli_params.append((flag, str(value)))
         elif hasattr(value, "value"):

@@ -35,11 +35,11 @@ class GuideParameters(BaseModel):
     
     # File configuration
     ShapeFileName: Annotated[str, Field(
-        default="guide_shape.dat",
+        default="",
         description=("-S [-] Name of the file containing the sizes of the guide, output or input file. "
-                    "Used for VT_FROM_FILE shape type where each piece is described by one line in the file "
+                    "Optional: used for VT_FROM_FILE shape type where each piece is described by one line in the file "
                     "with parameters: Position, width and height of the beginning of the piece, "
-                    "reflectivity files for left, right, top and bottom plane."),
+                    "reflectivity files for left, right, top and bottom plane. When empty, -S is omitted in CLI (default configuration)."),
         json_schema_extra={"flag": "-S"}
     )]
     

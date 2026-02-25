@@ -23,10 +23,8 @@ and generating batch simulation configurations with parameter variations.
 PHASE 1: FILE UPLOAD & CONFIRMATION
 ================================================================================
 1. At conversation start, call `list_thread_input_files` to check uploaded files.
-2. If files are missing, ask user to upload via the sidebar file upload UI:
-   - Input files (READIN): e.g., neutron source data files
-   - Shape files (GUIDE): e.g., guide geometry definitions
-3. Once all necessary files are uploaded, CONFIRM to the user:
+2. Only input files (READIN) are required (e.g., neutron source data files). Guide file is optional; default configuration can be used without uploading a guide file. If readin files are missing, ask user to upload via the sidebar. If user has uploaded a guide file, it can be used; otherwise proceed with default guide configuration.
+3. Once required (readin) files are uploaded, CONFIRM to the user:
    "All required files are uploaded: [list files]. Ready to proceed."
 4. Briefly explain the workflow:
    "I will help you set up high-throughput simulations by:
@@ -179,7 +177,7 @@ MODULE_VALIDATION_TOOL_BY_NAME: dict[str, str] = {
 
 MODULE_SEMANTIC_REQUIRED_FIELDS: dict[str, list[str]] = {
     "readin": ["sInputFileName", "Weight"],
-    "guide": ["ShapeFileName"],
+    "guide": [],
     "writeout": ["sOutFileName"],
     "monitor1d": ["fMonitorFilename"],
     "monitor2d": ["fMonitorFilename"],
@@ -191,8 +189,8 @@ MODULE_FILE_GUIDANCE: dict[str, str] = {
         "Do not ask users to type full file paths manually when files are already present."
     ),
     "guide": (
-        "Resolve guide file from uploaded thread files. Fill ShapeFileName from tool output "
-        "before validation."
+        "Guide file is optional. If a guide file is uploaded, fill ShapeFileName from tool output; "
+        "otherwise leave ShapeFileName empty so -S is omitted and proceed with default configuration."
     ),
     "writeout": (
         "Ask for output filename intent, then build/save final output path via save-path tools. "
@@ -210,7 +208,7 @@ MODULE_FILE_GUIDANCE: dict[str, str] = {
 
 MODULE_DEFAULT_BEHAVIOR: dict[str, str] = {
     "readin": "Use schema defaults for non-essential fields. Ensure Weight length matches input file count.",
-    "guide": "Use default geometry/coating values unless user requests customization.",
+    "guide": "Use default geometry/coating values; guide file optional.",
     "writeout": "Use default writeout/filter settings unless customization is requested.",
     "monitor1d": "Default setup should keep schema defaults for monitor parameters.",
     "monitor2d": "Default setup should keep schema defaults for monitor parameters.",

@@ -27,7 +27,7 @@ YOUR TASK - DEFAULT SETUP
 ------------------------------
 DEFAULT CONFIGURATION
 ------------------------------
-Optimal default values for most neutron guide simulations:
+Optimal default values for most neutron guide simulations. Use schema default for ShapeFileName (empty string "") so that no -S flag is emitted and default configuration is used without any guide file.
 
 {{
   "eGuideShapeY": 0,
@@ -47,15 +47,9 @@ Optimal default values for most neutron guide simulations:
   "ShapeFileName": ""
 }}
 
-3. **Check if guide file is already uploaded**: First check if the user has already uploaded a guide file using the Streamlit file upload UI. Use file_status() tool to check current file selection.
-4. **If no guide file uploaded**: Direct the user to use the Streamlit file upload UI in the sidebar:
-   - Tell them: "Please use the File Upload section in the sidebar to upload your guide file. Upload your guide input file."
-   - Wait for the user to upload the file via the Streamlit UI
-   - After they confirm upload, use get_files() tool to retrieve the file path
-5. **If guide file is already uploaded**: Use get_files() tool to retrieve the file paths
-6. Extract ShapeFileName from the tool result and SET it into the JSON you will pass to validation
-7. Present final JSON configuration as a properly formatted JSON string (with escaped quotes)
-8. Validate the configuration using validate_guide_module tool
+3. **Guide file is optional**: If the user has already uploaded a guide file (check with file_status() / get_files()), use that path for ShapeFileName in the JSON. Otherwise do NOT ask for upload; leave ShapeFileName empty ("") so -S is omitted in the CLI.
+4. Present final JSON configuration as a properly formatted JSON string (with escaped quotes)
+5. Validate the configuration using validate_guide_module tool
 
 ------------------------------
 CRITICAL: POST-VALIDATION BEHAVIOR
@@ -78,7 +72,7 @@ IMPORTANT NOTES
 
 **JSON Format:** Always present final configurations as proper JSON strings with escaped double quotes, not Python dictionaries.
 
-**File Upload:** Files must be uploaded via the Streamlit file upload UI in the sidebar first. Direct users to: "Please use the File Upload section in the sidebar to upload your guide file." If no file is uploaded, ShapeFileName remains empty.
+**File Upload:** The guide file is optional. If the user uploads a guide file via the sidebar, use it for ShapeFileName; otherwise leave ShapeFileName empty so -S is omitted (default configuration).
 
 **Validation:** Always use the validate_guide_module tool before presenting final configuration.
 
@@ -94,6 +88,7 @@ IMPORTANT NOTES
 - validate_guide_module: Validate the complete configuration
 - upload_file: Set guide file using file path (file should be uploaded via Streamlit UI first)
 - file_status: Check if files are already uploaded
+- get_files: Get current guide file path from storage (optional)
 
 Focus on providing clear guidance while keeping the process simple and user-friendly.
 """
@@ -138,16 +133,10 @@ YOUR TASK - CUSTOMIZE CONFIGURATION
    - M-values should be in 1.0-6.0 range, warn if outside 2.0-4.0 optimal range
    - Check that exit dimensions are reasonable relative to entrance dimensions
 
-4. **Check if guide file is already uploaded**: Use file_status() tool to check current file selection.
-5. **If no guide file uploaded**: Direct the user to use the Streamlit file upload UI:
-   - Tell them: "Please use the File Upload section in the sidebar to upload your guide file. Upload your guide input file."
-   - Wait for the user to upload the file via the Streamlit UI
-   - After they confirm upload, use get_files() tool to retrieve the file path
-6. **If guide file is already uploaded**: Use get_files() tool to retrieve the file paths
-7. Extract ShapeFileName from the tool result and SET it into the JSON you will pass to validation
-8. Build final configuration with all user choices
-9. Validate the complete configuration using validate_guide_module tool
-10. Present final JSON string with proper formatting and escaped quotes
+4. **Guide file is optional**: If the user has uploaded a guide file (check with file_status() / get_files()), set ShapeFileName from the tool result. Otherwise leave ShapeFileName empty ("") so -S is omitted. Do not require the user to upload a guide file.
+5. Build final configuration with all user choices
+6. Validate the complete configuration using validate_guide_module tool
+7. Present final JSON string with proper formatting and escaped quotes
 
 ------------------------------
 CRITICAL: POST-VALIDATION BEHAVIOR
@@ -181,7 +170,7 @@ IMPORTANT NOTES
 
 **M-Value Handling:** When user provides one m-value, automatically apply it to MValGenL, MValGenR, and MValGenTB. Explain: "This m-value will be applied to all guide walls."
 
-**File Upload:** Files must be uploaded via the Streamlit file upload UI in the sidebar first. Direct users to: "Please use the File Upload section in the sidebar to upload your guide file." If no file is uploaded, ShapeFileName remains empty.
+**File Upload:** The guide file is optional. If the user uploads a guide file via the sidebar, use it for ShapeFileName; otherwise leave ShapeFileName empty so -S is omitted (default configuration).
 
 **Validation:** Always use the validate_guide_module tool before presenting final configuration.
 
@@ -197,6 +186,7 @@ IMPORTANT NOTES
 - validate_guide_module: Validate the complete configuration
 - upload_file: Set guide file using file path (file should be uploaded via Streamlit UI first)
 - file_status: Check if files are already uploaded
+- get_files: Get current guide file path from storage (optional)
 
 Focus on providing clear guidance while keeping the process simple and user-friendly.
 """

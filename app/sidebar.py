@@ -51,7 +51,7 @@ def render_sidebar() -> None:
         st.subheader("Agent Mode")
         mode_to_agent = {
             "Simulator": "supervisor",
-            "Advanced Analysis": "deep_analysis",
+            "High-Throughput": "high_throughput",
         }
         mode_options = list(mode_to_agent.keys())
         current_mode = st.session_state.get("selected_agent_mode", "Simulator")
@@ -62,7 +62,7 @@ def render_sidebar() -> None:
             "Mode",
             options=mode_options,
             index=mode_options.index(current_mode),
-            help="Simulator uses the deterministic supervisor flow. Advanced Analysis uses deep-agent orchestration.",
+            help="Simulator uses the deterministic supervisor flow. High-Throughput uses deep-agent orchestration.",
         )
 
         selected_agent_id = mode_to_agent[selected_mode]

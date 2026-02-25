@@ -69,7 +69,7 @@ def _build_graph_modules() -> list[ModuleMetadata]:
             upload_schema_sidebar={
                 "mode": "file_single",
                 "label": "Guide Module File",
-                "help": "Select one guide input file for neutron simulation.",
+                "help": "Optional: select one guide input file for neutron simulation, or use default configuration.",
                 "extensions": DEFAULT_DATA_FILE_EXTENSIONS,
                 "max_files": 1,
             },
