@@ -8,7 +8,7 @@ class GuideParameters(BaseModel):
     
     # Guide shape configuration
     eGuideShapeY: Annotated[VtGdeShape, Field(
-        default=VtGdeShape.VT_CONSTANT,
+        default=VtGdeShape.VT_LINEAR,
         description=("-Y [-] Shape of the guide in horizontal direction. "
                     "VT_CONSTANT (0): Same cross-section on whole length (usually 1 piece). "
                     "VT_LINEAR (1): Linearly converging/diverging between entrance and exit (usually 1 piece). "
@@ -21,7 +21,7 @@ class GuideParameters(BaseModel):
     )]
     
     eGuideShapeZ: Annotated[VtGdeShape, Field(
-        default=VtGdeShape.VT_CONSTANT,
+        default=VtGdeShape.VT_LINEAR,
         description=("-Z [-] Shape of the guide in vertical direction. "
                     "VT_CONSTANT (0): Same cross-section on whole length (usually 1 piece). "
                     "VT_LINEAR (1): Linearly converging/diverging between entrance and exit (usually 1 piece). "

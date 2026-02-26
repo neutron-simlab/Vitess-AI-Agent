@@ -83,15 +83,17 @@ def generate_cli_command(
    module_results: Optional[dict] = None,
    execution_order: Optional[List[str]] = None,
    thread_id: Optional[str] = None,
+   run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
    """
    Generate CLI command from collected module results.
-   
+
    Args:
        module_results: Dictionary with module names as keys and ModuleResult objects as values
        execution_order: List of module names in execution order
        thread_id: Optional thread ID to include in project path. If not provided, will try to get from environment.
-       
+       run_id: Optional run ID. When set with thread_id, project path becomes {project}/{thread_id}/outputs/{run_id}.
+
    Returns:
        Dictionary with CLI command and metadata
    """
@@ -124,12 +126,14 @@ def generate_cli_command(
            thread_id = extracted_thread_id
            logger.warning(f"Using extracted thread_id from file paths: {thread_id}")
        
-       # Build project path with thread_id if available
-       if thread_id:
+       # Build project path: per-run folder when run_id is set, otherwise thread folder
+       if thread_id and run_id:
+           project_path = f"{global_config.VITESS_PROJECT_PATH}/{thread_id}/outputs/{run_id}"
+       elif thread_id:
            project_path = f"{global_config.VITESS_PROJECT_PATH}/{thread_id}"
        else:
            project_path = global_config.VITESS_PROJECT_PATH
-       
+
        # Build COMMON_PARAMS with dynamic project path
        common_params = f"{COMMON_PARAMS_BASE} --P{project_path}"
        
@@ -228,11 +232,15 @@ async def run_simulation(
     module_results: Optional[Any] = None,
     execution_order: Optional[Any] = None,
     execute: bool = False,
-    thread_id: Optional[str] = None
+    thread_id: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generate and optionally execute simulation using CLI parameters from agent state.
-    
+
+    When execute is True, outputs are written to a folder per run: {project}/{thread_id}/outputs/{run_id}/.
+    If run_id is not provided, one is generated (e.g. run_20250225_123456).
+
     Args:
         module_results: Dictionary with module names as keys and their ModuleResult objects as values
             (can be passed as dict or JSON string)
@@ -240,9 +248,10 @@ async def run_simulation(
             (can be passed as list or JSON string)
         execute: Whether to actually run the command
         thread_id: Optional thread ID to use for project path. If not provided, will try to get from environment.
-        
+        run_id: Optional run ID. When set (or auto-generated on execute), outputs go to outputs/{run_id}/.
+
     Returns:
-        Dictionary with command, execution results, and status
+        Dictionary with command, execution results, status, and run_id when a run folder was used.
     """
     def safe_decode(data):
         """Safely decode bytes to string with fallback options"""
@@ -268,35 +277,76 @@ async def run_simulation(
         logger.info(f"Parsed module_results: {len(parsed_module_results)} modules")
         logger.info(f"Parsed execution_order: {parsed_execution_order}")
         logger.info(f"Initial thread_id: {thread_id}")
-        
-        cli_result = generate_cli_command(parsed_module_results, parsed_execution_order, thread_id=thread_id)
+
+        # Reject validation error payloads: only validated parameters allowed (dict key checks, no regex)
+        for mod_name, mod_result in parsed_module_results.items():
+            if isinstance(mod_result, dict) and (
+                mod_result.get("validation_status") is False or "errors" in mod_result
+            ):
+                return {
+                    "success": False,
+                    "executed": False,
+                    "error": f"Module '{mod_name}' contains a validation error result; only validated parameters are allowed.",
+                    "message": f"Module '{mod_name}' contains a validation error result; only validated parameters are allowed.",
+                }
+
+        # First call to resolve thread_id (may be extracted from paths)
+        cli_result = generate_cli_command(
+            parsed_module_results, parsed_execution_order, thread_id=thread_id, run_id=None
+        )
         if not cli_result.get('success', False):
             return cli_result  # Return error immediately
-        
+
         # Use thread_id from cli_result (may have been extracted from file paths)
         thread_id = cli_result.get('thread_id') or thread_id
         logger.info(f"Final thread_id: {thread_id}")
-            
-        cli_command = cli_result['cli_command']  # Extract the actual command
+
+        # When executing, use a folder per run: set P to thread_id/outputs/run_id so binaries
+        # resolve relative output paths (e.g. writeout -A output_sim_003.dat) under the run folder.
+        resolved_run_id = None
+        if execute:
+            resolved_run_id = run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            run_output_dir = os.path.join(
+                global_config.VITESS_PROJECT_PATH, thread_id, "outputs", resolved_run_id
+            )
+            os.makedirs(run_output_dir, exist_ok=True)
+            cli_result = generate_cli_command(
+                parsed_module_results,
+                parsed_execution_order,
+                thread_id=thread_id,
+                run_id=resolved_run_id,
+            )
+            if not cli_result.get('success', False):
+                return cli_result
+
+        cli_command = cli_result['cli_command']
         result = {
             "executed": False,
             "cli_command": cli_result['cli_command'],
             "success": True,
-            "message": "CLI command generated (not executed)"
+            "message": "CLI command generated (not executed)",
         }
-
+        if resolved_run_id is not None:
+            result["run_id"] = resolved_run_id
+            result["output_dir"] = cli_result.get("project_path", "")
 
         # Execute if requested
         if execute:
             import subprocess
             import tempfile
-            
-            # Build project path with thread_id for $P variable in script
-            if thread_id:
-                project_path_for_script = f"{global_config.VITESS_PROJECT_PATH}/{thread_id}"
-            else:
-                project_path_for_script = global_config.VITESS_PROJECT_PATH
-            
+
+            # Use project path from cli_result (run folder when run_id is set)
+            project_path_for_script = cli_result.get("project_path") or (
+                f"{global_config.VITESS_PROJECT_PATH}/{thread_id}" if thread_id else global_config.VITESS_PROJECT_PATH
+            )
+            # Use run-specific log path when we have a run folder so each run has isolated logs
+            # (shared L would let later runs overwrite log files before/during post-processing)
+            log_path_for_script = (
+                f"{project_path_for_script}/log"
+                if resolved_run_id
+                else global_config.VITESS_LOG_PATH
+            )
+
             # Create a temporary script file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
                 script_content = f"""#!/bin/sh
@@ -310,7 +360,7 @@ unset L
 
 [ -z "$V" ] && V={global_config.VITESS_MODULES_PATH}
 [ -z "$P" ] && P={project_path_for_script}
-[ -z "$L" ] && L={global_config.VITESS_LOG_PATH}
+[ -z "$L" ] && L={log_path_for_script}
 
 # Execute simulation pipeline (includes post-processing)
 {cli_command}
@@ -360,22 +410,16 @@ unset L
                     "message": f"Simulation execution failed: {e}"
                 })
             finally:
-                # Move script to $P (thread-specific project path) for reference
+                # Move script to $P (run folder when run_id set, else thread folder) for reference
                 try:
                     import shutil
-                    # Use thread_id from cli_result (may have been extracted from file paths)
-                    # thread_id is already available from earlier in the function
                     script_name = f"simulation_script_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sh"
-                    
-                    if thread_id:
-                        # Save to $P (thread-specific project path)
-                        project_dir = os.path.join(global_config.VITESS_PROJECT_PATH, thread_id)
+                    project_dir = project_path_for_script
+                    if project_dir:
                         os.makedirs(project_dir, exist_ok=True)
                         final_script_path = os.path.join(project_dir, script_name)
                     else:
-                        # Fallback to root project path
                         final_script_path = os.path.join(global_config.VITESS_PROJECT_PATH, script_name)
-                    
                     shutil.move(script_path, final_script_path)
                     result["saved_script_path"] = final_script_path
                 except Exception as e:
@@ -421,9 +465,7 @@ async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]
     
     try:
         from vitess_ai.core.config import global_config
-        from vitess_ai.server.file_storage import get_file_storage_service
-        
-        storage_service = get_file_storage_service()
+       
         root_path = Path(global_config.VITESS_PROJECT_PATH)
         thread_path = root_path / thread_id
         
@@ -465,26 +507,46 @@ async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]
                         "files": files
                     }
         
-        # Inspect outputs directory
+        # Inspect outputs directory (may contain run subfolders and/or direct files)
         outputs_path = thread_path / "outputs"
         if outputs_path.exists():
             folder_structure["outputs"]["path"] = str(outputs_path)
             folder_structure["outputs"]["exists"] = True
             folder_structure["outputs"]["files"] = []
-            
-            for file_path in outputs_path.iterdir():
-                if file_path.is_file():
-                    try:
-                        file_stat = file_path.stat()
+            folder_structure["outputs"]["run_folders"] = []
+
+            for item in outputs_path.iterdir():
+                try:
+                    if item.is_file():
+                        file_stat = item.stat()
                         folder_structure["outputs"]["files"].append({
-                            "filename": file_path.name,
+                            "filename": item.name,
                             "file_size": file_stat.st_size,
-                            "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+                            "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
                         })
-                    except OSError:
-                        pass
-            
+                    elif item.is_dir():
+                        run_files = []
+                        for f in item.iterdir():
+                            if f.is_file():
+                                try:
+                                    run_files.append({
+                                        "filename": f.name,
+                                        "file_size": f.stat().st_size,
+                                        "modified_at": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+                                    })
+                                except OSError:
+                                    pass
+                        folder_structure["outputs"]["run_folders"].append({
+                            "name": item.name,
+                            "path": str(item),
+                            "file_count": len(run_files),
+                            "files": run_files,
+                        })
+                except OSError:
+                    pass
+
             folder_structure["outputs"]["file_count"] = len(folder_structure["outputs"]["files"])
+            folder_structure["outputs"]["run_folder_count"] = len(folder_structure["outputs"]["run_folders"])
         
         return {
             "success": True,

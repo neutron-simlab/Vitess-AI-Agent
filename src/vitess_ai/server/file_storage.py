@@ -473,33 +473,44 @@ class FileStorageService:
     
     def delete_thread_outputs(self, thread_id: str) -> int:
         """
-        Delete all output files for a thread.
-        
+        Delete all output files and run folders for a thread.
+
         Args:
             thread_id: Thread ID
-            
+
         Returns:
             Number of output files deleted
         """
         output_path = self._get_output_path(thread_id)
         deleted_count = 0
-        
+
         if output_path.exists():
-            for file_path in output_path.iterdir():
-                if file_path.is_file():
-                    try:
-                        file_path.unlink()
+            for item in output_path.iterdir():
+                try:
+                    if item.is_file():
+                        item.unlink()
                         deleted_count += 1
-                    except Exception as e:
-                        logger.error(f"Error deleting output file {file_path}: {e}")
-            
-            # Remove empty output directory
+                    elif item.is_dir():
+                        # Run folder: delete all files inside, then the folder
+                        for f in item.iterdir():
+                            if f.is_file():
+                                try:
+                                    f.unlink()
+                                    deleted_count += 1
+                                except OSError as e:
+                                    logger.error(f"Error deleting output file {f}: {e}")
+                        try:
+                            item.rmdir()
+                        except OSError:
+                            pass
+                except OSError as e:
+                    logger.error(f"Error deleting output item {item}: {e}")
+
             try:
                 output_path.rmdir()
             except OSError:
-                # Directory not empty or doesn't exist
                 pass
-        
+
         logger.info(f"Deleted {deleted_count} output files for thread {thread_id}")
         return deleted_count
 

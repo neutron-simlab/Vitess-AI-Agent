@@ -18,11 +18,6 @@ from vitess_ai.agents.high_throughput.tools import (
     _resolve_thread_id,
     MODULE_CLI_CONVERTERS,
 )
-from vitess_ai.agents.simulator.tools import (
-    readin_params_to_cli,
-    guide_params_to_cli,
-    writeout_params_to_cli,
-)
 
 
 @pytest.fixture
@@ -322,6 +317,26 @@ class TestConvertSimulationToModuleResults:
         assert result["success"] is False
         assert any("unknown_module" in e for e in result["errors"])
 
+    def test_rejects_error_shaped_module_result(
+        self, sample_readin_params, sample_guide_params, sample_writeout_params
+    ):
+        """Test that validation error payloads are rejected (dict key checks, no regex)."""
+        simulation = {
+            "id": "sim_001",
+            "readin": sample_readin_params,
+            "guide": {"validation_status": False, "errors": "Weight length mismatch", "message": "Invalid"},
+            "writeout": sample_writeout_params,
+        }
+        execution_order = ["readin", "guide", "writeout"]
+
+        result = _convert_simulation_to_module_results(simulation, execution_order)
+
+        assert result["success"] is False
+        assert any("guide" in e and "invalid or failed validation" in e for e in result["errors"])
+        assert "readin" in result["module_results"]
+        assert "guide" not in result["module_results"]
+        assert "writeout" in result["module_results"]
+
 
 @pytest.mark.unit
 class TestResolveThreadId:
@@ -430,6 +445,35 @@ class TestAsyncTools:
         
         saved_data = json.loads(Path(result["file_path"]).read_text())
         assert len(saved_data["simulations"]) == 3
+
+    async def test_write_simulation_matrix_rejects_error_shaped(self, temp_dir, monkeypatch):
+        """Test write_simulation_matrix rejects simulations with error-shaped module data."""
+        from vitess_ai.agents.high_throughput.tools import write_simulation_matrix
+
+        monkeypatch.setenv("THREAD_ID", "test-thread")
+        monkeypatch.setattr(
+            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            str(temp_dir),
+        )
+
+        simulations = [
+            {
+                "id": "sim_001",
+                "readin": {"validation_status": False, "errors": "sInputFileName required"},
+                "guide": {"ShapeFileName": "guide.dat"},
+                "writeout": {"sOutFileName": "out.dat"},
+            },
+        ]
+        result = await write_simulation_matrix.ainvoke({
+            "simulations": simulations,
+            "varied_parameters": [],
+            "thread_id": "test-thread",
+        })
+
+        assert result["success"] is False
+        assert "invalid" in result["message"].lower() or "error" in result["message"].lower()
+        assert "sim_001" in result["message"] or "readin" in result["message"]
+        assert result.get("file_path") is None
 
     async def test_read_simulation_matrix(self, temp_dir, sample_simulation_matrix, monkeypatch):
         """Test read_simulation_matrix tool."""

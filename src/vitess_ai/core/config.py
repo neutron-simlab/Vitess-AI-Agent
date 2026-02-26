@@ -154,9 +154,10 @@ class Config:
     # FILE UPLOAD CONFIGURATION
     # =============================================================================
     
-    # Note: File storage structure is now organized by thread_id:
+    # Note: File storage structure is organized by thread_id:
     # - {VITESS_PROJECT_PATH}/{thread_id}/uploads/{module_type}/  - Input files
-    # - {VITESS_PROJECT_PATH}/{thread_id}/outputs/                 - Output files
+    # - {VITESS_PROJECT_PATH}/{thread_id}/outputs/                - Output root (simulation_matrix.json etc.)
+    # - {VITESS_PROJECT_PATH}/{thread_id}/outputs/{run_id}/      - One folder per run (simulation outputs)
     # UPLOAD_DIR is no longer used as files are organized under thread_id directories
     
     # Maximum file size in bytes (default: 100MB)

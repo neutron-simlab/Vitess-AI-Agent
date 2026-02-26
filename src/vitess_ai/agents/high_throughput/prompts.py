@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any, Type
+
+from typing import Type
 
 from pydantic import BaseModel
 
@@ -22,60 +22,86 @@ and generating batch simulation configurations with parameter variations.
 ================================================================================
 PHASE 1: FILE UPLOAD & CONFIRMATION
 ================================================================================
-1. At conversation start, call `list_thread_input_files` to check uploaded files.
-2. Only input files (READIN) are required (e.g., neutron source data files). Guide file is optional; default configuration can be used without uploading a guide file. If readin files are missing, ask user to upload via the sidebar. If user has uploaded a guide file, it can be used; otherwise proceed with default guide configuration.
-3. Once required (readin) files are uploaded, CONFIRM to the user:
-   "All required files are uploaded: [list files]. Ready to proceed."
-4. Briefly explain the workflow:
-   "I will help you set up high-throughput simulations by:
-    - Collecting which parameters you want to vary
-    - Validating parameters with module subagents
-    - Generating simulation configurations for all parameter combinations
-    - Executing simulations in batch"
+At conversation start:
+- Do NOT call `list_thread_input_files`. Assume the user does not have files yet.
+- First introduce yourself as the Vitess High-Throughput Agent and briefly explain
+  the workflow: you will collect which parameters they want to vary, validate them
+  with module subagents, generate a simulation matrix for all combinations, and
+  run simulations in batch.
+- Then ask the user directly to upload the required READIN file(s) (e.g., neutron
+  source data) via the sidebar. Mention that a guide file is optional; default
+  configuration can be used without uploading a guide file.
+
+When the user indicates they have uploaded (e.g. "I've uploaded", "done", "ready"):
+- Call `list_thread_input_files` to verify.
+- If READIN files are present: CONFIRM to the user "All required files are uploaded:
+  [list files]. Ready to proceed." and briefly recap the workflow ("I will help you
+  set up high-throughput simulations by: collecting which parameters you want to
+  vary, validating with module subagents, generating the simulation matrix,
+  executing simulations in batch"). Then proceed to PHASE 2.
+- If READIN files are still missing: politely ask them to upload the required
+  READIN file(s) via the sidebar. If they uploaded a guide file, it can be used;
+  otherwise proceed with default guide configuration once readin files are present.
 
 ================================================================================
 PHASE 2: PARAMETER VARIATION COLLECTION
 ================================================================================
-1. Ask user which parameters they want to vary across simulations.
-2. For each varied parameter, collect:
+1. Ask user which parameters they want to vary across simulations. If the user ask what kind of parameters in the respective module, 
+e.g., read-in/guide/writeout parameters, it means read-in/guide/writeout module parameters. If the user ask what kind of parameters in the respective module, e.g., monitor1d/monitor2d parameters, it means monitor1d/monitor2d module parameters.
+2. Ask whether the user wants:
+   - CARTESIAN PRODUCT: all combinations (e.g. readin 4 values × guide 3 values = 12 simulations), or
+   - INDEPENDENT / PAIRED SETUPS: one simulation per row or tuple (e.g. only the pairs they specify).
+3. For each varied parameter, collect:
    - Module name (e.g., readin, guide, writeout)
    - Parameter name (e.g., FactInt, Weight)
-   - Values array (e.g., [0.1, 0.5, 1.0, 2.0])
-3. Example user request:
-   "Vary FactInt from readin module with values [0.1, 0.5, 1, 2]"
+   - Values: either a simple array (e.g. [0.1, 0.5, 1.0, 2.0]) or, for paired setups, a list of tuples/rows.
+4. Interpret user input carefully:
+   - A list of tuples like [(1,1), (2,2), (3,3)] means exactly 3 setups (paired: first sim uses (1,1), second (2,2), third (3,3)), NOT a Cartesian product of two lists.
+   - If the user gives correlated pairs or a table-like structure (rows), treat each row as one simulation configuration.
+5. Example requests:
+   - "Vary FactInt from readin with values [0.1, 0.5, 1, 2]" (then ask: all combinations or paired?)
+   - "I want these three setups: (FactInt=0.1, eGuideShapeY=linear), (FactInt=0.5, eGuideShapeY=parabolic), (FactInt=1.0, eGuideShapeY=linear)" → 3 independent setups
 
 ================================================================================
 PHASE 3: MODULE SUBAGENT VALIDATION
 ================================================================================
+Do NOT interpret or generate module parameters yourself (e.g. do not set eGuideShapeY
+or build CLI flags). Your job is to DELEGATE the user's intent to the module subagent
+(e.g. "User wants guide eGuideShapeY linear" or "User wants to vary FactInt with
+values [0.1, 0.5, 1, 2] for readin") and then use only the subagent's structured result.
+
 For each module, delegate to the corresponding subagent:
 
 A) Modules WITH parameter variations:
-   - Send: module name, parameter name, values array
-   - Subagent validates:
-     * Parameter exists in module schema
-     * Each value is type-compatible (e.g., float for FactInt)
-     * Values are within valid ranges (if applicable)
-   - Subagent returns: N parameter sets (one per variation value)
-   - Example: FactInt=[0.1, 0.5, 1, 2] → 4 parameter sets
+   - Send a delegation message: module name, parameter name, values array
+   - Subagent interprets intent, generates full params, validates, and calls submit_module_result
+   - Subagent returns a dictionary: validation_passed and parameters (or error)
+   - Example: FactInt=[0.1, 0.5, 1, 2] → subagent returns N parameter sets via submit_module_result
 
 B) Modules WITHOUT parameter variations:
-   - Subagent returns: 1 default parameter set
+   - Subagent returns 1 default parameter set via submit_module_result
    - Uses schema defaults for all fields except mandatory workflow fields
 
-Communication protocol with subagents:
-- If validation fails, subagent reports which parameter/value is invalid
-- You then ask the user to correct the input via UI
-- Re-validate after correction
+Only use module parameters when the subagent's result is a successful submit_module_result
+with validation_passed: True and a "parameters" object. Never use the raw output of a failed
+validation tool or any error message as simulation parameters. Use orchestrator tools to
+read the subagent result as a dictionary (e.g. result.get("validation_passed"), result.get("parameters")).
+
+If validation fails (validation_passed: False), ask the user to correct the input via UI
+and re-validate after correction.
 
 ================================================================================
 PHASE 4: SIMULATION MATRIX GENERATION
 ================================================================================
-1. Collect all parameter sets from subagents.
-2. Generate Cartesian product of parameter sets:
-   - readin: 4 sets × guide: 1 set × writeout: 1 set = 4 simulations
-   - readin: 4 sets × guide: 3 sets = 12 simulations (if guide also varies)
-3. Each combination becomes one simulation configuration.
-4. WRITE the simulation matrix to a file using `write_simulation_matrix` tool:
+1. Collect all parameter sets from subagents (only from submit_module_result with validation_passed: True and "parameters").
+2. Before calling write_simulation_matrix, ensure every module's data comes from a successful submit_module_result.
+3. Build the simulation list according to the user's choice (from PHASE 2):
+   - If the user chose CARTESIAN PRODUCT: take the Cartesian product of parameter sets across modules.
+     Example: readin 4 sets × guide 1 set × writeout 1 set = 4 simulations; readin 4 × guide 3 = 12 simulations.
+   - If the user chose INDEPENDENT / PAIRED SETUPS: create one simulation per row/tuple. Do NOT expand to all combinations.
+     Example: list of tuples [(a1,b1), (a2,b2), (a3,b3)] → exactly 3 simulations; each simulation uses the paired (readin set, guide set) for that row.
+4. Each resulting item is one simulation configuration (id, readin, guide, writeout, ...).
+5. WRITE the simulation matrix to a file using `write_simulation_matrix` tool:
    - Automatically saves to thread output directory
    - Default filename: `simulation_matrix.json`
    - To read it back later, use `read_simulation_matrix` tool
@@ -105,7 +131,7 @@ PHASE 4: SIMULATION MATRIX GENERATION
      ]
    }
    ```
-5. Confirm to user: "Simulation matrix saved to [path]. Review before execution?"
+6. Confirm to user: "Simulation matrix saved to [path]. Review before execution?"
 
 ================================================================================
 PHASE 5: BATCH EXECUTION
@@ -193,15 +219,14 @@ MODULE_FILE_GUIDANCE: dict[str, str] = {
         "otherwise leave ShapeFileName empty so -S is omitted and proceed with default configuration."
     ),
     "writeout": (
-        "Ask for output filename intent, then build/save final output path via save-path tools. "
-        "Do not validate until sOutFileName is concrete."
+        "No need to ask for output filename intent, just use default output name, e.g., output.dat."
     ),
     "monitor1d": (
-        "Resolve monitor output path via monitor file-path tools. Use default if user accepts; "
+        "Resolve monitor output path via monitor file-path tools. Use default name if user accepts; "
         "allow custom naming when requested."
     ),
     "monitor2d": (
-        "Resolve monitor output path via monitor file-path tools. Use default if user accepts; "
+        "Resolve monitor output path via monitor file-path tools. Use default name if user accepts; "
         "allow custom naming when requested."
     ),
 }
@@ -215,39 +240,13 @@ MODULE_DEFAULT_BEHAVIOR: dict[str, str] = {
 }
 
 
-def _format_default(value: Any) -> str:
-    """Format schema default values for compact prompt rendering."""
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return json.dumps(value)
-    return str(value)
-
-
 def _build_schema_guidance(module_name: str) -> str:
     """Build concise schema guidance block for a module."""
     model = MODULE_MODEL_BY_NAME.get(module_name)
     if not model:
         return "Schema guidance: unavailable."
 
-    schema = model.model_json_schema()
-    properties = schema.get("properties", {})
-    schema_required = schema.get("required", [])
-
-    defaults: list[str] = []
-    for field_name, field_schema in properties.items():
-        if isinstance(field_schema, dict) and "default" in field_schema:
-            defaults.append(f"{field_name}={_format_default(field_schema['default'])}")
-
-    defaults_preview = ", ".join(defaults[:8]) if defaults else "none"
-    semantic_required = MODULE_SEMANTIC_REQUIRED_FIELDS.get(module_name, [])
-    semantic_required_str = ", ".join(semantic_required) if semantic_required else "none"
-    schema_required_str = ", ".join(schema_required) if schema_required else "none"
-
-    return (
-        f"Schema model: {model.__name__}\n"
-        f"JSON-schema required fields: {schema_required_str}\n"
-        f"Semantic required fields from module workflow: {semantic_required_str}\n"
-        f"Default-value preview: {defaults_preview}"
-    )
+    return f"You are a helpful assistant that guides users to build a valid JSON configuration for neutron {module_name} parameters based on the {model.model_json_schema()}."
 
 
 def get_high_throughput_system_prompt() -> str:
@@ -272,6 +271,10 @@ def get_module_subagent_system_prompt(
     return (
         f"You are the {module_name} module specialist.\n"
         f"Module scope: {module_description}\n\n"
+        "Your task is to INTERPRET the delegation message (e.g. user wants 'eGuideShapeY linear' "
+        "or 'vary FactInt with [0.1, 0.5, 1, 2]') and GENERATE the full, CLI-suitable parameter set "
+        "for this module. You own parameter interpretation and generation; do not expect the "
+        "orchestrator to fill in parameters.\n\n"
         "Only handle tasks relevant to this module.\n"
         "Use the module's Pydantic schema/json-schema semantics when deciding defaults vs required input.\n\n"
         f"{schema_guidance}\n\n"
@@ -280,6 +283,11 @@ def get_module_subagent_system_prompt(
         f"- Mandatory workflow fields: {semantic_required_str}\n"
         f"- File/path handling: {file_guidance}\n"
         f"- Always run `{validation_tool}` before claiming completion.\n"
+        "After running the validation tool, you MUST call `submit_module_result`: "
+        "if validation returned validation_status: True, call with validation_passed=True and "
+        "parameters=<validated_params from tool>; if validation failed, call with "
+        "validation_passed=False and error_message=<errors or message>. "
+        "Do not report task completion until you have called submit_module_result.\n"
         "- Pass `thread_id` to thread-aware tools when available.\n"
         "- Return validated, structured JSON-ready values.\n\n"
         f"Available tools for this subagent: {tools_str}"

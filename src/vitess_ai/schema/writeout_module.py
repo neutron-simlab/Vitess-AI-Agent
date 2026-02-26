@@ -146,7 +146,7 @@ class WriteoutParameters(BaseModel):
     
     # Output file configuration
     sOutFileName: Annotated[Optional[str], Field(
-        default=None,
+        default="output.dat",
         description="-A [-] Output file name",
         json_schema_extra={"flag": "-A"}
     )]

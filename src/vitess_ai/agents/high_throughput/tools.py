@@ -44,28 +44,32 @@ def _convert_simulation_to_module_results(
 ) -> dict[str, Any]:
     """
     Convert a simulation config (JSON parameters) to module_results with cli_parameters.
-    
-    Args:
-        simulation: Dict with module names as keys and JSON parameters as values.
-        execution_order: List of module names in execution order.
-    
-    Returns:
-        Dict with module_results containing cli_parameters for each module.
+
+    Output filenames (e.g. writeout sOutFileName) can stay as bare names; P is set to
+    thread_id/outputs/run_id in the script so binaries resolve them under the run folder.
     """
     module_results = {}
     errors = []
-    
+
     for module_name in execution_order:
         params = simulation.get(module_name)
         if not params:
             errors.append(f"Missing parameters for module: {module_name}")
             continue
-        
+
+        if isinstance(params, dict) and (
+            params.get("validation_status") is False or "errors" in params
+        ):
+            errors.append(
+                f"Module {module_name}: invalid or failed validation result, do not use as parameters"
+            )
+            continue
+
         converter = MODULE_CLI_CONVERTERS.get(module_name)
         if not converter:
             errors.append(f"No CLI converter for module: {module_name}")
             continue
-        
+
         try:
             cli_string = converter(params)
             module_results[module_name] = {
@@ -75,11 +79,71 @@ def _convert_simulation_to_module_results(
             }
         except Exception as exc:
             errors.append(f"Failed to convert {module_name} params to CLI: {exc}")
-    
+
     return {
         "module_results": module_results,
         "errors": errors,
         "success": len(errors) == 0,
+    }
+
+
+# ============================================================================
+# MODULE SUBAGENT RESULT (structured contract for orchestrator)
+# ============================================================================
+
+def _is_error_shaped_dict(value: Any) -> bool:
+    """True if value looks like a validation error payload (dict key checks only, no regex)."""
+    if not isinstance(value, dict):
+        return False
+    return "validation_status" in value or "errors" in value
+
+
+@tool
+def submit_module_result(
+    module_name: str,
+    validation_passed: bool,
+    parameters: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    """
+    Report the module result to the orchestrator. Call this after running the module's
+    validate_* tool. Return value is always a dictionary the orchestrator can read by key.
+
+    Args:
+        module_name: Module name (e.g. readin, guide, writeout).
+        validation_passed: True if validation succeeded and parameters are ready for CLI.
+        parameters: Validated parameter dict (required when validation_passed is True).
+        error_message: Error description (required when validation_passed is False).
+
+    Returns:
+        Dict with keys: accepted, module, validation_passed, and either parameters or error.
+    """
+    if validation_passed:
+        if not parameters or not isinstance(parameters, dict):
+            return {
+                "accepted": False,
+                "module": module_name,
+                "validation_passed": False,
+                "error": "parameters must be a non-empty dict when validation_passed is True",
+            }
+        return {
+            "accepted": True,
+            "module": module_name,
+            "validation_passed": True,
+            "parameters": parameters,
+        }
+    if not error_message:
+        return {
+            "accepted": False,
+            "module": module_name,
+            "validation_passed": False,
+            "error": "error_message is required when validation_passed is False",
+        }
+    return {
+        "accepted": True,
+        "module": module_name,
+        "validation_passed": False,
+        "error": error_message,
     }
 
 
@@ -154,6 +218,22 @@ async def write_simulation_matrix(
     resolved_thread_id = _resolve_thread_id(thread_id)
     if not resolved_thread_id:
         return {"success": False, "message": "No thread_id available.", "file_path": None}
+
+    invalid = []
+    for i, sim in enumerate(simulations):
+        sim_id = sim.get("id", f"sim_{i + 1:03d}")
+        for module_name, value in sim.items():
+            if module_name == "id":
+                continue
+            if _is_error_shaped_dict(value):
+                invalid.append(f"{sim_id}/{module_name}")
+    if invalid:
+        return {
+            "success": False,
+            "thread_id": resolved_thread_id,
+            "file_path": None,
+            "message": f"Simulation matrix contains invalid or error-shaped module data; do not use validation errors as parameters. Invalid entries: {', '.join(invalid)}",
+        }
 
     output_dir = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -404,6 +484,7 @@ async def run_batch_from_matrix(
                 execution_order=exec_order,
                 execute=execute,
                 thread_id=resolved_thread_id,
+                run_id=run_name,
             )
 
             run_result = {

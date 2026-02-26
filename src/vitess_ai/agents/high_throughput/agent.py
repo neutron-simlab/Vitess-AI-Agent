@@ -23,6 +23,7 @@ from vitess_ai.agents.high_throughput.prompts import (
 from vitess_ai.agents.high_throughput.tools import (
     get_shared_high_throughput_tools,
     get_sim_runner_tools,
+    submit_module_result,
 )
 
 
@@ -73,7 +74,7 @@ class HighThroughputAgent:
             module = module_by_name.get(module_name)
             if not module or not module.tool_factory:
                 continue
-            module_tools = module.tool_factory()
+            module_tools = list(module.tool_factory()) + [submit_module_result]
             subagents.append(
                 {
                     "name": f"{module_name}-module",
@@ -81,7 +82,7 @@ class HighThroughputAgent:
                     "system_prompt": get_module_subagent_system_prompt(
                         module_name=module_name,
                         module_description=module.description,
-                        tool_names=[tool.name for tool in module_tools],
+                        tool_names=[t.name for t in module_tools],
                     ),
                     "tools": module_tools,
                 }
