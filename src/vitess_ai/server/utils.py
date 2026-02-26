@@ -20,7 +20,6 @@ def set_thread_id_env(thread_id: str) -> None:
         thread_id: Thread ID to set in environment variables
     """
     os.environ["THREAD_ID"] = thread_id
-    os.environ["VITESS_THREAD_ID"] = thread_id
 
 
 def set_request_thread_id_env(thread_id: str | None) -> None:
@@ -34,10 +33,8 @@ def set_request_thread_id_env(thread_id: str | None) -> None:
     """
     if thread_id:
         os.environ["THREAD_ID"] = thread_id
-        os.environ["VITESS_THREAD_ID"] = thread_id
     else:
         os.environ.pop("THREAD_ID", None)
-        os.environ.pop("VITESS_THREAD_ID", None)
 
 
 def convert_message_content_to_string(content: str | list[str | dict]) -> str:

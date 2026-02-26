@@ -408,7 +408,7 @@ class ThreadIdMiddleware(AgentMiddleware):
             
             # 3. Fallback to environment variables
             if not thread_id:
-                thread_id = os.environ.get('THREAD_ID') or os.environ.get('VITESS_THREAD_ID')
+                thread_id = os.environ.get('THREAD_ID')
                 if thread_id:
                     self.logger.debug(f"[THREAD_ID] Found thread_id in environment: {thread_id}")
         

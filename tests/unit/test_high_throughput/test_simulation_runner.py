@@ -353,17 +353,9 @@ class TestResolveThreadId:
         result = _resolve_thread_id(None)
         assert result == "env-thread-456"
 
-    def test_returns_vitess_thread_id(self, monkeypatch):
-        """Test fallback to VITESS_THREAD_ID env var."""
-        monkeypatch.delenv("THREAD_ID", raising=False)
-        monkeypatch.setenv("VITESS_THREAD_ID", "vitess-thread-789")
-        result = _resolve_thread_id(None)
-        assert result == "vitess-thread-789"
-
     def test_returns_none_when_no_thread_id(self, monkeypatch):
         """Test returns None when no thread_id available."""
         monkeypatch.delenv("THREAD_ID", raising=False)
-        monkeypatch.delenv("VITESS_THREAD_ID", raising=False)
         result = _resolve_thread_id(None)
         assert result is None
 

@@ -22,7 +22,7 @@ from vitess_ai.agents.simulator.tools.monitor import monitor1d_params_to_cli, mo
 
 def _resolve_thread_id(thread_id: str | None = None) -> str | None:
     """Resolve thread id from arg or environment."""
-    return thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    return thread_id or os.environ.get("THREAD_ID")
 
 
 # ============================================================================

@@ -85,26 +85,23 @@ CRITICAL: POST-VALIDATION BEHAVIOR
 
 🛠️ AVAILABLE TOOLS:
 ['{{name:"validate_readin_module", description:"Validate read-in module configuration parameters"}}']
-['{{name:"upload_file", description:"Set input files using file paths (files should be uploaded via Streamlit UI first)"}}']
-['{{name:"get_files", description:"Get current selected files for sInputFileName parameter"}}']
-['{{name:"file_status", description:"Show current file selection status. IMPORTANT: Always pass the thread_id parameter when calling this tool. The thread_id is available in the conversation state."}}']
-['{{name:"clear_files", description:"Clear current file selection"}}']
+['{{name:"get_files", description:"Get files from uploads/readin for sInputFileName. Pass thread_id."}}']
+['{{name:"file_status", description:"List files in uploads/readin. Pass thread_id."}}']
 
 **CRITICAL: THREAD_ID REQUIREMENT**
-When calling tools that require file access (such as file_status, get_files, etc.), you MUST pass the thread_id parameter.
+When calling tools that require file access (file_status, get_files), you MUST pass the thread_id parameter.
 The thread_id is available from the conversation state. You will receive a CONTEXT message with the current thread_id before each tool call.
 Always use the thread_id from the CONTEXT message when calling tools.
 
 **IMPORTANT FILE HANDLING INSTRUCTIONS:**
-- **Files must be uploaded via Streamlit UI first**: Users should use the File Upload section in the sidebar to upload files before you can use them
+- **Files are uploaded via Streamlit UI only**: Users use the File Upload section in the sidebar to upload files; they are stored in {{project}}/{{thread_id}}/uploads/readin.
 - **When user needs to specify input files (sInputFileName)**:
-  1. First check if files are already uploaded using file_status() tool
-  2. If no files uploaded, direct user: "Please use the File Upload section in the sidebar to upload your input files. Upload up to 3 files."
-  3. After user confirms upload, use get_files() tool to retrieve the file paths
-  4. Use upload_file() tool with the file paths to set them in the system
-  5. Extract sInputFileName from tool result (use result.sInputFileName if present; otherwise use result.files)
-- **NEVER ask users to type file paths manually** - always direct them to use the Streamlit UI
-- **NEVER pass an empty sInputFileName to validation**; collect weights so Weight length matches file count before calling validate_readin_module
+  1. Check if files are in uploads using file_status(thread_id).
+  2. If no files, direct user: "Please use the File Upload section in the sidebar to upload your input files. Upload up to 3 files."
+  3. After user confirms upload, use get_files(thread_id) to retrieve the file paths.
+  4. Extract sInputFileName from the tool result (result.sInputFileName or result.files) and pass to validate_readin_module (you can also pass thread_id so validation can use uploads if needed).
+- **NEVER ask users to type file paths manually** - always direct them to use the Streamlit UI.
+- **NEVER pass an empty sInputFileName to validation**; collect weights so Weight length matches file count before calling validate_readin_module.
 
 Always validate the final JSON before presenting it to the user!
 """
@@ -201,36 +198,29 @@ CRITICAL: POST-VALIDATION BEHAVIOR
 
 🛠️ AVAILABLE TOOLS:
 ['{{name:"validate_readin_module", description:"Validate read-in module configuration parameters"}}']
-['{{name:"upload_file", description:"Set input files using file paths (files should be uploaded via Streamlit UI first)"}}']
-['{{name:"upload_instrument_file", description:"Set instrument file using file path (file should be uploaded via Streamlit UI first)"}}']
-['{{name:"get_files", description:"Get current selected files for sInputFileName parameter"}}']
+['{{name:"get_files", description:"Get files from uploads/readin for sInputFileName. Pass thread_id."}}']
 ['{{name:"get_instrument_file", description:"Get current selected instrument file for sInstrInfIn parameter"}}']
-['{{name:"file_status", description:"Show current file selection status. IMPORTANT: Always pass the thread_id parameter when calling this tool. The thread_id is available in the conversation state."}}']
+['{{name:"file_status", description:"List files in uploads/readin. Pass thread_id."}}']
 ['{{name:"instrument_file_status", description:"Show current instrument file status"}}']
-['{{name:"clear_files", description:"Clear current file selection"}}']
-['{{name:"clear_instrument_file", description:"Clear current instrument file selection"}}']
 
 **CRITICAL: THREAD_ID REQUIREMENT**
-When calling tools that require file access (such as file_status, get_files, etc.), you MUST pass the thread_id parameter.
+When calling tools that require file access (file_status, get_files), you MUST pass the thread_id parameter.
 The thread_id is available from the conversation state. You will receive a CONTEXT message with the current thread_id before each tool call.
 Always use the thread_id from the CONTEXT message when calling tools.
 
 **IMPORTANT FILE HANDLING INSTRUCTIONS:**
-- **Files must be uploaded via Streamlit UI first**: Users should use the File Upload section in the sidebar to upload files before you can use them
+- **Files are uploaded via Streamlit UI only**: Users use the File Upload section in the sidebar; files are stored in {{project}}/{{thread_id}}/uploads/readin (and instrument in uploads/instrument).
 - **When user needs to specify input files (sInputFileName)**:
-  1. First check if files are already uploaded using file_status() tool
-  2. If no files uploaded, direct user: "Please use the File Upload section in the sidebar to upload your input files. Upload up to 3 files."
-  3. After user confirms upload, use get_files() tool to retrieve the file paths
-  4. Use upload_file() tool with the file paths to set them in the system
-  5. Extract sInputFileName from tool result (use result.sInputFileName if present; otherwise use result.files)
+  1. Check if files are in uploads using file_status(thread_id).
+  2. If no files, direct user: "Please use the File Upload section in the sidebar to upload your input files. Upload up to 3 files."
+  3. After user confirms upload, use get_files(thread_id) to retrieve the file paths.
+  4. Extract sInputFileName from the tool result (result.sInputFileName or result.files) and pass to validate_readin_module (you can also pass thread_id).
 - **When user needs to specify instrument file (sInstrInfIn)**:
-  1. First check if instrument file is already uploaded using instrument_file_status() tool
+  1. Check if instrument file is uploaded using instrument_file_status(thread_id).
   2. If not uploaded, direct user: "Please use the File Upload section in the sidebar to upload your instrument file. Upload your .inf file."
-  3. After user confirms upload, use get_instrument_file() to retrieve the file path
-  4. Use upload_instrument_file() tool with the file path to set it in the system
-  5. Extract sInstrInfIn from tool result
-- **NEVER ask users to type file paths manually** - always direct them to use the Streamlit UI
-- **NEVER pass an empty sInputFileName to validation**; collect weights so Weight length matches file count before calling validate_readin_module
+  3. After user confirms upload, use get_instrument_file(thread_id) to retrieve the file path and set sInstrInfIn in the JSON.
+- **NEVER ask users to type file paths manually** - always direct them to use the Streamlit UI.
+- **NEVER pass an empty sInputFileName to validation**; collect weights so Weight length matches file count before calling validate_readin_module.
 
 Always validate the final JSON before presenting it to the user!
 """

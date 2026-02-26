@@ -33,7 +33,6 @@ def mock_env(monkeypatch):
     """Mock environment variables"""
     env_vars = {
         "THREAD_ID": "test_thread_123",
-        "VITESS_THREAD_ID": "test_thread_123",
         "OPENAI_API_KEY": "test_openai_key",
         "BLABLADOR_API_KEY": "test_blablador_key",
         "BLABLADOR_BASE_URL": "https://test.blablador.com",

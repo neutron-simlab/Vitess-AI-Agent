@@ -24,7 +24,7 @@ def _try_load_save_path_from_storage(thread_id: str | None = None) -> bool:
     if not _thread_id and thread_id:
         _thread_id = thread_id
     if not _thread_id:
-        _thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        _thread_id = os.environ.get("THREAD_ID")
     if not _thread_id:
         return False
     try:
@@ -162,7 +162,7 @@ async def save_path_status(thread_id: str | None = None) -> dict:
         await asyncio.to_thread(_try_load_save_path_from_storage, thread_id)
     if not _current_save_path:
         from vitess_ai.core.config import global_config
-        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
         if resolved_thread_id:
             _thread_id = resolved_thread_id
             default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
@@ -226,7 +226,7 @@ async def get_save_path(thread_id: str | None = None) -> dict | str:
         await asyncio.to_thread(_try_load_save_path_from_storage, thread_id)
     if not _current_save_path:
         from vitess_ai.core.config import global_config
-        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
         if resolved_thread_id:
             _thread_id = resolved_thread_id
             default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"

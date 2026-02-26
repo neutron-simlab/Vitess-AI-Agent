@@ -15,30 +15,21 @@ from typing import Any, Union
 from langchain.tools import tool
 from vitess_ai.schema.guide_module import GuideParameters
 from vitess_ai.schema.base import get_field_flag
+from vitess_ai.core.log import get_logger
 
-# Module-level state (same session semantics as before)
-_current_files: list[str] = []
-_thread_id: str | None = None
+logger = get_logger(__name__)
 
 
-def _try_load_files_from_storage(thread_id: str | None = None) -> bool:
-    global _current_files, _thread_id
-    if not _thread_id and thread_id:
-        _thread_id = thread_id
-    if not _thread_id:
-        _thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
-    if not _thread_id:
-        return False
+def _list_guide_file_for_thread(thread_id: str) -> str | None:
+    """Return the first file path in {project}/{thread_id}/uploads/guide, or None."""
     try:
         from vitess_ai.server.file_storage import get_file_storage_service
-        storage_service = get_file_storage_service()
-        file_paths = storage_service.get_file_paths_for_module(_thread_id, "guide")
-        if file_paths and len(file_paths) > 0:
-            _current_files = [file_paths[0]]
-            return True
-    except Exception:
-        pass
-    return False
+        storage = get_file_storage_service()
+        paths = storage.get_file_paths_for_module(thread_id, "guide")
+        return paths[0] if paths else None
+    except Exception as e:
+        logger.error(f"Failed to list guide file for thread {thread_id}: {e}", exc_info=True)
+        return None
 
 
 def guide_params_to_cli(params: dict) -> str:
@@ -95,120 +86,45 @@ async def validate_guide_parameters(parameters: Union[str, dict[str, Any]]) -> d
 
 
 @tool
-async def upload_file(file_path: str | None = None, thread_id: str | None = None) -> dict:
-    """Upload a file for neutron simulation guide input. Replaces any previously selected file. Pass file_path or thread_id to load from storage."""
-    global _current_files, _thread_id
-    if not file_path and not _current_files:
-        if thread_id:
-            _thread_id = thread_id
-        # Run blocking file-storage I/O in a thread to avoid blocking the event loop
-        await asyncio.to_thread(_try_load_files_from_storage, thread_id)
-        if _current_files:
-            file_path = _current_files[0]
-    try:
-        if not file_path:
-            return {
-                "success": False,
-                "message": "No file path provided.",
-                "files": [],
-                "file_count": 0,
-                "existing_files": [],
-                "missing_files": [],
-            }
-        _current_files = [file_path]
-        if os.path.exists(file_path):
-            file_name = os.path.basename(file_path)
-            file_size = os.path.getsize(file_path)
-            return {
-                "success": True,
-                "message": f"Successfully selected guide file: {file_name} ({file_size:,} bytes). File ready for simulation.",
-                "files": [file_path],
-                "file_count": 1,
-                "existing_files": [file_path],
-                "missing_files": [],
-                "file_details": [{"path": file_path, "name": file_name, "size": file_size, "exists": True}],
-            }
-        return {
-            "success": False,
-            "message": f"Selected file does not exist: {file_path}",
-            "files": [file_path],
-            "file_count": 1,
-            "existing_files": [],
-            "missing_files": [file_path],
-            "file_details": [{"path": file_path, "name": os.path.basename(file_path), "size": 0, "exists": False}],
-            "error": "File does not exist",
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"Error uploading file: {str(e)}",
-            "files": [],
-            "file_count": 0,
-            "existing_files": [],
-            "missing_files": [],
-            "file_details": [],
-            "error": str(e),
-        }
-
-
-@tool
 async def file_status(thread_id: str | None = None) -> dict:
-    """Show current guide file selection status. Optionally pass thread_id to check file storage."""
-    global _current_files, _thread_id
-    if not _current_files:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_files_from_storage, thread_id)
-    if not _current_files:
+    """List file in {project}/{thread_id}/uploads/guide. Pass thread_id to check that folder."""
+    if not thread_id:
         return {
             "has_file": False,
-            "message": "No guide file selected. Use upload_file() first to select a file.",
+            "message": "No thread_id provided.",
             "files": [],
             "file_count": 0,
-            "existing_files": [],
-            "missing_files": [],
         }
-    file_path = _current_files[0]
-    file_name = os.path.basename(file_path)
-    if os.path.exists(file_path):
-        file_size = os.path.getsize(file_path)
+    file_path = await asyncio.to_thread(_list_guide_file_for_thread, thread_id)
+    if not file_path:
         return {
-            "has_file": True,
-            "message": f"Current guide file: {file_name} ({file_size:,} bytes)",
-            "files": _current_files,
-            "file_count": 1,
-            "existing_files": _current_files,
-            "missing_files": [],
-            "file_details": [{"path": file_path, "name": file_name, "size": file_size, "exists": True}],
+            "has_file": False,
+            "message": f"No file in {thread_id}/uploads/guide.",
+            "files": [],
+            "file_count": 0,
         }
     return {
         "has_file": True,
-        "message": f"Selected guide file not found: {file_name}",
-        "files": _current_files,
+        "message": f"1 file in {thread_id}/uploads/guide.",
+        "file": file_path,
+        "files": [file_path],
         "file_count": 1,
-        "existing_files": [],
-        "missing_files": _current_files,
-        "file_details": [{"path": file_path, "name": file_name, "size": 0, "exists": False}],
-        "error": "File not found",
     }
 
 
 @tool
 async def get_file(thread_id: str | None = None) -> dict[str, Any] | str:
-    """Get the current selected guide file. Optionally pass thread_id to load from storage."""
-    global _current_files, _thread_id
-    if not _current_files:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_files_from_storage, thread_id)
-    if not _current_files:
-        return "No guide file selected. Use upload_file() first to select a file."
-    file_path = _current_files[0]
+    """Get the guide file from {project}/{thread_id}/uploads/guide. Pass thread_id."""
+    if not thread_id:
+        return "No thread_id provided. Pass thread_id to get the guide file from uploads/guide."
+    file_path = await asyncio.to_thread(_list_guide_file_for_thread, thread_id)
+    if not file_path:
+        return "No guide file in uploads/guide. Use the Streamlit UI to upload a guide file."
     return {
         "file": file_path,
         "file_name": os.path.basename(file_path),
         "file_count": 1,
-        "files": _current_files,
+        "files": [file_path],
         "exists": os.path.exists(file_path),
     }
 
@@ -217,7 +133,6 @@ def get_guide_tools():
     """Return list of LangChain tools for the guide module."""
     return [
         validate_guide_parameters,
-        upload_file,
         file_status,
         get_file,
     ]

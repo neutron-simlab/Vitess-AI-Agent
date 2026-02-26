@@ -120,7 +120,7 @@ class SupervisorAgent:
                         "env": env  # Pass environment variables to subprocess
                     }
                 })
-                self.logger.debug(f"Simulation MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}, VITESS_THREAD_ID={env.get('VITESS_THREAD_ID', 'not set')}")
+                self.logger.debug(f"Simulation MCP client created with environment variables: THREAD_ID={env.get('THREAD_ID', 'not set')}")
             
             self.simulation_tools = await client.get_tools()
             self.logger.info(f"Loaded {len(self.simulation_tools)} simulation tools")
@@ -715,7 +715,6 @@ Configuration is complete. The simulation parameters are ready for execution.
         if thread_id:
             import os
             os.environ["THREAD_ID"] = thread_id
-            os.environ["VITESS_THREAD_ID"] = thread_id
         
         # Get execution_order from registry if not set
         if not execution_order:

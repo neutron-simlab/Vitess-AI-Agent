@@ -27,7 +27,7 @@ def _try_load_monitor1d_path_from_storage(thread_id: str | None = None) -> bool:
     if not _thread_id and thread_id:
         _thread_id = thread_id
     if not _thread_id:
-        _thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        _thread_id = os.environ.get("THREAD_ID")
     if not _thread_id:
         return False
     try:
@@ -59,7 +59,7 @@ def _try_load_monitor2d_path_from_storage(thread_id: str | None = None) -> bool:
     if not _thread_id and thread_id:
         _thread_id = thread_id
     if not _thread_id:
-        _thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        _thread_id = os.environ.get("THREAD_ID")
     if not _thread_id:
         return False
     try:
@@ -163,7 +163,7 @@ async def validate_monitor1d_module(parameters: Union[str, dict[str, Any]]) -> d
             parsed_parameters = parameters
         else:
             return {"validation_status": False, "errors": f"Expected JSON string or dict, got {type(parameters)}", "message": f"Monitor1D validation failed: Invalid parameter type {type(parameters)}"}
-        resolved_thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        resolved_thread_id = os.environ.get("THREAD_ID")
         _default_monitor1d_path(parsed_parameters, resolved_thread_id)
         validated = Monitor1DParameters(**parsed_parameters)
         cli = monitor1d_params_to_cli(validated.model_dump())
@@ -185,7 +185,7 @@ async def validate_monitor2d_module(parameters: Union[str, dict[str, Any]]) -> d
             parsed_parameters = parameters
         else:
             return {"validation_status": False, "errors": f"Expected JSON string or dict, got {type(parameters)}", "message": f"Monitor2D validation failed: Invalid parameter type {type(parameters)}"}
-        resolved_thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        resolved_thread_id = os.environ.get("THREAD_ID")
         _default_monitor2d_path(parsed_parameters, resolved_thread_id)
         validated = Monitor2DParameters(**parsed_parameters)
         cli = monitor2d_params_to_cli(validated.model_dump())
@@ -204,7 +204,7 @@ async def set_monitor1d_file_path(file_path: str | None = None, thread_id: str |
         await asyncio.to_thread(_try_load_monitor1d_path_from_storage, thread_id)
         if _monitor1d_file_path:
             file_path = _monitor1d_file_path
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not file_path:
@@ -235,7 +235,7 @@ async def set_monitor2d_file_path(file_path: str | None = None, thread_id: str |
         await asyncio.to_thread(_try_load_monitor2d_path_from_storage, thread_id)
         if _monitor2d_file_path:
             file_path = _monitor2d_file_path
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not file_path:
@@ -264,7 +264,7 @@ async def get_monitor1d_file_path(thread_id: str | None = None) -> dict[str, Any
         if thread_id:
             _thread_id = thread_id
         await asyncio.to_thread(_try_load_monitor1d_path_from_storage, thread_id)
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not _monitor1d_file_path:
@@ -286,7 +286,7 @@ async def get_monitor2d_file_path(thread_id: str | None = None) -> dict[str, Any
         if thread_id:
             _thread_id = thread_id
         await asyncio.to_thread(_try_load_monitor2d_path_from_storage, thread_id)
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not _monitor2d_file_path:

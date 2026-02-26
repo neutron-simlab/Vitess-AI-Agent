@@ -453,7 +453,7 @@ async def inspect_thread_folders(thread_id: str | None = None) -> dict[str, Any]
     
     # Get thread_id
     if not thread_id:
-        thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+        thread_id = os.environ.get("THREAD_ID")
     
     if not thread_id:
         return {
@@ -580,7 +580,7 @@ async def generate_monitor1d_plot(thread_id: Optional[str] = None) -> Dict[str, 
     try:
         # Get thread_id from parameter or environment
         if not thread_id:
-            thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+            thread_id = os.environ.get("THREAD_ID")
         
         if not thread_id:
             return {
@@ -649,7 +649,7 @@ async def generate_monitor2d_plot(thread_id: Optional[str] = None) -> Dict[str, 
     try:
         # Get thread_id from parameter or environment
         if not thread_id:
-            thread_id = os.environ.get("THREAD_ID") or os.environ.get("VITESS_THREAD_ID")
+            thread_id = os.environ.get("THREAD_ID")
         
         if not thread_id:
             return {
