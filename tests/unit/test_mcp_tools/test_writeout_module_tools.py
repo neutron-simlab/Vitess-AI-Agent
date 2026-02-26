@@ -1,6 +1,7 @@
 """
 Tests for writeout_tools.py (LangChain tools for writeout module).
 """
+import json
 import os
 import pytest
 from pathlib import Path
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 from vitess_ai.agents.simulator.tools.writeout import (
     writeout_params_to_cli,
     _try_load_save_path_from_storage,
+    validate_writeout_module,
 )
 from vitess_ai.schema.base import VtPrgFormat, VtDataFormat
 
@@ -146,3 +148,58 @@ class TestTryLoadSavePathFromStorage:
         result = _try_load_save_path_from_storage()
         
         assert result is False
+
+
+@pytest.mark.unit
+class TestValidateWriteoutModule:
+    """Tests for validate_writeout_module tool."""
+
+    @pytest.mark.asyncio
+    async def test_accepts_multiple_parameter_sets(self):
+        """Validation accepts list input and validates all sets in one call."""
+        batch_params = [
+            {"sOutFileName": "output_001.dat", "FactInt": 1.0},
+            {"sOutFileName": "output_002.dat", "FactInt": 2.0},
+        ]
+
+        result = await validate_writeout_module.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is True
+        assert result["total_sets"] == 2
+        assert isinstance(result["validated_params"], list)
+        assert len(result["validated_params"]) == 2
+        assert isinstance(result["cli_parameters"], list)
+        assert len(result["cli_parameters"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_accepts_json_array_string_for_multiple_sets(self):
+        """Validation accepts JSON array string for batch input."""
+        batch_params = json.dumps(
+            [
+                {"sOutFileName": "output_001.dat", "FactInt": 1.0},
+                {"sOutFileName": "output_002.dat", "FactInt": 2.0},
+            ]
+        )
+
+        result = await validate_writeout_module.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is True
+        assert result["total_sets"] == 2
+        assert isinstance(result["validated_params"], list)
+
+    @pytest.mark.asyncio
+    async def test_reports_item_level_errors_for_invalid_batch(self):
+        """Validation reports index-based errors when one batch set is invalid."""
+        batch_params = [
+            {"sOutFileName": "output_001.dat", "FactInt": 1.0},
+            {"sOutFileName": "output_002.dat", "ePrgFormat": "INVALID_FORMAT"},
+        ]
+
+        result = await validate_writeout_module.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is False
+        assert result["total_sets"] == 2
+        assert result["valid_sets"] == 1
+        assert result["invalid_sets"] == 1
+        assert isinstance(result["errors"], list)
+        assert result["errors"][0]["index"] == 1

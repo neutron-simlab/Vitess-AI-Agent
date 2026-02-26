@@ -76,14 +76,32 @@ A) Modules WITH parameter variations:
    - Send a delegation message: module name, parameter name, values array
    - Subagent interprets intent, generates full params, validates, and calls submit_module_result
    - Subagent returns a dictionary: validation_passed and parameters (or error)
-   - Example: FactInt=[0.1, 0.5, 1, 2] → subagent returns N parameter sets via submit_module_result
+   - When validating many setups at once, pass a list of parameter objects to the module validation tool in one call.
+   - Example: FactInt=[0.1, 0.5, 1, 2] → subagent validates all sets in one shot and returns N parameter sets via submit_module_result
+   - Example batch validation input to module validation tool:
+     [
+       {"eGuideShapeY": 1, "eGuideShapeZ": 1, "nPieces": 1, ...},
+       {"eGuideShapeY": 3, "eGuideShapeZ": 3, "nPieces": 8, ...}
+     ]
+   - Example batch validation input for other modules:
+     readin: [{"sInputFileName": ["src.dat"], "Weight": [1.0], "FactInt": 0.1}, {"sInputFileName": ["src.dat"], "Weight": [1.0], "FactInt": 0.5}]
+     writeout: [{"sOutFileName": "out_001.dat", "FactInt": 1.0}, {"sOutFileName": "out_002.dat", "FactInt": 2.0}]
+     monitor1d/monitor2d: [{"nBinsX": 100, ...}, {"nBinsX": 200, ...}]
+   - Example submit_module_result payload after successful batch validation:
+     {
+       "validation_passed": true,
+       "parameters": [
+         {"eGuideShapeY": 1, "eGuideShapeZ": 1, "nPieces": 1, ... },
+         {"eGuideShapeY": 3, "eGuideShapeZ": 3, "nPieces": 8, ... }
+       ]
+     }
 
 B) Modules WITHOUT parameter variations:
    - Subagent returns 1 default parameter set via submit_module_result
    - Uses schema defaults for all fields except mandatory workflow fields
 
 Only use module parameters when the subagent's result is a successful submit_module_result
-with validation_passed: True and a "parameters" object. Never use the raw output of a failed
+with validation_passed: True and a "parameters" payload (single dict or list of dicts). Never use the raw output of a failed
 validation tool or any error message as simulation parameters. Use orchestrator tools to
 read the subagent result as a dictionary (e.g. result.get("validation_passed"), result.get("parameters")).
 
@@ -285,8 +303,10 @@ def get_module_subagent_system_prompt(
         f"- Always run `{validation_tool}` before claiming completion.\n"
         "After running the validation tool, you MUST call `submit_module_result`: "
         "if validation returned validation_status: True, call with validation_passed=True and "
-        "parameters=<validated_params from tool>; if validation failed, call with "
+        "parameters=<validated_params from tool> (this can be a dict for one set or list[dict] for batch); "
+        "if validation failed, call with "
         "validation_passed=False and error_message=<errors or message>. "
+        "Batch example: parameters=[{\"ParamA\": 1, \"ParamB\": 10}, {\"ParamA\": 2, \"ParamB\": 20}]. "
         "Do not report task completion until you have called submit_module_result.\n"
         "- Pass `thread_id` to thread-aware tools when available.\n"
         "- Return validated, structured JSON-ready values.\n\n"

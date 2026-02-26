@@ -17,6 +17,7 @@ from vitess_ai.agents.high_throughput.tools import (
     _convert_simulation_to_module_results,
     _resolve_thread_id,
     MODULE_CLI_CONVERTERS,
+    submit_module_result,
 )
 
 
@@ -358,6 +359,57 @@ class TestResolveThreadId:
         monkeypatch.delenv("THREAD_ID", raising=False)
         result = _resolve_thread_id(None)
         assert result is None
+
+
+@pytest.mark.unit
+class TestSubmitModuleResult:
+    """Tests for submit_module_result contract used by module subagents."""
+
+    def test_accepts_single_parameter_set(self):
+        """Validation success with one dict is accepted."""
+        result = submit_module_result.invoke(
+            {
+                "module_name": "guide",
+                "validation_passed": True,
+                "parameters": {"eGuideShapeY": 0, "nPieces": 1},
+            }
+        )
+
+        assert result["accepted"] is True
+        assert result["validation_passed"] is True
+        assert isinstance(result["parameters"], dict)
+
+    def test_accepts_multiple_parameter_sets(self):
+        """Validation success with list[dict] is accepted for batch mode."""
+        result = submit_module_result.invoke(
+            {
+                "module_name": "guide",
+                "validation_passed": True,
+                "parameters": [
+                    {"eGuideShapeY": 0, "nPieces": 1},
+                    {"eGuideShapeY": 1, "nPieces": 2},
+                ],
+            }
+        )
+
+        assert result["accepted"] is True
+        assert result["validation_passed"] is True
+        assert isinstance(result["parameters"], list)
+        assert len(result["parameters"]) == 2
+
+    def test_rejects_invalid_batch_shape(self):
+        """Validation success with malformed list payload is rejected."""
+        result = submit_module_result.invoke(
+            {
+                "module_name": "guide",
+                "validation_passed": True,
+                "parameters": [{"eGuideShapeY": 0}, {}],
+            }
+        )
+
+        assert result["accepted"] is False
+        assert result["validation_passed"] is False
+        assert "list of dict" in result["error"] or "dict" in result["error"]
 
 
 @pytest.mark.unit

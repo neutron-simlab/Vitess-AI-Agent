@@ -50,8 +50,10 @@ def guide_params_to_cli(params: dict) -> str:
 
 
 @tool
-async def validate_guide_parameters(parameters: Union[str, dict[str, Any]]) -> dict[str, Any]:
-    """Validate guide parameters from either JSON string or dictionary. Returns validation result and CLI string if valid."""
+async def validate_guide_parameters(
+    parameters: Union[str, dict[str, Any], list[dict[str, Any]]]
+) -> dict[str, Any]:
+    """Validate one or many guide parameter sets from JSON string/object/list."""
     try:
         if isinstance(parameters, str):
             try:
@@ -62,19 +64,74 @@ async def validate_guide_parameters(parameters: Union[str, dict[str, Any]]) -> d
                     "errors": "Invalid JSON string format",
                     "message": "Guide validation failed: Invalid JSON string",
                 }
-        elif isinstance(parameters, dict):
+        elif isinstance(parameters, (dict, list)):
             parsed_parameters = parameters
         else:
             return {
                 "validation_status": False,
-                "errors": f"Expected JSON string or dict, got {type(parameters)}",
+                "errors": f"Expected JSON string, dict, or list of dict, got {type(parameters)}",
                 "message": f"Guide validation failed: Invalid parameter type {type(parameters)}",
             }
+
+        if isinstance(parsed_parameters, list):
+            if not parsed_parameters:
+                return {
+                    "validation_status": False,
+                    "errors": "Received empty parameter set list",
+                    "message": "Guide validation failed: No parameter sets provided",
+                }
+
+            validated_params: list[dict[str, Any]] = []
+            cli_parameters: list[str] = []
+            errors: list[dict[str, Any]] = []
+
+            for idx, param_set in enumerate(parsed_parameters):
+                if not isinstance(param_set, dict):
+                    errors.append(
+                        {
+                            "index": idx,
+                            "errors": f"Expected dict for parameter set, got {type(param_set)}",
+                        }
+                    )
+                    continue
+
+                try:
+                    validated = GuideParameters(**param_set)
+                    validated_dump = validated.model_dump()
+                    validated_params.append(validated_dump)
+                    cli_parameters.append(guide_params_to_cli(validated_dump))
+                except Exception as exc:
+                    errors.append({"index": idx, "errors": str(exc)})
+
+            if errors:
+                return {
+                    "validation_status": False,
+                    "errors": errors,
+                    "validated_params": validated_params,
+                    "cli_parameters": cli_parameters,
+                    "total_sets": len(parsed_parameters),
+                    "valid_sets": len(validated_params),
+                    "invalid_sets": len(errors),
+                    "message": (
+                        f"Guide batch validation failed for {len(errors)} of "
+                        f"{len(parsed_parameters)} parameter set(s)."
+                    ),
+                }
+
+            return {
+                "validation_status": True,
+                "validated_params": validated_params,
+                "cli_parameters": cli_parameters,
+                "total_sets": len(validated_params),
+                "message": f"Guide module parameters are valid for {len(validated_params)} set(s)!",
+            }
+
         validated = GuideParameters(**parsed_parameters)
-        cli = guide_params_to_cli(validated.model_dump())
+        validated_dump = validated.model_dump()
+        cli = guide_params_to_cli(validated_dump)
         return {
             "validation_status": True,
-            "validated_params": validated.model_dump(),
+            "validated_params": validated_dump,
             "cli_parameters": cli,
             "message": "Guide module parameters are valid!",
         }

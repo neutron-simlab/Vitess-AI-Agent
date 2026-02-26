@@ -1,6 +1,7 @@
 """
 Tests for readin_tools.py (LangChain tools for read-in module).
 """
+import json
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -150,7 +151,6 @@ class TestValidateReadinModule:
     @pytest.mark.asyncio
     async def test_validates_with_sInputFileName_in_params(self, sample_readin_params):
         """Test validation when sInputFileName is provided in params"""
-        import json
         params = {**sample_readin_params, "sInputFileName": ["/p/f.dat"], "Weight": [1.0]}
         result = await validate_readin_module.ainvoke({"parameters": json.dumps(params)})
         assert result["validation_status"] is True
@@ -158,7 +158,6 @@ class TestValidateReadinModule:
     @pytest.mark.asyncio
     async def test_fills_sInputFileName_from_params_files(self, sample_readin_params):
         """Test validation fills sInputFileName from params.files"""
-        import json
         params = {k: v for k, v in sample_readin_params.items() if k != "sInputFileName"}
         params["files"] = ["/p/f1.dat"]
         params["Weight"] = [1.0]
@@ -169,7 +168,6 @@ class TestValidateReadinModule:
     @pytest.mark.asyncio
     async def test_fills_sInputFileName_from_thread_id_when_missing(self, sample_readin_params):
         """Test validation fills sInputFileName from storage when thread_id given"""
-        import json
         params = {k: v for k, v in sample_readin_params.items() if k != "sInputFileName"}
         params["Weight"] = [1.0]
         with patch('vitess_ai.agents.simulator.tools.readin._list_readin_files_for_thread') as mock_list:
@@ -184,9 +182,82 @@ class TestValidateReadinModule:
     @pytest.mark.asyncio
     async def test_fails_when_no_files_and_no_sInputFileName(self, sample_readin_params):
         """Test validation fails when sInputFileName missing and no thread_id/files"""
-        import json
         params = {k: v for k, v in sample_readin_params.items() if k != "sInputFileName"}
         params["Weight"] = []
         result = await validate_readin_module.ainvoke({"parameters": json.dumps(params)})
         assert result["validation_status"] is False
         assert "sInputFileName" in result.get("message", "") or "files" in result.get("message", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_accepts_multiple_parameter_sets(self):
+        """Validation accepts list input and validates all sets in one call."""
+        batch_params = [
+            {
+                "sInputFileName": ["/p/f1.dat"],
+                "Weight": [1.0],
+                "FactInt": 0.1,
+            },
+            {
+                "sInputFileName": ["/p/f1.dat"],
+                "Weight": [1.0],
+                "FactInt": 0.5,
+            },
+        ]
+
+        result = await validate_readin_module.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is True
+        assert result["total_sets"] == 2
+        assert isinstance(result["validated_params"], list)
+        assert len(result["validated_params"]) == 2
+        assert isinstance(result["cli_parameters"], list)
+        assert len(result["cli_parameters"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_accepts_json_array_string_for_multiple_sets(self):
+        """Validation accepts JSON array string for batch input."""
+        batch_params = json.dumps(
+            [
+                {
+                    "sInputFileName": ["/p/f1.dat"],
+                    "Weight": [1.0],
+                    "FactInt": 0.1,
+                },
+                {
+                    "sInputFileName": ["/p/f1.dat"],
+                    "Weight": [1.0],
+                    "FactInt": 0.5,
+                },
+            ]
+        )
+
+        result = await validate_readin_module.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is True
+        assert result["total_sets"] == 2
+        assert isinstance(result["validated_params"], list)
+
+    @pytest.mark.asyncio
+    async def test_reports_item_level_errors_for_invalid_batch(self):
+        """Validation reports index-based errors when one batch set is invalid."""
+        batch_params = [
+            {
+                "sInputFileName": ["/p/f1.dat"],
+                "Weight": [1.0],
+                "FactInt": 0.1,
+            },
+            {
+                "sInputFileName": ["/p/f1.dat"],
+                "Weight": [1.0, 2.0],
+                "FactInt": 0.5,
+            },
+        ]
+
+        result = await validate_readin_module.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is False
+        assert result["total_sets"] == 2
+        assert result["valid_sets"] == 1
+        assert result["invalid_sets"] == 1
+        assert isinstance(result["errors"], list)
+        assert result["errors"][0]["index"] == 1

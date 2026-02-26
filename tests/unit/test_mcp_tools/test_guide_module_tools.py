@@ -1,6 +1,7 @@
 """
 Tests for guide_tools.py (LangChain tools for guide module).
 """
+import json
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -74,6 +75,56 @@ class TestValidateGuideParameters:
         assert result["validation_status"] is True
         assert result["validated_params"]["ShapeFileName"] == ""
         assert "-S" not in result["cli_parameters"]
+
+    @pytest.mark.asyncio
+    async def test_accepts_multiple_parameter_sets(self):
+        """Validation accepts list input and validates all sets in one call."""
+        batch_params = [
+            {"eGuideShapeY": 0, "nPieces": 1},
+            {"eGuideShapeY": 1, "nPieces": 2, "GuideEntrWidth": 2.5},
+        ]
+
+        result = await validate_guide_parameters.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is True
+        assert result["total_sets"] == 2
+        assert isinstance(result["validated_params"], list)
+        assert len(result["validated_params"]) == 2
+        assert isinstance(result["cli_parameters"], list)
+        assert len(result["cli_parameters"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_accepts_json_array_string_for_multiple_sets(self):
+        """Validation accepts JSON array string for batch input."""
+        batch_params = json.dumps(
+            [
+                {"eGuideShapeY": 0, "nPieces": 1},
+                {"eGuideShapeY": 1, "nPieces": 2},
+            ]
+        )
+
+        result = await validate_guide_parameters.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is True
+        assert result["total_sets"] == 2
+        assert isinstance(result["validated_params"], list)
+
+    @pytest.mark.asyncio
+    async def test_reports_item_level_errors_for_invalid_batch(self):
+        """Validation reports index-based errors when one of the batch sets is invalid."""
+        batch_params = [
+            {"eGuideShapeY": 0, "nPieces": 1},
+            {"eGuideShapeY": "invalid-shape", "nPieces": 1},
+        ]
+
+        result = await validate_guide_parameters.ainvoke({"parameters": batch_params})
+
+        assert result["validation_status"] is False
+        assert result["total_sets"] == 2
+        assert result["valid_sets"] == 1
+        assert result["invalid_sets"] == 1
+        assert isinstance(result["errors"], list)
+        assert result["errors"][0]["index"] == 1
 
 
 @pytest.mark.unit

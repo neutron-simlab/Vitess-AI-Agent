@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from langchain.tools import ToolRuntime, tool
 from vitess_ai.schema.writeout_module import WriteoutParameters, VtFilterLimits, VtOutputFlags
@@ -72,6 +73,15 @@ def writeout_params_to_cli(params: dict) -> str:
         elif hasattr(value, "value"):
             cli_params.append((flag, str(value.value)))
     return " ".join([f"{flag}{param}" for flag, param in cli_params])
+
+
+def _validate_single_writeout_parameter_set(
+    params: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Validate one Writeout parameter set and return validated params + CLI string."""
+    validated = WriteoutParameters(**params).model_dump()
+    cli = writeout_params_to_cli(validated)
+    return validated, cli
 
 
 @tool
@@ -287,15 +297,85 @@ async def clear_save_path() -> dict:
 
 
 @tool
-async def validate_writeout_module(parameters: str) -> dict:
-    """Validate Writeout module parameters. Pass JSON string containing WriteoutParameters data."""
+async def validate_writeout_module(
+    parameters: str | dict[str, Any] | list[dict[str, Any]]
+) -> dict:
+    """Validate one or many Writeout parameter sets from JSON/object/list input."""
     try:
-        params = json.loads(parameters)
-        validated = WriteoutParameters(**params)
-        cli = writeout_params_to_cli(validated.model_dump())
+        if isinstance(parameters, str):
+            try:
+                parsed_parameters = json.loads(parameters)
+            except json.JSONDecodeError:
+                return {
+                    "validation_status": False,
+                    "errors": "Invalid JSON string format",
+                    "message": "Writeout validation failed: Invalid JSON string",
+                }
+        elif isinstance(parameters, (dict, list)):
+            parsed_parameters = parameters
+        else:
+            return {
+                "validation_status": False,
+                "errors": f"Expected JSON string, dict, or list of dict, got {type(parameters)}",
+                "message": f"Writeout validation failed: Invalid parameter type {type(parameters)}",
+            }
+
+        if isinstance(parsed_parameters, list):
+            if not parsed_parameters:
+                return {
+                    "validation_status": False,
+                    "errors": "Received empty parameter set list",
+                    "message": "Writeout validation failed: No parameter sets provided",
+                }
+
+            validated_params: list[dict[str, Any]] = []
+            cli_parameters: list[str] = []
+            errors: list[dict[str, Any]] = []
+
+            for idx, param_set in enumerate(parsed_parameters):
+                if not isinstance(param_set, dict):
+                    errors.append(
+                        {
+                            "index": idx,
+                            "errors": f"Expected dict for parameter set, got {type(param_set)}",
+                        }
+                    )
+                    continue
+
+                try:
+                    validated, cli = _validate_single_writeout_parameter_set(param_set)
+                    validated_params.append(validated)
+                    cli_parameters.append(cli)
+                except Exception as exc:
+                    errors.append({"index": idx, "errors": str(exc)})
+
+            if errors:
+                return {
+                    "validation_status": False,
+                    "errors": errors,
+                    "validated_params": validated_params,
+                    "cli_parameters": cli_parameters,
+                    "total_sets": len(parsed_parameters),
+                    "valid_sets": len(validated_params),
+                    "invalid_sets": len(errors),
+                    "message": (
+                        f"Writeout batch validation failed for {len(errors)} of "
+                        f"{len(parsed_parameters)} parameter set(s)."
+                    ),
+                }
+
+            return {
+                "validation_status": True,
+                "validated_params": validated_params,
+                "cli_parameters": cli_parameters,
+                "total_sets": len(validated_params),
+                "message": f"Writeout module parameters are valid for {len(validated_params)} set(s)!",
+            }
+
+        validated, cli = _validate_single_writeout_parameter_set(parsed_parameters)
         return {
             "validation_status": True,
-            "validated_params": validated.model_dump(),
+            "validated_params": validated,
             "cli_parameters": cli,
             "message": "Writeout module parameters are valid!",
         }

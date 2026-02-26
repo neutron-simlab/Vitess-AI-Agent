@@ -102,7 +102,7 @@ def _is_error_shaped_dict(value: Any) -> bool:
 def submit_module_result(
     module_name: str,
     validation_passed: bool,
-    parameters: dict[str, Any] | None = None,
+    parameters: dict[str, Any] | list[dict[str, Any]] | None = None,
     error_message: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -112,26 +112,55 @@ def submit_module_result(
     Args:
         module_name: Module name (e.g. readin, guide, writeout).
         validation_passed: True if validation succeeded and parameters are ready for CLI.
-        parameters: Validated parameter dict (required when validation_passed is True).
+        parameters: Validated parameter dict or list of parameter dicts
+            (required when validation_passed is True).
         error_message: Error description (required when validation_passed is False).
 
     Returns:
         Dict with keys: accepted, module, validation_passed, and either parameters or error.
     """
     if validation_passed:
-        if not parameters or not isinstance(parameters, dict):
+        if not parameters:
             return {
                 "accepted": False,
                 "module": module_name,
                 "validation_passed": False,
-                "error": "parameters must be a non-empty dict when validation_passed is True",
+                "error": (
+                    "parameters must be a non-empty dict or non-empty list of dicts "
+                    "when validation_passed is True"
+                ),
             }
+
+        if isinstance(parameters, dict):
+            return {
+                "accepted": True,
+                "module": module_name,
+                "validation_passed": True,
+                "parameters": parameters,
+            }
+
+        if isinstance(parameters, list):
+            if any(not isinstance(param_set, dict) or not param_set for param_set in parameters):
+                return {
+                    "accepted": False,
+                    "module": module_name,
+                    "validation_passed": False,
+                    "error": "all items in parameters must be non-empty dicts",
+                }
+            return {
+                "accepted": True,
+                "module": module_name,
+                "validation_passed": True,
+                "parameters": parameters,
+            }
+
         return {
-            "accepted": True,
+            "accepted": False,
             "module": module_name,
-            "validation_passed": True,
-            "parameters": parameters,
+            "validation_passed": False,
+            "error": "parameters must be a dict or list of dicts when validation_passed is True",
         }
+
     if not error_message:
         return {
             "accepted": False,

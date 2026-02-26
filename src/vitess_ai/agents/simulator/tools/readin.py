@@ -52,6 +52,54 @@ def _list_readin_files_for_thread(thread_id: str) -> list[str]:
         return []
 
 
+def _validate_single_readin_parameter_set(
+    params: dict[str, Any],
+    thread_files: list[str] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Validate one ReadIn parameter set and return validated params + CLI string."""
+    parsed = params.copy()
+    if not parsed.get("sInputFileName"):
+        candidate_files = None
+        if isinstance(parsed.get("files"), list) and parsed["files"]:
+            candidate_files = parsed["files"]
+        elif isinstance(parsed.get("existing_files"), list) and parsed["existing_files"]:
+            candidate_files = parsed["existing_files"]
+        elif thread_files:
+            candidate_files = thread_files
+        if candidate_files:
+            parsed["sInputFileName"] = candidate_files[:NF_MAX]
+        else:
+            raise ValueError(
+                "sInputFileName is required but not provided and no files selected."
+            )
+
+    files_list = [p for p in parsed.get("sInputFileName", []) if p is not None]
+    weights_list = parsed.get("Weight", [])
+
+    if not isinstance(weights_list, list):
+        raise ValueError("Weight must be a list.")
+    if len(files_list) == 0:
+        raise ValueError("At least one input file is required.")
+    if len(weights_list) != len(files_list):
+        raise ValueError(
+            f"Weight length ({len(weights_list)}) does not match "
+            f"sInputFileName count ({len(files_list)})."
+        )
+
+    eprg_format = parsed.get("ePrgFormat")
+    if eprg_format == VtPrgFormat.VT_KDS_FMT or (
+        isinstance(eprg_format, int) and eprg_format == 7
+    ):
+        raise ValueError(
+            "VT_KDS_FMT format is no longer supported in the read_in module. "
+            "KDSource functionality has been moved to module 'kdsource'."
+        )
+
+    validated = ReadInParameters(**parsed).model_dump()
+    cli = readin_params_to_cli(validated)
+    return validated, cli
+
+
 @tool
 async def file_status(
     thread_id: str | None = None, runtime: ToolRuntime = None
@@ -105,58 +153,121 @@ async def get_files(
 
 @tool
 async def validate_readin_module(
-    parameters: str,
+    parameters: str | dict[str, Any] | list[dict[str, Any]],
     thread_id: str | None = None,
     runtime: ToolRuntime = None,
 ) -> dict:
-    """Validate ReadIn params JSON. sInputFileName can be derived from params or uploads via resolved thread_id."""
+    """Validate one or many ReadIn parameter sets from JSON/object/list input."""
     try:
         resolved_thread_id = resolve_thread_id(thread_id, runtime)
-        params = json.loads(parameters)
-        if not params.get("sInputFileName"):
-            candidate_files = None
-            if isinstance(params.get("files"), list) and params["files"]:
-                candidate_files = params["files"]
-            elif isinstance(params.get("existing_files"), list) and params["existing_files"]:
-                candidate_files = params["existing_files"]
-            elif resolved_thread_id:
-                candidate_files = await asyncio.to_thread(
-                    _list_readin_files_for_thread, resolved_thread_id
-                )
-                candidate_files = (candidate_files or [])[:NF_MAX]
-            if candidate_files:
-                params["sInputFileName"] = candidate_files[:NF_MAX]
-            else:
+        if isinstance(parameters, str):
+            try:
+                parsed_parameters = json.loads(parameters)
+            except json.JSONDecodeError:
                 return {
                     "validation_status": False,
-                    "errors": "sInputFileName is required but not provided and no files selected.",
+                    "errors": "Invalid JSON string format",
+                    "message": "Read-in validation failed: Invalid JSON string",
+                }
+        elif isinstance(parameters, (dict, list)):
+            parsed_parameters = parameters
+        else:
+            return {
+                "validation_status": False,
+                "errors": f"Expected JSON string, dict, or list of dict, got {type(parameters)}",
+                "message": f"Read-in validation failed: Invalid parameter type {type(parameters)}",
+            }
+
+        thread_files_cache: list[str] | None = None
+
+        async def _get_thread_files() -> list[str]:
+            nonlocal thread_files_cache
+            if thread_files_cache is not None:
+                return thread_files_cache
+            if not resolved_thread_id:
+                thread_files_cache = []
+                return thread_files_cache
+            files = await asyncio.to_thread(
+                _list_readin_files_for_thread, resolved_thread_id
+            )
+            thread_files_cache = (files or [])[:NF_MAX]
+            return thread_files_cache
+
+        def _needs_thread_lookup(param_set: dict[str, Any]) -> bool:
+            return (
+                not param_set.get("sInputFileName")
+                and not (isinstance(param_set.get("files"), list) and param_set["files"])
+                and not (
+                    isinstance(param_set.get("existing_files"), list)
+                    and param_set["existing_files"]
+                )
+            )
+
+        if isinstance(parsed_parameters, list):
+            if not parsed_parameters:
+                return {
+                    "validation_status": False,
+                    "errors": "Received empty parameter set list",
+                    "message": "Read-in validation failed: No parameter sets provided",
+                }
+
+            validated_params: list[dict[str, Any]] = []
+            cli_parameters: list[str] = []
+            errors: list[dict[str, Any]] = []
+
+            for idx, param_set in enumerate(parsed_parameters):
+                if not isinstance(param_set, dict):
+                    errors.append(
+                        {
+                            "index": idx,
+                            "errors": f"Expected dict for parameter set, got {type(param_set)}",
+                        }
+                    )
+                    continue
+
+                try:
+                    thread_files = (
+                        await _get_thread_files() if _needs_thread_lookup(param_set) else None
+                    )
+                    validated, cli = _validate_single_readin_parameter_set(
+                        param_set,
+                        thread_files=thread_files,
+                    )
+                    validated_params.append(validated)
+                    cli_parameters.append(cli)
+                except Exception as exc:
+                    errors.append({"index": idx, "errors": str(exc)})
+
+            if errors:
+                return {
+                    "validation_status": False,
+                    "errors": errors,
+                    "validated_params": validated_params,
+                    "cli_parameters": cli_parameters,
+                    "total_sets": len(parsed_parameters),
+                    "valid_sets": len(validated_params),
+                    "invalid_sets": len(errors),
                     "message": (
-                        "Provide sInputFileName or pass files in the JSON, "
-                        "or ensure thread_id is available (arg/runtime) to use uploads."
+                        f"Read-in batch validation failed for {len(errors)} of "
+                        f"{len(parsed_parameters)} parameter set(s)."
                     ),
                 }
-        files_list = [p for p in params.get("sInputFileName", []) if p is not None]
-        weights_list = params.get("Weight", [])
-        if not isinstance(weights_list, list):
-            return {"validation_status": False, "errors": "Weight must be a list.", "message": "Weight must be a list."}
-        if len(files_list) == 0:
-            return {"validation_status": False, "errors": "At least one input file is required.", "message": "Please select at least one input file."}
-        if len(weights_list) != len(files_list):
+
             return {
-                "validation_status": False,
-                "errors": f"Weight length ({len(weights_list)}) does not match sInputFileName count ({len(files_list)}).",
-                "message": "Provide a weight for each input file.",
+                "validation_status": True,
+                "validated_params": validated_params,
+                "cli_parameters": cli_parameters,
+                "total_sets": len(validated_params),
+                "message": f"Read-in module parameters are valid for {len(validated_params)} set(s)!",
             }
-        eprg_format = params.get("ePrgFormat")
-        if eprg_format == VtPrgFormat.VT_KDS_FMT or (isinstance(eprg_format, int) and eprg_format == 7):
-            return {
-                "validation_status": False,
-                "errors": "VT_KDS_FMT format is no longer supported in the read_in module.",
-                "message": "KDSource functionality has been moved to module 'kdsource'. Use the separate 'kdsource' module.",
-            }
-        validated = ReadInParameters(**params)
-        validated = validated.model_dump()
-        cli = readin_params_to_cli(validated)
+
+        single_thread_files = (
+            await _get_thread_files() if _needs_thread_lookup(parsed_parameters) else None
+        )
+        validated, cli = _validate_single_readin_parameter_set(
+            parsed_parameters,
+            thread_files=single_thread_files,
+        )
         return {
             "validation_status": True,
             "validated_params": validated,

@@ -151,52 +151,184 @@ def _default_monitor2d_path(parsed: dict, resolved_thread_id: str | None) -> Non
             parsed["fMonitorFilename"] = f"outputs/{filename}"
 
 
+def _validate_single_monitor1d_parameter_set(
+    params: dict[str, Any],
+    resolved_thread_id: str | None,
+) -> tuple[dict[str, Any], str]:
+    """Validate one Monitor1D parameter set and return validated params + CLI string."""
+    parsed_parameters = params.copy()
+    _default_monitor1d_path(parsed_parameters, resolved_thread_id)
+    validated = Monitor1DParameters(**parsed_parameters).model_dump()
+    cli = monitor1d_params_to_cli(validated)
+    return validated, cli
+
+
+def _validate_single_monitor2d_parameter_set(
+    params: dict[str, Any],
+    resolved_thread_id: str | None,
+) -> tuple[dict[str, Any], str]:
+    """Validate one Monitor2D parameter set and return validated params + CLI string."""
+    parsed_parameters = params.copy()
+    _default_monitor2d_path(parsed_parameters, resolved_thread_id)
+    validated = Monitor2DParameters(**parsed_parameters).model_dump()
+    cli = monitor2d_params_to_cli(validated)
+    return validated, cli
+
+
 @tool
 async def validate_monitor1d_module(
-    parameters: Union[str, dict[str, Any]],
+    parameters: Union[str, dict[str, Any], list[dict[str, Any]]],
     runtime: ToolRuntime = None,
 ) -> dict[str, Any]:
-    """Validate Monitor1D parameters from JSON string or dictionary. Returns validation result and CLI string if valid."""
+    """Validate one or many Monitor1D parameter sets from JSON/object/list input."""
     try:
         if isinstance(parameters, str):
             try:
                 parsed_parameters = json.loads(parameters)
             except json.JSONDecodeError:
                 return {"validation_status": False, "errors": "Invalid JSON string format", "message": "Monitor1D validation failed: Invalid JSON string"}
-        elif isinstance(parameters, dict):
+        elif isinstance(parameters, (dict, list)):
             parsed_parameters = parameters
         else:
-            return {"validation_status": False, "errors": f"Expected JSON string or dict, got {type(parameters)}", "message": f"Monitor1D validation failed: Invalid parameter type {type(parameters)}"}
+            return {"validation_status": False, "errors": f"Expected JSON string, dict, or list of dict, got {type(parameters)}", "message": f"Monitor1D validation failed: Invalid parameter type {type(parameters)}"}
         resolved_thread_id = resolve_thread_id(runtime=runtime)
-        _default_monitor1d_path(parsed_parameters, resolved_thread_id)
-        validated = Monitor1DParameters(**parsed_parameters)
-        cli = monitor1d_params_to_cli(validated.model_dump())
-        return {"validation_status": True, "validated_params": validated.model_dump(), "cli_parameters": cli, "message": "Monitor1D module parameters are valid!"}
+        if isinstance(parsed_parameters, list):
+            if not parsed_parameters:
+                return {
+                    "validation_status": False,
+                    "errors": "Received empty parameter set list",
+                    "message": "Monitor1D validation failed: No parameter sets provided",
+                }
+
+            validated_params: list[dict[str, Any]] = []
+            cli_parameters: list[str] = []
+            errors: list[dict[str, Any]] = []
+
+            for idx, param_set in enumerate(parsed_parameters):
+                if not isinstance(param_set, dict):
+                    errors.append(
+                        {
+                            "index": idx,
+                            "errors": f"Expected dict for parameter set, got {type(param_set)}",
+                        }
+                    )
+                    continue
+
+                try:
+                    validated, cli = _validate_single_monitor1d_parameter_set(
+                        param_set, resolved_thread_id
+                    )
+                    validated_params.append(validated)
+                    cli_parameters.append(cli)
+                except Exception as exc:
+                    errors.append({"index": idx, "errors": str(exc)})
+
+            if errors:
+                return {
+                    "validation_status": False,
+                    "errors": errors,
+                    "validated_params": validated_params,
+                    "cli_parameters": cli_parameters,
+                    "total_sets": len(parsed_parameters),
+                    "valid_sets": len(validated_params),
+                    "invalid_sets": len(errors),
+                    "message": (
+                        f"Monitor1D batch validation failed for {len(errors)} of "
+                        f"{len(parsed_parameters)} parameter set(s)."
+                    ),
+                }
+
+            return {
+                "validation_status": True,
+                "validated_params": validated_params,
+                "cli_parameters": cli_parameters,
+                "total_sets": len(validated_params),
+                "message": f"Monitor1D module parameters are valid for {len(validated_params)} set(s)!",
+            }
+
+        validated, cli = _validate_single_monitor1d_parameter_set(
+            parsed_parameters, resolved_thread_id
+        )
+        return {"validation_status": True, "validated_params": validated, "cli_parameters": cli, "message": "Monitor1D module parameters are valid!"}
     except Exception as e:
         return {"validation_status": False, "errors": str(e), "message": f"Monitor1D validation failed: {e}"}
 
 
 @tool
 async def validate_monitor2d_module(
-    parameters: Union[str, dict[str, Any]],
+    parameters: Union[str, dict[str, Any], list[dict[str, Any]]],
     runtime: ToolRuntime = None,
 ) -> dict[str, Any]:
-    """Validate Monitor2D parameters from JSON string or dictionary. Returns validation result and CLI string if valid."""
+    """Validate one or many Monitor2D parameter sets from JSON/object/list input."""
     try:
         if isinstance(parameters, str):
             try:
                 parsed_parameters = json.loads(parameters)
             except json.JSONDecodeError:
                 return {"validation_status": False, "errors": "Invalid JSON string format", "message": "Monitor2D validation failed: Invalid JSON string"}
-        elif isinstance(parameters, dict):
+        elif isinstance(parameters, (dict, list)):
             parsed_parameters = parameters
         else:
-            return {"validation_status": False, "errors": f"Expected JSON string or dict, got {type(parameters)}", "message": f"Monitor2D validation failed: Invalid parameter type {type(parameters)}"}
+            return {"validation_status": False, "errors": f"Expected JSON string, dict, or list of dict, got {type(parameters)}", "message": f"Monitor2D validation failed: Invalid parameter type {type(parameters)}"}
         resolved_thread_id = resolve_thread_id(runtime=runtime)
-        _default_monitor2d_path(parsed_parameters, resolved_thread_id)
-        validated = Monitor2DParameters(**parsed_parameters)
-        cli = monitor2d_params_to_cli(validated.model_dump())
-        return {"validation_status": True, "validated_params": validated.model_dump(), "cli_parameters": cli, "message": "Monitor2D module parameters are valid!"}
+        if isinstance(parsed_parameters, list):
+            if not parsed_parameters:
+                return {
+                    "validation_status": False,
+                    "errors": "Received empty parameter set list",
+                    "message": "Monitor2D validation failed: No parameter sets provided",
+                }
+
+            validated_params: list[dict[str, Any]] = []
+            cli_parameters: list[str] = []
+            errors: list[dict[str, Any]] = []
+
+            for idx, param_set in enumerate(parsed_parameters):
+                if not isinstance(param_set, dict):
+                    errors.append(
+                        {
+                            "index": idx,
+                            "errors": f"Expected dict for parameter set, got {type(param_set)}",
+                        }
+                    )
+                    continue
+
+                try:
+                    validated, cli = _validate_single_monitor2d_parameter_set(
+                        param_set, resolved_thread_id
+                    )
+                    validated_params.append(validated)
+                    cli_parameters.append(cli)
+                except Exception as exc:
+                    errors.append({"index": idx, "errors": str(exc)})
+
+            if errors:
+                return {
+                    "validation_status": False,
+                    "errors": errors,
+                    "validated_params": validated_params,
+                    "cli_parameters": cli_parameters,
+                    "total_sets": len(parsed_parameters),
+                    "valid_sets": len(validated_params),
+                    "invalid_sets": len(errors),
+                    "message": (
+                        f"Monitor2D batch validation failed for {len(errors)} of "
+                        f"{len(parsed_parameters)} parameter set(s)."
+                    ),
+                }
+
+            return {
+                "validation_status": True,
+                "validated_params": validated_params,
+                "cli_parameters": cli_parameters,
+                "total_sets": len(validated_params),
+                "message": f"Monitor2D module parameters are valid for {len(validated_params)} set(s)!",
+            }
+
+        validated, cli = _validate_single_monitor2d_parameter_set(
+            parsed_parameters, resolved_thread_id
+        )
+        return {"validation_status": True, "validated_params": validated, "cli_parameters": cli, "message": "Monitor2D module parameters are valid!"}
     except Exception as e:
         return {"validation_status": False, "errors": str(e), "message": f"Monitor2D validation failed: {e}"}
 
