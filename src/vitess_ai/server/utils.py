@@ -26,7 +26,7 @@ def set_request_thread_id_env(thread_id: str | None) -> None:
     """Set or clear thread_id env for this request so the process never reuses a previous request's thread_id.
     
     Call this at the start of every invoke/stream request. If thread_id is None or empty,
-    clears the env so ThreadIdMiddleware and MCP tools do not see a stale value.
+    clears the env so tools and MCP subprocesses do not see a stale value.
     
     Args:
         thread_id: Thread ID from the current request, or None to clear.

@@ -11,9 +11,10 @@ import json
 import os
 from pathlib import Path
 
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
 from vitess_ai.schema.writeout_module import WriteoutParameters, VtFilterLimits, VtOutputFlags
 from vitess_ai.schema.base import get_field_flag
+from vitess_ai.agents.simulator.tools.runtime_utils import resolve_thread_id
 
 _current_save_path: str | None = None
 _thread_id: str | None = None
@@ -74,13 +75,18 @@ def writeout_params_to_cli(params: dict) -> str:
 
 
 @tool
-async def save_file(save_path: str | None = None, thread_id: str | None = None) -> dict:
-    """Select save location and filename for neutron simulation output. Pass save_path or thread_id to load from storage."""
+async def save_file(
+    save_path: str | None = None,
+    thread_id: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict:
+    """Select output save path. thread_id resolves from runtime config when omitted."""
     global _current_save_path, _thread_id
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
     if not save_path and not _current_save_path:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_save_path_from_storage, thread_id)
+        if resolved_thread_id:
+            _thread_id = resolved_thread_id
+        await asyncio.to_thread(_try_load_save_path_from_storage, resolved_thread_id)
         if _current_save_path:
             save_path = _current_save_path
     try:
@@ -153,16 +159,19 @@ async def save_file(save_path: str | None = None, thread_id: str | None = None) 
 
 
 @tool
-async def save_path_status(thread_id: str | None = None) -> dict:
-    """Show current save path selection status. Pass thread_id to check file storage."""
+async def save_path_status(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict:
+    """Show current save path selection status. thread_id resolves from runtime config when omitted."""
     global _current_save_path, _thread_id
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
     if not _current_save_path:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_save_path_from_storage, thread_id)
+        if resolved_thread_id:
+            _thread_id = resolved_thread_id
+        await asyncio.to_thread(_try_load_save_path_from_storage, resolved_thread_id)
     if not _current_save_path:
         from vitess_ai.core.config import global_config
-        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
+        resolved_thread_id = resolved_thread_id or _thread_id or os.environ.get("THREAD_ID")
         if resolved_thread_id:
             _thread_id = resolved_thread_id
             default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
@@ -181,7 +190,7 @@ async def save_path_status(thread_id: str | None = None) -> dict:
             }
         return {
             "has_save_path": False,
-            "message": "No save location selected and no thread_id available. Provide a thread_id.",
+            "message": "No save location selected and no thread_id available.",
             "save_path": None,
             "file_name": None,
             "directory": None,
@@ -217,16 +226,19 @@ async def save_path_status(thread_id: str | None = None) -> dict:
 
 
 @tool
-async def get_save_path(thread_id: str | None = None) -> dict | str:
-    """Get the current selected save path. Pass thread_id to load from storage."""
+async def get_save_path(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict | str:
+    """Get the current selected save path. thread_id resolves from runtime config when omitted."""
     global _current_save_path, _thread_id
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
     if not _current_save_path:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_save_path_from_storage, thread_id)
+        if resolved_thread_id:
+            _thread_id = resolved_thread_id
+        await asyncio.to_thread(_try_load_save_path_from_storage, resolved_thread_id)
     if not _current_save_path:
         from vitess_ai.core.config import global_config
-        resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
+        resolved_thread_id = resolved_thread_id or _thread_id or os.environ.get("THREAD_ID")
         if resolved_thread_id:
             _thread_id = resolved_thread_id
             default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
@@ -237,7 +249,7 @@ async def get_save_path(thread_id: str | None = None) -> dict | str:
                 "default_directory": str(default_directory),
                 "needs_filename": True,
             }
-        return "No save location selected and no thread_id available. Provide a thread_id."
+        return "No save location selected and no thread_id available."
     return {
         "save_path": _current_save_path,
         "file_name": os.path.basename(_current_save_path),

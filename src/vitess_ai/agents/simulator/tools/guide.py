@@ -12,10 +12,11 @@ import json
 import os
 from typing import Any, Union
 
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
 from vitess_ai.schema.guide_module import GuideParameters
 from vitess_ai.schema.base import get_field_flag
 from vitess_ai.core.log import get_logger
+from vitess_ai.agents.simulator.tools.runtime_utils import resolve_thread_id
 
 logger = get_logger(__name__)
 
@@ -86,26 +87,29 @@ async def validate_guide_parameters(parameters: Union[str, dict[str, Any]]) -> d
 
 
 @tool
-async def file_status(thread_id: str | None = None) -> dict:
-    """List file in {project}/{thread_id}/uploads/guide. Pass thread_id to check that folder."""
-    if not thread_id:
+async def file_status(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict:
+    """List file in {project}/{thread_id}/uploads/guide. thread_id resolves from runtime config when omitted."""
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
+    if not resolved_thread_id:
         return {
             "has_file": False,
-            "message": "No thread_id provided.",
+            "message": "No thread_id available.",
             "files": [],
             "file_count": 0,
         }
-    file_path = await asyncio.to_thread(_list_guide_file_for_thread, thread_id)
+    file_path = await asyncio.to_thread(_list_guide_file_for_thread, resolved_thread_id)
     if not file_path:
         return {
             "has_file": False,
-            "message": f"No file in {thread_id}/uploads/guide.",
+            "message": f"No file in {resolved_thread_id}/uploads/guide.",
             "files": [],
             "file_count": 0,
         }
     return {
         "has_file": True,
-        "message": f"1 file in {thread_id}/uploads/guide.",
+        "message": f"1 file in {resolved_thread_id}/uploads/guide.",
         "file": file_path,
         "files": [file_path],
         "file_count": 1,
@@ -113,11 +117,14 @@ async def file_status(thread_id: str | None = None) -> dict:
 
 
 @tool
-async def get_file(thread_id: str | None = None) -> dict[str, Any] | str:
-    """Get the guide file from {project}/{thread_id}/uploads/guide. Pass thread_id."""
-    if not thread_id:
-        return "No thread_id provided. Pass thread_id to get the guide file from uploads/guide."
-    file_path = await asyncio.to_thread(_list_guide_file_for_thread, thread_id)
+async def get_file(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict[str, Any] | str:
+    """Get guide file in {project}/{thread_id}/uploads/guide. thread_id resolves from runtime config when omitted."""
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
+    if not resolved_thread_id:
+        return "No thread_id available. Provide thread_id or ensure it exists in runtime config."
+    file_path = await asyncio.to_thread(_list_guide_file_for_thread, resolved_thread_id)
     if not file_path:
         return "No guide file in uploads/guide. Use the Streamlit UI to upload a guide file."
     return {

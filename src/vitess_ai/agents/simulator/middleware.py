@@ -7,7 +7,6 @@ from config.configurable (provider/model) without restarting the graph.
 """
 
 import logging
-import os
 from typing import Any, Callable, Optional, Set
 
 from langchain.agents.middleware import (
@@ -157,7 +156,7 @@ def filter_module_messages(
     module_tool_call_ids: Set[str] = set()
     
     for msg in messages:
-        # Always include system messages (thread_id context, etc.)
+        # Always include system messages
         if isinstance(msg, SystemMessage):
             filtered.append(msg)
             logger.debug(f"Including SystemMessage: {str(msg.content)[:50]}...")
@@ -270,7 +269,7 @@ class MessageFilterMiddleware(AgentMiddleware):
     conversation context, improving their ability to understand and respond appropriately.
     
     Message filtering logic:
-    - Always includes SystemMessages (thread_id context, etc.)
+    - Always includes SystemMessages
     - Includes messages explicitly tagged with module_name in additional_kwargs
     - Includes the module's welcome message
     - Includes user messages that occur after the module's welcome message
@@ -338,100 +337,6 @@ class MessageFilterMiddleware(AgentMiddleware):
         
         self.logger.debug("[FILTER] No filtering needed - all messages are relevant")
         return None
-
-
-class ThreadIdMiddleware(AgentMiddleware):
-    """
-    Middleware that injects thread_id context into messages before model calls.
-    
-    This ensures that the LLM receives thread_id information so it can pass it
-    to tools that require file access (such as file_status, get_files, etc.).
-    
-    The thread_id context is added as a SystemMessage at the beginning of the
-    messages list, ensuring it's available for every model invocation.
-    """
-    
-    def __init__(self):
-        """Initialize the thread ID middleware."""
-        self.logger = get_logger("vitess_ai.server_agents.module_middleware.ThreadIdMiddleware", level=logging.DEBUG)
-    
-    def _has_thread_id_context(self, messages: list[BaseMessage]) -> bool:
-        """
-        Check if messages already contain a thread_id context SystemMessage.
-        
-        Args:
-            messages: List of messages to check
-            
-        Returns:
-            True if thread_id context message is already present
-        """
-        for msg in messages:
-            if isinstance(msg, SystemMessage):
-                content = str(msg.content)
-                # Check if this SystemMessage contains thread_id context
-                if 'thread_id' in content.lower() and 'context' in content.lower():
-                    return True
-        return False
-    
-    def before_model(self, state: AgentState, runtime: Runtime) -> Optional[dict[str, Any]]:
-        """
-        Inject thread_id context before model call.
-        
-        This hook is called before each model invocation. It adds a SystemMessage
-        with thread_id context if:
-        - thread_id exists in state, runtime config, or environment variables
-        - A thread_id context message is not already present in messages
-        
-        Args:
-            state: The agent state containing messages and thread_id
-            runtime: The runtime context
-            
-        Returns:
-            Dictionary with updated messages including thread_id context, or None if no changes needed
-        """
-        messages = state.get('messages', [])
-        thread_id = None
-        
-        # Try multiple sources for thread_id
-        # 1. Check state directly
-        thread_id = state.get('thread_id')
-        if thread_id:
-            self.logger.debug(f"[THREAD_ID] Found thread_id in state: {thread_id}")
-        else:
-            # 2. Check runtime config (configurable fields)
-            if hasattr(runtime, 'config') and runtime.config:
-                configurable = getattr(runtime.config, 'configurable', None)
-                if configurable:
-                    thread_id = configurable.get('thread_id')
-                    if thread_id:
-                        self.logger.debug(f"[THREAD_ID] Found thread_id in runtime config: {thread_id}")
-            
-            # 3. Fallback to environment variables
-            if not thread_id:
-                thread_id = os.environ.get('THREAD_ID')
-                if thread_id:
-                    self.logger.debug(f"[THREAD_ID] Found thread_id in environment: {thread_id}")
-        
-        # Only add thread_id context if thread_id exists and context is not already present
-        if not thread_id:
-            self.logger.warning("[THREAD_ID] No thread_id found in state, runtime config, or environment - skipping context injection")
-            return None
-        
-        if self._has_thread_id_context(messages):
-            self.logger.debug("[THREAD_ID] Thread_id context already present in messages")
-            return None
-        
-        # Create thread_id context SystemMessage
-        thread_id_context = SystemMessage(
-            content=f"**CONTEXT: Current thread_id is {thread_id}. When calling tools that require file access (such as file_status, get_files, etc.), you MUST pass thread_id={thread_id} as a parameter.**"
-        )
-        
-        # Prepend thread_id context to messages (should be at the beginning)
-        updated_messages = [thread_id_context] + messages
-        
-        self.logger.info(f"[THREAD_ID] Added thread_id={thread_id} context to messages")
-        
-        return {'messages': updated_messages}
 
 
 class RelevanceGuardrailMiddleware(AgentMiddleware):

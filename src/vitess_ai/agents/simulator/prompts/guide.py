@@ -47,7 +47,7 @@ Optimal default values for most neutron guide simulations. Use schema default fo
   "ShapeFileName": ""
 }}
 
-3. **Guide file is optional**: If the user has already uploaded a guide file (check with file_status(thread_id) or get_file(thread_id)), use that path for ShapeFileName in the JSON. Otherwise do NOT ask for upload; leave ShapeFileName empty ("") so -S is omitted in the CLI.
+3. **Guide file is optional**: If the user has already uploaded a guide file (check with file_status() or get_file()), use that path for ShapeFileName in the JSON. Otherwise do NOT ask for upload; leave ShapeFileName empty ("") so -S is omitted in the CLI.
 4. Present final JSON configuration as a properly formatted JSON string (with escaped quotes)
 5. Validate the configuration using validate_guide_module tool
 
@@ -72,7 +72,7 @@ IMPORTANT NOTES
 
 **JSON Format:** Always present final configurations as proper JSON strings with escaped double quotes, not Python dictionaries.
 
-**File Upload:** The guide file is optional. Files are uploaded via the Streamlit sidebar only; they are stored in {{project}}/{{thread_id}}/uploads/guide. Use file_status(thread_id) to check and get_file(thread_id) to get the path for ShapeFileName; otherwise leave ShapeFileName empty so -S is omitted (default configuration).
+**File Upload:** The guide file is optional. Files are uploaded via the Streamlit sidebar only; they are stored in {{project}}/{{thread_id}}/uploads/guide. Use file_status() to check and get_file() to get the path for ShapeFileName; otherwise leave ShapeFileName empty so -S is omitted (default configuration).
 
 **Validation:** Always use the validate_guide_module tool before presenting final configuration.
 
@@ -86,8 +86,8 @@ IMPORTANT NOTES
 
 **Available Tools:**
 - validate_guide_module: Validate the complete configuration
-- file_status: List file in uploads/guide. Pass thread_id.
-- get_file: Get guide file path from uploads/guide. Pass thread_id.
+- file_status: List file in uploads/guide. thread_id is resolved from runtime automatically.
+- get_file: Get guide file path from uploads/guide. thread_id is resolved from runtime automatically.
 
 Focus on providing clear guidance while keeping the process simple and user-friendly.
 """
@@ -132,7 +132,7 @@ YOUR TASK - CUSTOMIZE CONFIGURATION
    - M-values should be in 1.0-6.0 range, warn if outside 2.0-4.0 optimal range
    - Check that exit dimensions are reasonable relative to entrance dimensions
 
-4. **Guide file is optional**: If the user has uploaded a guide file (check with file_status(thread_id) or get_file(thread_id)), set ShapeFileName from the tool result. Otherwise leave ShapeFileName empty ("") so -S is omitted. Do not require the user to upload a guide file.
+4. **Guide file is optional**: If the user has uploaded a guide file (check with file_status() or get_file()), set ShapeFileName from the tool result. Otherwise leave ShapeFileName empty ("") so -S is omitted. Do not require the user to upload a guide file.
 5. Build final configuration with all user choices
 6. Validate the complete configuration using validate_guide_module tool
 7. Present final JSON string with proper formatting and escaped quotes
@@ -169,7 +169,7 @@ IMPORTANT NOTES
 
 **M-Value Handling:** When user provides one m-value, automatically apply it to MValGenL, MValGenR, and MValGenTB. Explain: "This m-value will be applied to all guide walls."
 
-**File Upload:** The guide file is optional. Files are uploaded via the Streamlit sidebar only; use file_status(thread_id) to check and get_file(thread_id) to get the path for ShapeFileName; otherwise leave ShapeFileName empty so -S is omitted (default configuration).
+**File Upload:** The guide file is optional. Files are uploaded via the Streamlit sidebar only; use file_status() to check and get_file() to get the path for ShapeFileName; otherwise leave ShapeFileName empty so -S is omitted (default configuration).
 
 **Validation:** Always use the validate_guide_module tool before presenting final configuration.
 
@@ -183,8 +183,8 @@ IMPORTANT NOTES
 
 **Available Tools:**
 - validate_guide_module: Validate the complete configuration
-- file_status: List file in uploads/guide. Pass thread_id.
-- get_file: Get guide file path from uploads/guide. Pass thread_id.
+- file_status: List file in uploads/guide. thread_id is resolved from runtime automatically.
+- get_file: Get guide file path from uploads/guide. thread_id is resolved from runtime automatically.
 
 Focus on providing clear guidance while keeping the process simple and user-friendly.
 """

@@ -12,10 +12,11 @@ import os
 from pathlib import Path
 from typing import Any, Union
 
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
 from vitess_ai.schema.monitor1d_module import Monitor1DParameters
 from vitess_ai.schema.monitor2d_module import Monitor2DParameters
 from vitess_ai.schema.base import get_field_flag
+from vitess_ai.agents.simulator.tools.runtime_utils import resolve_thread_id
 
 _monitor1d_file_path: str | None = None
 _monitor2d_file_path: str | None = None
@@ -151,7 +152,10 @@ def _default_monitor2d_path(parsed: dict, resolved_thread_id: str | None) -> Non
 
 
 @tool
-async def validate_monitor1d_module(parameters: Union[str, dict[str, Any]]) -> dict[str, Any]:
+async def validate_monitor1d_module(
+    parameters: Union[str, dict[str, Any]],
+    runtime: ToolRuntime = None,
+) -> dict[str, Any]:
     """Validate Monitor1D parameters from JSON string or dictionary. Returns validation result and CLI string if valid."""
     try:
         if isinstance(parameters, str):
@@ -163,7 +167,7 @@ async def validate_monitor1d_module(parameters: Union[str, dict[str, Any]]) -> d
             parsed_parameters = parameters
         else:
             return {"validation_status": False, "errors": f"Expected JSON string or dict, got {type(parameters)}", "message": f"Monitor1D validation failed: Invalid parameter type {type(parameters)}"}
-        resolved_thread_id = os.environ.get("THREAD_ID")
+        resolved_thread_id = resolve_thread_id(runtime=runtime)
         _default_monitor1d_path(parsed_parameters, resolved_thread_id)
         validated = Monitor1DParameters(**parsed_parameters)
         cli = monitor1d_params_to_cli(validated.model_dump())
@@ -173,7 +177,10 @@ async def validate_monitor1d_module(parameters: Union[str, dict[str, Any]]) -> d
 
 
 @tool
-async def validate_monitor2d_module(parameters: Union[str, dict[str, Any]]) -> dict[str, Any]:
+async def validate_monitor2d_module(
+    parameters: Union[str, dict[str, Any]],
+    runtime: ToolRuntime = None,
+) -> dict[str, Any]:
     """Validate Monitor2D parameters from JSON string or dictionary. Returns validation result and CLI string if valid."""
     try:
         if isinstance(parameters, str):
@@ -185,7 +192,7 @@ async def validate_monitor2d_module(parameters: Union[str, dict[str, Any]]) -> d
             parsed_parameters = parameters
         else:
             return {"validation_status": False, "errors": f"Expected JSON string or dict, got {type(parameters)}", "message": f"Monitor2D validation failed: Invalid parameter type {type(parameters)}"}
-        resolved_thread_id = os.environ.get("THREAD_ID")
+        resolved_thread_id = resolve_thread_id(runtime=runtime)
         _default_monitor2d_path(parsed_parameters, resolved_thread_id)
         validated = Monitor2DParameters(**parsed_parameters)
         cli = monitor2d_params_to_cli(validated.model_dump())
@@ -195,16 +202,23 @@ async def validate_monitor2d_module(parameters: Union[str, dict[str, Any]]) -> d
 
 
 @tool
-async def set_monitor1d_file_path(file_path: str | None = None, thread_id: str | None = None) -> dict[str, Any]:
-    """Set the output file path for Monitor1D. If no path given, defaults to outputs/monitor1D.dat in thread directory. Pass thread_id to load from storage."""
+async def set_monitor1d_file_path(
+    file_path: str | None = None,
+    thread_id: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict[str, Any]:
+    """Set Monitor1D output path. thread_id resolves from runtime config when omitted."""
     global _monitor1d_file_path, _thread_id
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
     if not file_path and not _monitor1d_file_path:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_monitor1d_path_from_storage, thread_id)
+        if resolved_thread_id:
+            _thread_id = resolved_thread_id
+        await asyncio.to_thread(
+            _try_load_monitor1d_path_from_storage, resolved_thread_id
+        )
         if _monitor1d_file_path:
             file_path = _monitor1d_file_path
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
+    resolved_thread_id = resolved_thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not file_path:
@@ -226,16 +240,23 @@ async def set_monitor1d_file_path(file_path: str | None = None, thread_id: str |
 
 
 @tool
-async def set_monitor2d_file_path(file_path: str | None = None, thread_id: str | None = None) -> dict[str, Any]:
-    """Set the output file path for Monitor2D. If no path given, defaults to outputs/monitor2D.dat in thread directory. Pass thread_id to load from storage."""
+async def set_monitor2d_file_path(
+    file_path: str | None = None,
+    thread_id: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict[str, Any]:
+    """Set Monitor2D output path. thread_id resolves from runtime config when omitted."""
     global _monitor2d_file_path, _thread_id
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
     if not file_path and not _monitor2d_file_path:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_monitor2d_path_from_storage, thread_id)
+        if resolved_thread_id:
+            _thread_id = resolved_thread_id
+        await asyncio.to_thread(
+            _try_load_monitor2d_path_from_storage, resolved_thread_id
+        )
         if _monitor2d_file_path:
             file_path = _monitor2d_file_path
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
+    resolved_thread_id = resolved_thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not file_path:
@@ -257,14 +278,19 @@ async def set_monitor2d_file_path(file_path: str | None = None, thread_id: str |
 
 
 @tool
-async def get_monitor1d_file_path(thread_id: str | None = None) -> dict[str, Any]:
-    """Get the current Monitor1D output file path. If none set, defaults to outputs/monitor1D.dat. Pass thread_id to load from storage."""
+async def get_monitor1d_file_path(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict[str, Any]:
+    """Get Monitor1D output path. thread_id resolves from runtime config when omitted."""
     global _monitor1d_file_path, _thread_id
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
     if not _monitor1d_file_path:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_monitor1d_path_from_storage, thread_id)
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
+        if resolved_thread_id:
+            _thread_id = resolved_thread_id
+        await asyncio.to_thread(
+            _try_load_monitor1d_path_from_storage, resolved_thread_id
+        )
+    resolved_thread_id = resolved_thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not _monitor1d_file_path:
@@ -279,14 +305,19 @@ async def get_monitor1d_file_path(thread_id: str | None = None) -> dict[str, Any
 
 
 @tool
-async def get_monitor2d_file_path(thread_id: str | None = None) -> dict[str, Any]:
-    """Get the current Monitor2D output file path. If none set, defaults to outputs/monitor2D.dat. Pass thread_id to load from storage."""
+async def get_monitor2d_file_path(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict[str, Any]:
+    """Get Monitor2D output path. thread_id resolves from runtime config when omitted."""
     global _monitor2d_file_path, _thread_id
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
     if not _monitor2d_file_path:
-        if thread_id:
-            _thread_id = thread_id
-        await asyncio.to_thread(_try_load_monitor2d_path_from_storage, thread_id)
-    resolved_thread_id = thread_id or _thread_id or os.environ.get("THREAD_ID")
+        if resolved_thread_id:
+            _thread_id = resolved_thread_id
+        await asyncio.to_thread(
+            _try_load_monitor2d_path_from_storage, resolved_thread_id
+        )
+    resolved_thread_id = resolved_thread_id or _thread_id or os.environ.get("THREAD_ID")
     if resolved_thread_id:
         _thread_id = resolved_thread_id
     if not _monitor2d_file_path:

@@ -10,10 +10,11 @@ import asyncio
 import json
 from typing import Any
 
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
 from vitess_ai.core.log import get_logger
 from vitess_ai.schema.readin_module import NF_MAX, ReadInParameters
 from vitess_ai.schema.base import get_field_flag, VtPrgFormat
+from vitess_ai.agents.simulator.tools.runtime_utils import resolve_thread_id
 
 logger = get_logger(__name__)
 
@@ -52,21 +53,28 @@ def _list_readin_files_for_thread(thread_id: str) -> list[str]:
 
 
 @tool
-async def file_status(thread_id: str | None = None) -> dict:
-    """List files in  {thread_id}/uploads/readin. Pass thread_id to check that folder."""
-    if not thread_id:
+async def file_status(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict:
+    """List files in {thread_id}/uploads/readin. thread_id resolves from runtime config when omitted."""
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
+    if not resolved_thread_id:
         return {
             "has_files": False,
-            "message": "No thread_id provided.",
+            "message": "No thread_id available.",
             "files": [],
             "file_count": 0,
             "sInputFileName": [None] * NF_MAX,
         }
-    files = await asyncio.to_thread(_list_readin_files_for_thread, thread_id)
+    files = await asyncio.to_thread(_list_readin_files_for_thread, resolved_thread_id)
     files = files[:NF_MAX]
     return {
         "has_files": len(files) > 0,
-        "message": f"{len(files)} file(s) in {thread_id}/uploads/readin." if files else f"No files in {thread_id}/uploads/readin.",
+        "message": (
+            f"{len(files)} file(s) in {resolved_thread_id}/uploads/readin."
+            if files
+            else f"No files in {resolved_thread_id}/uploads/readin."
+        ),
         "files": files,
         "file_count": len(files),
         "sInputFileName": files + [None] * (NF_MAX - len(files)),
@@ -77,11 +85,14 @@ async def file_status(thread_id: str | None = None) -> dict:
 
 
 @tool
-async def get_files(thread_id: str | None = None) -> dict[str, Any] | str:
-    """Get the list of files in {project}/{thread_id}/uploads/readin. Pass thread_id."""
-    if not thread_id:
-        return "No thread_id provided. Pass thread_id to get files from uploads/readin."
-    files = await asyncio.to_thread(_list_readin_files_for_thread, thread_id)
+async def get_files(
+    thread_id: str | None = None, runtime: ToolRuntime = None
+) -> dict[str, Any] | str:
+    """Get files in {project}/{thread_id}/uploads/readin. thread_id resolves from runtime config when omitted."""
+    resolved_thread_id = resolve_thread_id(thread_id, runtime)
+    if not resolved_thread_id:
+        return "No thread_id available. Provide thread_id or ensure it exists in runtime config."
+    files = await asyncio.to_thread(_list_readin_files_for_thread, resolved_thread_id)
     files = files[:NF_MAX]
     if not files:
         return "No files in uploads/readin. Use the Streamlit UI to upload files."
@@ -93,9 +104,14 @@ async def get_files(thread_id: str | None = None) -> dict[str, Any] | str:
 
 
 @tool
-async def validate_readin_module(parameters: str, thread_id: str | None = None) -> dict:
-    """Validate Read-in module parameters. Pass JSON string containing ReadInParameters. sInputFileName can be filled from params (files/existing_files) or from uploads when thread_id is provided."""
+async def validate_readin_module(
+    parameters: str,
+    thread_id: str | None = None,
+    runtime: ToolRuntime = None,
+) -> dict:
+    """Validate ReadIn params JSON. sInputFileName can be derived from params or uploads via resolved thread_id."""
     try:
+        resolved_thread_id = resolve_thread_id(thread_id, runtime)
         params = json.loads(parameters)
         if not params.get("sInputFileName"):
             candidate_files = None
@@ -103,8 +119,10 @@ async def validate_readin_module(parameters: str, thread_id: str | None = None) 
                 candidate_files = params["files"]
             elif isinstance(params.get("existing_files"), list) and params["existing_files"]:
                 candidate_files = params["existing_files"]
-            elif thread_id:
-                candidate_files = await asyncio.to_thread(_list_readin_files_for_thread, thread_id)
+            elif resolved_thread_id:
+                candidate_files = await asyncio.to_thread(
+                    _list_readin_files_for_thread, resolved_thread_id
+                )
                 candidate_files = (candidate_files or [])[:NF_MAX]
             if candidate_files:
                 params["sInputFileName"] = candidate_files[:NF_MAX]
@@ -112,7 +130,10 @@ async def validate_readin_module(parameters: str, thread_id: str | None = None) 
                 return {
                     "validation_status": False,
                     "errors": "sInputFileName is required but not provided and no files selected.",
-                    "message": "Provide sInputFileName or pass files in the JSON, or provide thread_id to use files from uploads.",
+                    "message": (
+                        "Provide sInputFileName or pass files in the JSON, "
+                        "or ensure thread_id is available (arg/runtime) to use uploads."
+                    ),
                 }
         files_list = [p for p in params.get("sInputFileName", []) if p is not None]
         weights_list = params.get("Weight", [])

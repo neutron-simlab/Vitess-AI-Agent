@@ -28,7 +28,6 @@ from vitess_ai.agents.simulator.base_agent import (
 from vitess_ai.agents.simulator.state import UnifiedState
 from vitess_ai.agents.simulator.middleware import (
     MessageFilterMiddleware, 
-    ThreadIdMiddleware,
     RelevanceGuardrailMiddleware
 )
 from vitess_ai.core.config import global_config
@@ -342,13 +341,12 @@ class SupervisorAgent:
                 model=self.config.model
             )
             message_filter = MessageFilterMiddleware(module_name=module_name)
-            thread_id_middleware = ThreadIdMiddleware()
             # Create react-agent with comprehensive prompt (includes both default and custom modes)
-            # Pass middleware to filter messages and inject thread_id context
+            # Pass middleware to filter messages
             # Guardrail is first to evaluate relevance before other processing
             react_agent = agent.create_module_react_agent(
                 config_mode=None,  # None = handle dynamically
-                middleware=[relevance_guardrail, message_filter, thread_id_middleware]
+                middleware=[relevance_guardrail, message_filter]
             )
             # Wrap react-agent to handle state updates and welcome messages
             # Pass message_filter so wrapper can use same filtering logic for pre-filtering
