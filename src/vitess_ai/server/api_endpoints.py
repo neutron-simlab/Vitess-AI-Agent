@@ -18,7 +18,7 @@ from vitess_ai.server.agent_registry import DEFAULT_AGENT, get_agent, restart_ag
 from vitess_ai.schema.server import ChatMessage, StreamInput, UserInput
 from vitess_ai.core.config import global_config
 from vitess_ai.schema.llm_models import Provider, get_default_model_for_provider
-from vitess_ai.server.utils import langchain_to_chat_message, set_thread_id_env
+from vitess_ai.server.utils import langchain_to_chat_message, set_request_thread_id_env
 from vitess_ai.server.errors import (
     AgentNotFoundError,
     StreamingError,
@@ -69,9 +69,8 @@ async def message_generator(
         return
     
     try:
-        # Set thread_id as environment variable for MCP tools
-        if user_input.thread_id:
-            set_thread_id_env(user_input.thread_id)
+        # Set or clear thread_id env for this request so we never reuse a previous request's thread_id
+        set_request_thread_id_env(user_input.thread_id)
         
         kwargs, run_id = await AgentInputHandler.prepare_input(
             user_input.message,
@@ -151,9 +150,8 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
         raise HTTPException(status_code=404, detail=e.message)
     
     try:
-        # Set thread_id as environment variable for MCP tools
-        if user_input.thread_id:
-            set_thread_id_env(user_input.thread_id)
+        # Set or clear thread_id env for this request so we never reuse a previous request's thread_id
+        set_request_thread_id_env(user_input.thread_id)
         
         kwargs, run_id = await AgentInputHandler.prepare_input(
             user_input.message,
