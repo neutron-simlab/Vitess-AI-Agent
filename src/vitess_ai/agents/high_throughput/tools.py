@@ -443,59 +443,34 @@ async def convert_matrix_to_run_specs(
 # ============================================================================
 
 @tool
-async def run_single_simulation(
-    module_results: dict[str, Any],
-    execution_order: list[str],
-    thread_id: str | None = None,
-    execute: bool = True,
-) -> dict[str, Any]:
-    """
-    Run a single simulation using the MCP run_simulation tool.
-
-    Args:
-        module_results: Dict with module names as keys and {cli_parameters: "..."} as values.
-        execution_order: List of module names in execution order.
-        thread_id: Optional thread ID.
-        execute: Whether to execute (True) or just generate CLI (False).
-
-    Returns:
-        Simulation execution result from MCP.
-    """
-    from vitess_ai.mcp import supervisor_tools
-
-    resolved_thread_id = _resolve_thread_id(thread_id)
-
-    result = await supervisor_tools.run_simulation.fn(
-        module_results=module_results,
-        execution_order=execution_order,
-        execute=execute,
-        thread_id=resolved_thread_id,
-    )
-
-    return result
-
-
-@tool
 async def run_batch_from_matrix(
     thread_id: str | None = None,
     filename: str = "simulation_matrix.json",
     execution_order: list[str] | None = None,
     execute: bool = True,
+    run_specs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
-    Run all simulations from a matrix file sequentially.
+    Run 1 to N simulations sequentially via MCP.
 
-    Loads the matrix, converts to CLI, and runs each simulation via MCP.
+    Accepts either in-memory run_specs or a matrix file. When run_specs is
+    provided and non-empty, it is used directly (filename is ignored).
+    Otherwise the matrix is loaded from filename and converted to run_specs.
 
     Args:
-        thread_id: Optional thread ID.
-        filename: Simulation matrix filename.
+        thread_id: Optional thread ID. Required when executing.
+        filename: Simulation matrix filename (used only when run_specs is not provided).
         execution_order: Module execution order. If None, inferred from each simulation
             in the matrix (can include monitor1d, monitor2d when present).
+            Ignored when run_specs is provided.
         execute: Whether to execute (True) or just generate CLIs (False).
+        run_specs: Optional list of run specs, each with run_name, module_results,
+            execution_order. When provided and non-empty, use this instead of loading
+            from filename. Use for single or multiple in-memory runs (e.g. from
+            convert_matrix_to_run_specs).
 
     Returns:
-        Dictionary with results for each simulation.
+        Dictionary with results for each simulation (total_runs, succeeded, failed, results).
     """
     from vitess_ai.mcp import supervisor_tools
 
@@ -503,21 +478,27 @@ async def run_batch_from_matrix(
     if not resolved_thread_id:
         return {"success": False, "message": "No thread_id available."}
 
-    # Step 1: Convert matrix to run specs (execution_order=None => inferred from matrix per sim)
-    conversion = await convert_matrix_to_run_specs.ainvoke({
-        "thread_id": resolved_thread_id,
-        "filename": filename,
-        "execution_order": execution_order,
-    })
-
-    if not conversion.get("success"):
-        return conversion
-
-    run_specs = conversion.get("run_specs", [])
+    # Resolve run_specs: either use provided list or load from matrix file
+    if run_specs:
+        run_specs = list(run_specs)
     if not run_specs:
-        return {"success": False, "thread_id": resolved_thread_id, "message": "No run specs generated."}
+        # Load matrix and convert to run specs
+        conversion = await convert_matrix_to_run_specs.ainvoke({
+            "thread_id": resolved_thread_id,
+            "filename": filename,
+            "execution_order": execution_order,
+        })
+        if not conversion.get("success"):
+            return conversion
+        run_specs = conversion.get("run_specs", [])
+    if not run_specs:
+        return {
+            "success": False,
+            "thread_id": resolved_thread_id,
+            "message": "No run specs to execute. Provide run_specs or ensure matrix file exists at filename.",
+        }
 
-    # Step 2: Run each simulation sequentially via MCP
+    # Run each simulation sequentially via MCP
     results = []
     succeeded = 0
     failed = 0
@@ -737,7 +718,6 @@ def get_high_throughput_tools() -> list[Any]:
         write_simulation_matrix,
         read_simulation_matrix,
         convert_matrix_to_run_specs,
-        run_single_simulation,
         run_batch_from_matrix,
         generate_plot_1d,
         generate_plot_2d,
@@ -753,7 +733,6 @@ def get_sim_runner_tools() -> list[Any]:
     streams to the UI correctly.
     """
     return [
-        run_single_simulation,
         run_batch_from_matrix,
     ]
 
