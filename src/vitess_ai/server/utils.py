@@ -131,15 +131,27 @@ def langchain_to_chat_message(message: BaseMessage, module_name: str = None) -> 
                 metadata = message.additional_kwargs
                 if "module_name" in metadata and not module_name:
                     tool_message.custom_data["module_name"] = metadata["module_name"]
-            
-            # Try to detect if this is an MCP tool by checking metadata or content
-            # MCP tools typically return JSON with validation_status or similar fields
+
+            # Extract plot_data from artifact (HT tools use content_and_artifact
+            # format so large Plotly JSON stays out of the LLM context window).
+            if hasattr(message, "artifact") and isinstance(message.artifact, dict):
+                if "plot_data" in message.artifact:
+                    tool_message.custom_data["plot_data"] = message.artifact["plot_data"]
+
+            # Try to detect MCP tool responses by parsing content
             content_str = convert_message_content_to_string(message.content)
-            try:
-                import json
-                parsed_content = json.loads(content_str)
+            parsed_content = None
+            if isinstance(message.content, dict):
+                parsed_content = message.content
+            else:
+                try:
+                    import json
+                    parsed_content = json.loads(content_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if isinstance(parsed_content, dict):
                 # Check for MCP-specific response patterns
-                if isinstance(parsed_content, dict) and (
+                if (
                     "validation_status" in parsed_content or
                     "cli_parameters" in parsed_content or
                     "validated_params" in parsed_content or
@@ -149,15 +161,13 @@ def langchain_to_chat_message(message: BaseMessage, module_name: str = None) -> 
                         "source": "mcp",
                         "is_mcp_tool": True
                     })
-            except (json.JSONDecodeError, TypeError):
-                # Not JSON, but we can still check metadata if available
-                if hasattr(message, "additional_kwargs"):
-                    metadata = message.additional_kwargs
-                    if metadata.get("source") == "mcp":
-                        tool_message.custom_data.update({
-                            "source": "mcp",
-                            "is_mcp_tool": True
-                        })
+            elif hasattr(message, "additional_kwargs") and message.additional_kwargs:
+                if message.additional_kwargs.get("source") == "mcp":
+                    tool_message.custom_data.update({
+                        "source": "mcp",
+                        "is_mcp_tool": True
+                    })
+
             return tool_message
         case SystemMessage():
             system_message = ChatMessage(

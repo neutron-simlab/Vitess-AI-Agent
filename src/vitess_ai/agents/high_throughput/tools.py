@@ -37,6 +37,24 @@ MODULE_CLI_CONVERTERS = {
     "monitor2d": monitor2d_params_to_cli,
 }
 
+# Canonical order for pipeline; used to infer execution_order from matrix when not provided.
+# Monitors are last so they receive piped input from writeout.
+CANONICAL_EXECUTION_ORDER = ["readin", "guide", "writeout", "monitor1d", "monitor2d"]
+
+
+def _execution_order_for_simulation(
+    simulation: dict[str, Any],
+    execution_order: list[str] | None,
+) -> list[str]:
+    """
+    Resolve execution_order for a single simulation.
+    When execution_order is None, infer from simulation keys using canonical order.
+    When provided, use only modules that are present in this simulation.
+    """
+    if execution_order is not None:
+        return [m for m in execution_order if simulation.get(m)]
+    return [m for m in CANONICAL_EXECUTION_ORDER if simulation.get(m)]
+
 
 def _convert_simulation_to_module_results(
     simulation: dict[str, Any],
@@ -359,7 +377,9 @@ async def convert_matrix_to_run_specs(
     Args:
         thread_id: Optional thread ID.
         filename: Simulation matrix filename.
-        execution_order: Module execution order. Defaults to ["readin", "guide", "writeout"].
+        execution_order: Module execution order. If None, inferred from each simulation's
+            keys using canonical order (readin, guide, writeout, monitor1d, monitor2d),
+            so monitor modules are included when present in the matrix.
 
     Returns:
         Dictionary with run_specs ready for run_simulation MCP tool.
@@ -367,9 +387,6 @@ async def convert_matrix_to_run_specs(
     resolved_thread_id = _resolve_thread_id(thread_id)
     if not resolved_thread_id:
         return {"success": False, "message": "No thread_id available."}
-
-    if not execution_order:
-        execution_order = ["readin", "guide", "writeout"]
 
     file_path = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs" / filename
     if not file_path.exists():
@@ -394,13 +411,17 @@ async def convert_matrix_to_run_specs(
 
     for sim in simulations:
         sim_id = sim.get("id", f"sim_{len(run_specs) + 1:03d}")
-        conversion = _convert_simulation_to_module_results(sim, execution_order)
+        exec_order = _execution_order_for_simulation(sim, execution_order)
+        if not exec_order:
+            errors.append(f"[{sim_id}] No known modules found in simulation keys: {list(sim.keys())}")
+            continue
+        conversion = _convert_simulation_to_module_results(sim, exec_order)
 
         if conversion["success"]:
             run_specs.append({
                 "run_name": sim_id,
                 "module_results": conversion["module_results"],
-                "execution_order": execution_order,
+                "execution_order": exec_order,
             })
         else:
             errors.extend([f"[{sim_id}] {e}" for e in conversion["errors"]])
@@ -411,7 +432,7 @@ async def convert_matrix_to_run_specs(
         "total_simulations": len(simulations),
         "converted_runs": len(run_specs),
         "run_specs": run_specs,
-        "execution_order": execution_order,
+        "execution_order": run_specs[0]["execution_order"] if run_specs else [],
         "errors": errors if errors else None,
         "message": f"Converted {len(run_specs)}/{len(simulations)} simulations to run specs.",
     }
@@ -469,7 +490,8 @@ async def run_batch_from_matrix(
     Args:
         thread_id: Optional thread ID.
         filename: Simulation matrix filename.
-        execution_order: Module execution order. Defaults to ["readin", "guide", "writeout"].
+        execution_order: Module execution order. If None, inferred from each simulation
+            in the matrix (can include monitor1d, monitor2d when present).
         execute: Whether to execute (True) or just generate CLIs (False).
 
     Returns:
@@ -481,13 +503,11 @@ async def run_batch_from_matrix(
     if not resolved_thread_id:
         return {"success": False, "message": "No thread_id available."}
 
-    default_exec_order = execution_order or ["readin", "guide", "writeout"]
-
-    # Step 1: Convert matrix to run specs
+    # Step 1: Convert matrix to run specs (execution_order=None => inferred from matrix per sim)
     conversion = await convert_matrix_to_run_specs.ainvoke({
         "thread_id": resolved_thread_id,
         "filename": filename,
-        "execution_order": default_exec_order,
+        "execution_order": execution_order,
     })
 
     if not conversion.get("success"):
@@ -505,7 +525,7 @@ async def run_batch_from_matrix(
     for run_spec in run_specs:
         run_name = run_spec.get("run_name", "unknown")
         module_results = run_spec.get("module_results", {})
-        exec_order = run_spec.get("execution_order", default_exec_order)
+        exec_order = run_spec.get("execution_order", CANONICAL_EXECUTION_ORDER)
 
         try:
             sim_result = await supervisor_tools.run_simulation.fn(
@@ -554,6 +574,159 @@ async def run_batch_from_matrix(
 
 
 # ============================================================================
+# PLOT GENERATION
+# ============================================================================
+
+def _get_outputs_dir(thread_id: str | None, run_id: str | None) -> dict[str, Any]:
+    """Resolve thread_id and run_id to outputs directory path. Returns error dict or dict with 'outputs_dir'."""
+    resolved_thread_id = _resolve_thread_id(thread_id)
+    if not resolved_thread_id:
+        return {
+            "success": False,
+            "error": "No thread_id available.",
+            "plot_data": {},
+            "message": "No thread_id provided and not available in environment.",
+        }
+    outputs_dir = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
+    if run_id:
+        outputs_dir = outputs_dir / run_id
+    if not outputs_dir.exists():
+        return {
+            "success": False,
+            "error": f"Output directory not found: {outputs_dir}",
+            "plot_data": {},
+            "message": f"Directory {outputs_dir} does not exist.",
+        }
+    return {"success": True, "outputs_dir": outputs_dir}
+
+
+@tool(response_format="content_and_artifact")
+async def generate_plot_1d(
+    thread_id: str | None = None,
+    run_id: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Generate an interactive Monitor1D plot from simulation output.
+
+    Looks for monitor1D.dat in the run output directory and returns plot_data
+    suitable for UI rendering (same shape as simulator plots).
+
+    The plot data is returned as an artifact (not visible to the LLM) so that
+    large Plotly JSON payloads do not consume the context window.
+
+    Args:
+        thread_id: Optional thread ID. If not provided, uses THREAD_ID from environment.
+        run_id: Optional run ID (e.g. sim_001). If set, looks in outputs/run_id/;
+                if None, looks in thread outputs/ (flat, single-run case).
+
+    Returns:
+        Tuple of (content_for_llm, artifact_dict).
+        artifact_dict has success, plot_data (monitor1d with plot_json, title, etc.).
+    """
+    out = _get_outputs_dir(thread_id, run_id)
+    if not out.get("success"):
+        return (out.get("message", "Failed to resolve output directory."), out)
+
+    outputs_dir: Path = out["outputs_dir"]
+    try:
+        from vitess_ai.plots.vitess_plot import read_mfile_plotly
+    except ImportError as e:
+        return (
+            f"Could not load plotting library: {e}",
+            {"success": False, "error": str(e), "plot_data": {}},
+        )
+
+    monitor1d_file = outputs_dir / "monitor1D.dat"
+    if not monitor1d_file.exists():
+        return (
+            "monitor1D.dat not found in output directory.",
+            {"success": True, "plot_data": {}},
+        )
+
+    result = read_mfile_plotly(str(monitor1d_file))
+    if not result.get("success"):
+        msg = result.get("error", "Failed to generate Monitor1D plot.")
+        return (msg, {"success": False, "error": msg, "plot_data": {}})
+
+    plot_data = {
+        "monitor1d": {
+            "plot_json": result["plot_json"],
+            "title": result.get("title", "Monitor1D Results"),
+            "xaxis": result.get("xaxis", "x"),
+            "yaxis": result.get("yaxis", "Intensity [n/s]"),
+            "plot_type": "monitor1d",
+        }
+    }
+    return (
+        "The plot has been generated and is displayed in the UI. No further action needed.",
+        {"success": True, "plot_data": plot_data},
+    )
+
+
+@tool(response_format="content_and_artifact")
+async def generate_plot_2d(
+    thread_id: str | None = None,
+    run_id: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Generate an interactive Monitor2D plot from simulation output.
+
+    Looks for monitor2D.dat in the run output directory and returns plot_data
+    suitable for UI rendering (same shape as simulator plots).
+
+    The plot data is returned as an artifact (not visible to the LLM) so that
+    large Plotly JSON payloads do not consume the context window.
+
+    Args:
+        thread_id: Optional thread ID. If not provided, uses THREAD_ID from environment.
+        run_id: Optional run ID (e.g. sim_001). If set, looks in outputs/run_id/;
+                if None, looks in thread outputs/ (flat, single-run case).
+
+    Returns:
+        Tuple of (content_for_llm, artifact_dict).
+        artifact_dict has success, plot_data (monitor2d with plot_json, title, etc.).
+    """
+    out = _get_outputs_dir(thread_id, run_id)
+    if not out.get("success"):
+        return (out.get("message", "Failed to resolve output directory."), out)
+
+    outputs_dir: Path = out["outputs_dir"]
+    try:
+        from vitess_ai.plots.vitess_plot import read_mfile_plotly
+    except ImportError as e:
+        return (
+            f"Could not load plotting library: {e}",
+            {"success": False, "error": str(e), "plot_data": {}},
+        )
+
+    monitor2d_file = outputs_dir / "monitor2D.dat"
+    if not monitor2d_file.exists():
+        return (
+            "monitor2D.dat not found in output directory.",
+            {"success": True, "plot_data": {}},
+        )
+
+    result = read_mfile_plotly(str(monitor2d_file))
+    if not result.get("success"):
+        msg = result.get("error", "Failed to generate Monitor2D plot.")
+        return (msg, {"success": False, "error": msg, "plot_data": {}})
+
+    plot_data = {
+        "monitor2d": {
+            "plot_json": result["plot_json"],
+            "title": result.get("title", "Monitor2D Results"),
+            "xaxis": result.get("xaxis", "x"),
+            "yaxis": result.get("yaxis", "y"),
+            "plot_type": "monitor2d",
+        }
+    }
+    return (
+        "The plot has been generated and is displayed in the UI. No further action needed.",
+        {"success": True, "plot_data": plot_data},
+    )
+
+
+# ============================================================================
 # TOOL EXPORTS
 # ============================================================================
 
@@ -566,11 +739,19 @@ def get_high_throughput_tools() -> list[Any]:
         convert_matrix_to_run_specs,
         run_single_simulation,
         run_batch_from_matrix,
+        generate_plot_1d,
+        generate_plot_2d,
     ]
 
 
 def get_sim_runner_tools() -> list[Any]:
-    """Return tools for the simulation runner subagent."""
+    """Return tools for the simulation runner subagent.
+
+    Plot tools (generate_plot_1d, generate_plot_2d) are intentionally excluded
+    so that only the main deep agent runs them. That way the ToolMessage
+    (including the artifact with plot_data) is emitted by the main agent and
+    streams to the UI correctly.
+    """
     return [
         run_single_simulation,
         run_batch_from_matrix,
@@ -585,4 +766,6 @@ def get_shared_high_throughput_tools() -> list[Any]:
         read_simulation_matrix,
         convert_matrix_to_run_specs,
         run_batch_from_matrix,
+        generate_plot_1d,
+        generate_plot_2d,
     ]

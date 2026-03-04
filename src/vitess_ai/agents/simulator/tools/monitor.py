@@ -114,41 +114,33 @@ def monitor2d_params_to_cli(params: dict) -> str:
 
 
 def _default_monitor1d_path(parsed: dict, resolved_thread_id: str | None) -> None:
-    from vitess_ai.core.config import global_config
-    if "fMonitorFilename" not in parsed or not parsed.get("fMonitorFilename"):
-        if resolved_thread_id:
-            default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
-            default_directory.mkdir(parents=True, exist_ok=True)
-            parsed["fMonitorFilename"] = str(default_directory / "monitor1D.dat")
-        else:
-            parsed["fMonitorFilename"] = "outputs/monitor1D.dat"
-    elif parsed.get("fMonitorFilename") and "outputs/" not in parsed["fMonitorFilename"]:
-        filename = os.path.basename(parsed["fMonitorFilename"])
-        if resolved_thread_id:
-            default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
-            default_directory.mkdir(parents=True, exist_ok=True)
-            parsed["fMonitorFilename"] = str(default_directory / filename)
-        else:
-            parsed["fMonitorFilename"] = f"outputs/{filename}"
+    """Set default fMonitorFilename. Use filename only so -O is resolved relative to -P (run directory)."""
+    val = parsed.get("fMonitorFilename") or ""
+    if not val.strip():
+        parsed["fMonitorFilename"] = "monitor1D.dat"
+        return
+    filename = os.path.basename(val)
+    # If already a plain filename (no path), keep as is so CLI gets -Omonitor1D.dat
+    if val == filename or "/" not in val and "\\" not in val:
+        parsed["fMonitorFilename"] = filename if filename else "monitor1D.dat"
+        return
+    # User set an explicit path (e.g. via set_monitor1d_file_path); keep as path, CLI will use basename for -O
+    parsed["fMonitorFilename"] = val
 
 
 def _default_monitor2d_path(parsed: dict, resolved_thread_id: str | None) -> None:
-    from vitess_ai.core.config import global_config
-    if "fMonitorFilename" not in parsed or not parsed.get("fMonitorFilename"):
-        if resolved_thread_id:
-            default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
-            default_directory.mkdir(parents=True, exist_ok=True)
-            parsed["fMonitorFilename"] = str(default_directory / "monitor2D.dat")
-        else:
-            parsed["fMonitorFilename"] = "outputs/monitor2D.dat"
-    elif parsed.get("fMonitorFilename") and "outputs/" not in str(parsed["fMonitorFilename"]):
-        filename = os.path.basename(parsed["fMonitorFilename"])
-        if resolved_thread_id:
-            default_directory = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
-            default_directory.mkdir(parents=True, exist_ok=True)
-            parsed["fMonitorFilename"] = str(default_directory / filename)
-        else:
-            parsed["fMonitorFilename"] = f"outputs/{filename}"
+    """Set default fMonitorFilename. Use filename only so -O is resolved relative to -P (run directory)."""
+    val = parsed.get("fMonitorFilename") or ""
+    if not val.strip():
+        parsed["fMonitorFilename"] = "monitor2D.dat"
+        return
+    filename = os.path.basename(val)
+    # If already a plain filename (no path), keep as is so CLI gets -Omonitor2D.dat
+    if val == filename or "/" not in val and "\\" not in val:
+        parsed["fMonitorFilename"] = filename if filename else "monitor2D.dat"
+        return
+    # User set an explicit path (e.g. via set_monitor2d_file_path); keep as path, CLI will use basename for -O
+    parsed["fMonitorFilename"] = val
 
 
 def _validate_single_monitor1d_parameter_set(
@@ -463,17 +455,6 @@ async def get_monitor2d_file_path(
     return {"file_path": _monitor2d_file_path, "file_name": os.path.basename(_monitor2d_file_path), "directory": os.path.dirname(_monitor2d_file_path), "fMonitorFilename": _monitor2d_file_path}
 
 
-@tool
-async def generate_plot_1d(monitor_file_path: str) -> dict[str, Any]:
-    """Generate a 1D plot from monitor data file (optional visualization). Not yet implemented."""
-    return {"success": False, "message": "Plot generation not yet implemented.", "file_path": monitor_file_path}
-
-
-@tool
-async def generate_plot_2d(monitor_file_path: str) -> dict[str, Any]:
-    """Generate a 2D plot from monitor data file (optional visualization). Not yet implemented."""
-    return {"success": False, "message": "Plot generation not yet implemented.", "file_path": monitor_file_path}
-
 
 def get_monitor_tools():
     """Return list of LangChain tools for the monitor module (shared by Monitor1D and Monitor2D agents)."""
@@ -484,6 +465,4 @@ def get_monitor_tools():
         set_monitor2d_file_path,
         get_monitor1d_file_path,
         get_monitor2d_file_path,
-        generate_plot_1d,
-        generate_plot_2d,
     ]

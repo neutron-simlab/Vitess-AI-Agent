@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-
-from typing import Type
-
 from pydantic import BaseModel
+from typing import Type
 
 from vitess_ai.schema.guide_module import GuideParameters
 from vitess_ai.schema.monitor1d_module import Monitor1DParameters
@@ -46,13 +44,16 @@ When the user indicates they have uploaded (e.g. "I've uploaded", "done", "ready
 ================================================================================
 PHASE 2: PARAMETER VARIATION COLLECTION
 ================================================================================
+0. Modules that MUST be filled (with default values and/or variations): readin, guide, writeout, monitor1d, monitor2d.
+   You MUST delegate to ALL five modules and obtain submit_module_result from each. Do NOT stop after writeout—
+   always call the monitor1d and monitor2d subagents as well (use schema defaults if the user does not request variations).
 1. Ask user which parameters they want to vary across simulations. If the user ask what kind of parameters in the respective module, 
-e.g., read-in/guide/writeout parameters, it means read-in/guide/writeout module parameters. If the user ask what kind of parameters in the respective module, e.g., monitor1d/monitor2d parameters, it means monitor1d/monitor2d module parameters.
+e.g., read-in/guide/writeout/monitor1d/monitor2d parameters, it means read-in/guide/writeout/monitor1d/monitor2d module parameters. If the user ask what kind of parameters in the respective module, e.g., monitor1d/monitor2d parameters, it means monitor1d/monitor2d module parameters.
 2. Ask whether the user wants:
    - CARTESIAN PRODUCT: all combinations (e.g. readin 4 values × guide 3 values = 12 simulations), or
    - INDEPENDENT / PAIRED SETUPS: one simulation per row or tuple (e.g. only the pairs they specify).
 3. For each varied parameter, collect:
-   - Module name (e.g., readin, guide, writeout)
+   - Module name (e.g., readin, guide, writeout, monitor1d, monitor2d)
    - Parameter name (e.g., FactInt, Weight)
    - Values: either a simple array (e.g. [0.1, 0.5, 1.0, 2.0]) or, for paired setups, a list of tuples/rows.
 4. Interpret user input carefully:
@@ -70,7 +71,8 @@ or build CLI flags). Your job is to DELEGATE the user's intent to the module sub
 (e.g. "User wants guide eGuideShapeY linear" or "User wants to vary FactInt with
 values [0.1, 0.5, 1, 2] for readin") and then use only the subagent's structured result.
 
-For each module, delegate to the corresponding subagent:
+For each of the five modules (readin, guide, writeout, monitor1d, monitor2d), delegate to the corresponding subagent.
+Do NOT skip monitor1d or monitor2d—they must be validated like readin, guide, and writeout.
 
 A) Modules WITH parameter variations:
    - Send a delegation message: module name, parameter name, values array
@@ -112,13 +114,14 @@ and re-validate after correction.
 PHASE 4: SIMULATION MATRIX GENERATION
 ================================================================================
 1. Collect all parameter sets from subagents (only from submit_module_result with validation_passed: True and "parameters").
-2. Before calling write_simulation_matrix, ensure every module's data comes from a successful submit_module_result.
+2. Before calling write_simulation_matrix, ensure every module's data comes from a successful submit_module_result—
+   including readin, guide, writeout, monitor1d, and monitor2d (all five must be present).
 3. Build the simulation list according to the user's choice (from PHASE 2):
    - If the user chose CARTESIAN PRODUCT: take the Cartesian product of parameter sets across modules.
      Example: readin 4 sets × guide 1 set × writeout 1 set = 4 simulations; readin 4 × guide 3 = 12 simulations.
    - If the user chose INDEPENDENT / PAIRED SETUPS: create one simulation per row/tuple. Do NOT expand to all combinations.
      Example: list of tuples [(a1,b1), (a2,b2), (a3,b3)] → exactly 3 simulations; each simulation uses the paired (readin set, guide set) for that row.
-4. Each resulting item is one simulation configuration (id, readin, guide, writeout, ...).
+4. Each resulting item is one simulation configuration (id, readin, guide, writeout, monitor1d, monitor2d).
 5. WRITE the simulation matrix to a file using `write_simulation_matrix` tool:
    - Automatically saves to thread output directory
    - Default filename: `simulation_matrix.json`
@@ -127,27 +130,34 @@ PHASE 4: SIMULATION MATRIX GENERATION
    Example simulation_matrix.json:
    ```json
    {
-     "metadata": {
-       "created_at": "2024-01-15T10:30:00Z",
-       "total_simulations": 4,
-       "varied_parameters": [
-         {"module": "readin", "parameter": "FactInt", "values": [0.1, 0.5, 1.0, 2.0]}
-       ]
-     },
-     "simulations": [
-       {
-         "id": "sim_001",
-         "readin": {"FactInt": 0.1, "sInputFileName": ["source.dat"], ...},
-         "guide": {"ShapeFileName": "guide.dat", ...},
-         "writeout": {"sOutFileName": "output_001.dat", ...}
-       },
-       {
-         "id": "sim_002",
-         "readin": {"FactInt": 0.5, ...},
-         ...
-       }
-     ]
-   }
+  "metadata": {
+    "created_at": "2024-01-15T10:30:00Z",
+    "total_simulations": 4,
+    "varied_parameters": [
+      {"module": "readin", "parameter": "FactInt", "values": [0.1, 0.5, 1.0, 2.0]},
+      {"module": "monitor1d", "parameter": "fMonitorFilename", "values": ["monitor1D_001.dat", "monitor1D_002.dat"]},
+      {"module": "monitor2d", "parameter": "fMonitorFilename", "values": ["monitor2D_001.dat", "monitor2D_002.dat"]}
+    ]
+  },
+  "simulations": [
+    {
+      "id": "sim_001",
+      "readin": {"FactInt": 0.1, "sInputFileName": ["source.dat"], ...},
+      "guide": {"ShapeFileName": "guide.dat", ...},
+      "writeout": {"sOutFileName": "output_001.dat", ...},
+      "monitor1d": {"fMonitorFilename": "monitor1D_001.dat", ...},
+      "monitor2d": {"fMonitorFilename": "monitor2D_001.dat", ...}
+    },
+    {
+      "id": "sim_002",
+      "readin": {"FactInt": 0.5, ...},
+      "guide": {...},
+      "writeout": {"sOutFileName": "output_002.dat", ...},
+      "monitor1d": {"fMonitorFilename": "monitor1D_002.dat", ...},
+      "monitor2d": {"fMonitorFilename": "monitor2D_002.dat", ...}
+    }
+  ]
+}
    ```
 6. Confirm to user: "Simulation matrix saved to [path]. Review before execution?"
 
@@ -166,6 +176,11 @@ Option B: Step-by-step (for debugging/inspection)
 Both options:
    - Execute simulations via the MCP run_simulation tool
    - Report progress and results for each simulation
+
+When the user asks for visualizations (e.g. plots, Monitor1D/Monitor2D, "show 1d plot from simulation 3"):
+- YOU (the orchestrator) must call generate_plot_1d and/or generate_plot_2d yourself. Do NOT delegate plot generation to the sim-runner.
+- Use thread_id from context and run_id for the chosen run (e.g. run_id="sim_003" for "simulation 3", or omit run_id for a single-run output).
+- When you call these tools, the plot is shown in the UI from the tool result. Acknowledge briefly (e.g. "The plot is shown above") and do not describe the plot in text.
 
 ================================================================================
 OPERATING PRINCIPLES
@@ -193,9 +208,16 @@ Available tools:
 - `run_single_simulation`: Execute a single simulation with module_results and execution_order.
   Delegates to the MCP run_simulation tool.
 
+You do NOT have plot tools. When the user asks for 1D/2D plots or visualizations, the orchestrator
+(main agent) will call generate_plot_1d/generate_plot_2d. Your job is only to run simulations and
+report execution status.
+
 Workflow:
 1. If simulation_matrix.json exists → use `run_batch_from_matrix`
 2. For individual runs → use `run_single_simulation` with module_results
+3. After execution, report per-run status. If the user asks for plots, tell them the run is complete
+   and the orchestrator will show the plot (or the user can ask "show 1d plot from simulation 3" and
+   the main agent will handle it).
 
 Responsibilities:
 - Report per-run status, exit code, error output, and CLI commands.
@@ -240,12 +262,12 @@ MODULE_FILE_GUIDANCE: dict[str, str] = {
         "No need to ask for output filename intent, just use default output name, e.g., output.dat."
     ),
     "monitor1d": (
-        "Resolve monitor output path via monitor file-path tools. Use default name if user accepts; "
-        "allow custom naming when requested."
+        "Use schema defaults only. Set fMonitorFilename to the schema default filename 'monitor1D.dat' (no path). "
+        "Do not use file-path tools or absolute paths unless the user explicitly requests a custom output path."
     ),
     "monitor2d": (
-        "Resolve monitor output path via monitor file-path tools. Use default name if user accepts; "
-        "allow custom naming when requested."
+        "Use schema defaults only. Set fMonitorFilename to the schema default filename 'monitor2D.dat' (no path). "
+        "Do not use file-path tools or absolute paths unless the user explicitly requests a custom output path."
     ),
 }
 
@@ -253,8 +275,14 @@ MODULE_DEFAULT_BEHAVIOR: dict[str, str] = {
     "readin": "Use schema defaults for non-essential fields. Ensure Weight length matches input file count.",
     "guide": "Use default geometry/coating values; guide file optional.",
     "writeout": "Use default writeout/filter settings unless customization is requested.",
-    "monitor1d": "Default setup should keep schema defaults for monitor parameters.",
-    "monitor2d": "Default setup should keep schema defaults for monitor parameters.",
+    "monitor1d": (
+        "Use schema defaults for all parameters. Set fMonitorFilename to 'monitor1D.dat' only (filename, no path); "
+        "output is resolved relative to the run directory (-P)."
+    ),
+    "monitor2d": (
+        "Use schema defaults for all parameters. Set fMonitorFilename to 'monitor2D.dat' only (filename, no path); "
+        "output is resolved relative to the run directory (-P)."
+    ),
 }
 
 

@@ -191,7 +191,7 @@ def markdown_to_html(markdown_text: str) -> str:
 def render_plotly_figure(plot_json: Dict[str, Any], title: str, expanded: bool = True) -> None:
     """
     Render a Plotly figure in an expandable section.
-    
+
     Args:
         plot_json: Plotly figure as JSON-serializable dict
         title: Title for the expander
@@ -200,11 +200,11 @@ def render_plotly_figure(plot_json: Dict[str, Any], title: str, expanded: bool =
     if not PLOTLY_AVAILABLE:
         st.warning("Plotly is not available. Please install plotly to view interactive plots.")
         return
-    
+
     try:
         # Reconstruct Plotly figure from JSON
         fig = go.Figure(plot_json)
-        
+
         # Render in expandable section
         with st.expander(title, expanded=expanded):
             st.plotly_chart(fig, width='stretch')
@@ -212,59 +212,75 @@ def render_plotly_figure(plot_json: Dict[str, Any], title: str, expanded: bool =
         st.error(f"Error rendering plot: {str(e)}")
 
 
-def render_content(content: any, color: str, custom_data: Optional[Dict[str, Any]] = None) -> None:
+# Plot keys and default titles for tool plot_data (monitor1d, monitor2d, etc.)
+_PLOT_ENTRIES = (
+    ("monitor1d", "Monitor1D Results"),
+    ("monitor2d", "Monitor2D Results"),
+)
+
+
+def _render_plot_data(plot_data: Dict[str, Any]) -> bool:
+    """Render all plot entries in plot_data. Returns True if any plot was rendered."""
+    rendered = False
+    for key, default_title in _PLOT_ENTRIES:
+        plot_info = plot_data.get(key)
+        if not plot_info or not isinstance(plot_info, dict):
+            continue
+        plot_json = plot_info.get("plot_json")
+        if not plot_json:
+            st.warning(f"{key}: plot data is missing plot_json")
+            continue
+        title = f"📊 {plot_info.get('title', default_title)}"
+        render_plotly_figure(plot_json, title, expanded=True)
+        rendered = True
+    return rendered
+
+
+def _get_message_from_content(content: Any) -> Optional[str]:
+    """Extract a short 'message' string from tool result content (dict or JSON string)."""
+    if content is None:
+        return None
+    if isinstance(content, dict):
+        msg = content.get("message")
+        return str(msg).strip() if isinstance(msg, str) else None
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                msg = parsed.get("message")
+                return str(msg).strip() if isinstance(msg, str) else None
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return None
+
+
+def render_content(content: Any, color: str, custom_data: Optional[Dict[str, Any]] = None) -> None:
     """
     Render message content uniformly (JSON or markdown).
-    
+
     Args:
         content: Message content (string, dict, list, or JSON string)
         color: Border color for styling
         custom_data: Optional custom data that may contain plot information
     """
-    # Check for plot data in custom_data first
-    if custom_data:
-        plot_data = custom_data.get("plot_data", {})
-        if plot_data:
-            # Render plots in expandable sections
-            # Render Monitor1D plot if available
-            if "monitor1d" in plot_data:
-                plot_info = plot_data["monitor1d"]
-                plot_json = plot_info.get("plot_json")
-                if plot_json:
-                    render_plotly_figure(
-                        plot_json,
-                        f"📊 {plot_info.get('title', 'Monitor1D Results')}",
-                        expanded=True
-                    )
-                else:
-                    st.warning("Monitor1D plot data is missing plot_json")
-            
-            # Render Monitor2D plot if available
-            if "monitor2d" in plot_data:
-                plot_info = plot_data["monitor2d"]
-                plot_json = plot_info.get("plot_json")
-                if plot_json:
-                    render_plotly_figure(
-                        plot_json,
-                        f"📊 {plot_info.get('title', 'Monitor2D Results')}",
-                        expanded=True
-                    )
-                else:
-                    st.warning("Monitor2D plot data is missing plot_json")
-    
-    # Try to render JSON nicely if possible
+    plot_data = (custom_data or {}).get("plot_data", {})
+    rendered_plot = _render_plot_data(plot_data) if plot_data else False
+
+    if rendered_plot:
+        msg = _get_message_from_content(content)
+        if msg:
+            st.caption(msg)
+        return
+
     if isinstance(content, (dict, list)):
         st.json(content)
     else:
         try:
-            # Try parsing as JSON string
             parsed = json.loads(str(content))
             st.json(parsed)
         except (json.JSONDecodeError, TypeError):
-            # Render as markdown with color styling
             content_str = str(content) if content else ""
             if content_str.strip():
-                # Convert markdown to HTML first, then wrap in styled div
                 html_content = markdown_to_html(content_str)
                 st.markdown(
                     f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">{html_content}</div>',
