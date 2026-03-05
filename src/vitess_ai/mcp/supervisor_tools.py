@@ -109,7 +109,7 @@ def generate_cli_command(
            project_path_escaped = re.escape(global_config.VITESS_PROJECT_PATH)
            thread_id_pattern = rf'{project_path_escaped}/({uuid_pattern})/'
            
-           for module_name, module_result in module_results.items():
+           for module_result in module_results.values():
                cli_params = module_result.get('cli_parameters', '')
                if cli_params:
                    match = re.search(thread_id_pattern, cli_params)

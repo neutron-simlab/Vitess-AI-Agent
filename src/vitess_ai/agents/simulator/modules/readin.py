@@ -7,7 +7,6 @@ architecture, enabling unified state management.
 
 from vitess_ai.agents.simulator.base_agent import BaseModuleAgent, ModuleBuilder
 from vitess_ai.agents.simulator.prompts.readin import READIN_AGENT_WELCOME, READIN_AGENT_DEFAULT_PROMPT, READIN_AGENT_CUSTOM_PROMPT
-from vitess_ai.core.config import global_config
 
 
 class ReadInModuleAgent(BaseModuleAgent):
@@ -88,4 +87,3 @@ readin module that will be used in the simulation execution.
 
 {next_message}"""
         return message
-

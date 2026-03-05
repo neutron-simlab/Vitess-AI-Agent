@@ -5,8 +5,6 @@ Handles file uploads, storage, and retrieval for simulation input/output files.
 Files are stored persistently and associated with thread_id for reuse across conversations.
 """
 
-import os
-import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -30,7 +28,7 @@ class FileStorageService:
         "monitor2d",
         "writeout",
     ]
-    
+
     def __init__(self):
         """Initialize file storage service."""
         self.root_path = Path(global_config.VITESS_PROJECT_PATH)
@@ -63,6 +61,54 @@ class FileStorageService:
         """Get storage path for a specific module type in a thread (legacy method for compatibility)."""
         # Use new upload path structure
         return self._get_upload_path(thread_id, module_type)
+
+    def _ensure_unique_filename(self, module_path: Path, filename: str) -> str:
+        """Ensure uploaded filename is safe and collision-free without UUID prefixing."""
+        safe_name = Path(filename).name
+        if not safe_name:
+            safe_name = "upload.dat"
+        candidate = safe_name
+        stem = Path(safe_name).stem
+        suffix = Path(safe_name).suffix
+        index = 1
+        while (module_path / candidate).exists():
+            candidate = f"{stem}_{index}{suffix}"
+            index += 1
+        return candidate
+
+    def _build_upload_metadata(
+        self,
+        file_path: Path,
+        thread_id: str,
+        module_type: str,
+    ) -> Dict[str, Any]:
+        """Build standardized metadata for one uploaded module file."""
+        filename = file_path.name
+        return {
+            "file_id": filename,
+            "filename": filename,
+            "stored_filename": filename,
+            "file_path": str(file_path),
+            "server_path": str(file_path),
+            "relative_path": str(file_path.relative_to(self.root_path)),
+            "thread_id": thread_id,
+            "module_type": module_type,
+            "file_size": file_path.stat().st_size,
+            "exists": True,
+        }
+
+    def _list_module_files(self, thread_id: str, module_type: str) -> List[Dict[str, Any]]:
+        """List files for one upload module."""
+        files: List[Dict[str, Any]] = []
+        module_path = self._get_upload_path(thread_id, module_type)
+        if not module_path.exists():
+            return files
+
+        for file_path in sorted(module_path.iterdir()):
+            if not file_path.is_file():
+                continue
+            files.append(self._build_upload_metadata(file_path, thread_id, module_type))
+        return files
     
     def _validate_file(self, filename: str, file_size: int) -> tuple[bool, Optional[str]]:
         """
@@ -123,11 +169,8 @@ class FileStorageService:
         module_path = self._get_upload_path(thread_id, module_type)
         module_path.mkdir(parents=True, exist_ok=True)
         
-        # Generate unique file ID
-        file_id = str(uuid.uuid4())
-        
-        # Create filename with ID prefix to avoid collisions
-        stored_filename = f"{file_id}_{filename}"
+        # Use clean filename and add numeric suffix on collision
+        stored_filename = self._ensure_unique_filename(module_path, filename)
         file_path = module_path / stored_filename
         
         # Write file
@@ -140,8 +183,8 @@ class FileStorageService:
         
         # Return file metadata
         return {
-            "file_id": file_id,
-            "filename": filename,
+            "file_id": stored_filename,
+            "filename": stored_filename,
             "stored_filename": stored_filename,
             "file_path": str(file_path),
             "server_path": str(file_path),  # Full server path for MCP tools
@@ -170,23 +213,11 @@ class FileStorageService:
         if not module_path.exists():
             logger.debug(f"Module path does not exist: {module_path}")
             return None
-        
-        for file_path in module_path.glob(f"{file_id}_*"):
-            if file_path.is_file():
-                filename = file_path.name.replace(f"{file_id}_", "", 1)
-                return {
-                    "file_id": file_id,
-                    "filename": filename,
-                    "stored_filename": file_path.name,
-                    "file_path": str(file_path),
-                    "server_path": str(file_path),
-                    "relative_path": str(file_path.relative_to(self.root_path)),
-                    "thread_id": thread_id,
-                    "module_type": module_type,
-                    "file_size": file_path.stat().st_size,
-                    "exists": True
-                }
-        
+
+        exact_path = module_path / Path(file_id).name
+        if exact_path.is_file():
+            return self._build_upload_metadata(exact_path, thread_id, module_type)
+
         return None
     
     def list_files(self, thread_id: str, module_type: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -203,52 +234,10 @@ class FileStorageService:
         files = []
         
         if module_type:
-            # List files for specific module
-            module_path = self._get_upload_path(thread_id, module_type)
-            
-            if module_path.exists():
-                matching_files = list(module_path.glob("*_*"))
-                for file_path in matching_files:
-                    if file_path.is_file():
-                        # Extract file_id and filename
-                        parts = file_path.name.split("_", 1)
-                        if len(parts) == 2:
-                            file_id, filename = parts
-                            files.append({
-                                "file_id": file_id,
-                                "filename": filename,
-                                "stored_filename": file_path.name,
-                                "file_path": str(file_path),
-                                "server_path": str(file_path),
-                                "relative_path": str(file_path.relative_to(self.root_path)),
-                                "thread_id": thread_id,
-                                "module_type": module_type,
-                                "file_size": file_path.stat().st_size,
-                                "exists": True
-                            })
+            files.extend(self._list_module_files(thread_id, module_type))
         else:
-            # List files for all modules
             for mod_type in self._get_allowed_module_types():
-                module_path = self._get_upload_path(thread_id, mod_type)
-                if module_path.exists():
-                    matching_files = list(module_path.glob("*_*"))
-                    for file_path in matching_files:
-                        if file_path.is_file():
-                            parts = file_path.name.split("_", 1)
-                            if len(parts) == 2:
-                                file_id, filename = parts
-                                files.append({
-                                    "file_id": file_id,
-                                    "filename": filename,
-                                    "stored_filename": file_path.name,
-                                    "file_path": str(file_path),
-                                    "server_path": str(file_path),
-                                    "relative_path": str(file_path.relative_to(self.root_path)),
-                                    "thread_id": thread_id,
-                                    "module_type": mod_type,
-                                    "file_size": file_path.stat().st_size,
-                                    "exists": True
-                                })
+                files.extend(self._list_module_files(thread_id, mod_type))
         
         logger.debug(f"Listed {len(files)} files for thread_id={thread_id}, module_type={module_type}")
         return files
@@ -271,17 +260,17 @@ class FileStorageService:
         if not module_path.exists():
             logger.debug(f"Module path does not exist: {module_path}")
             return False
-        
-        for file_path in module_path.glob(f"{file_id}_*"):
-            if file_path.is_file():
-                try:
-                    file_path.unlink()
-                    logger.info(f"File deleted: {file_path}")
-                    return True
-                except Exception as e:
-                    logger.error(f"Error deleting file {file_path}: {e}")
-                    return False
-        
+
+        exact_path = module_path / Path(file_id).name
+        if exact_path.is_file():
+            try:
+                exact_path.unlink()
+                logger.info(f"File deleted: {exact_path}")
+                return True
+            except Exception as e:
+                logger.error(f"Error deleting file {exact_path}: {e}")
+                return False
+
         return False
     
     def delete_thread_files(self, thread_id: str) -> int:

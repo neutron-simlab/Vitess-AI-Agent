@@ -7,7 +7,6 @@ architecture, enabling unified state management.
 
 from vitess_ai.agents.simulator.base_agent import BaseModuleAgent, ModuleBuilder
 from vitess_ai.agents.simulator.prompts.monitor2d import MONITOR2D_AGENT_WELCOME, MONITOR2D_AGENT_DEFAULT_PROMPT, MONITOR2D_AGENT_CUSTOM_PROMPT
-from vitess_ai.core.config import global_config
 
 
 class Monitor2DModuleAgent(BaseModuleAgent):
@@ -90,4 +89,3 @@ Monitor2D module that will be used in the simulation execution.
 
 {next_message}"""
         return message
-

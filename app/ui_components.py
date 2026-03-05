@@ -67,13 +67,8 @@ def get_module_info_from_server(server_url: str) -> Dict[str, Any]:
     if "module_info_cache" not in st.session_state:
         st.session_state.module_info_cache = {}
     
-    # Check if we have a cached timestamp and if it's recent (cache for 5 minutes)
+    # Cache key for fallback lookup if server fetch fails
     cache_key = f"module_info_{server_url}"
-    if cache_key in st.session_state.module_info_cache:
-        cached_data = st.session_state.module_info_cache[cache_key]
-        # For simplicity, we'll refresh on each page load (Streamlit reruns)
-        # In production, you might want to add timestamp checking
-        pass
     
     # Try to fetch from server
     try:

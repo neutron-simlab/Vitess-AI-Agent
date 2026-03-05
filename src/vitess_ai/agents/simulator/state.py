@@ -9,7 +9,6 @@ seamless state sharing across the agent graph.
 from __future__ import annotations
 
 from typing import Dict, List, Any, Optional
-from enum import Enum
 from pydantic import BaseModel
 from langgraph.graph import MessagesState
 from vitess_ai.schema.base import FillingStage

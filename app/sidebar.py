@@ -395,6 +395,7 @@ def _render_file_upload_mode(
     is_module_active: bool,
 ) -> None:
     """Render file-based upload UI for single/multi file modes."""
+    _ = is_module_active  # Kept for internal call compatibility
     mode = upload_schema_sidebar.get("mode", "file_single")
     max_files = int(upload_schema_sidebar.get("max_files", 1))
     allow_multiple = mode == "file_multi"
@@ -514,6 +515,7 @@ def _render_path_upload_mode(
     is_module_active: bool,
 ) -> None:
     """Render path-only upload UI for modules that store path metadata."""
+    _ = is_module_active  # Kept for internal call compatibility
     st.markdown(f"**{upload_schema_sidebar.get('label', display_name)}**")
     default_path = _build_default_output_path(module_name, upload_schema_sidebar)
     state_key = f"{module_name}_path"
@@ -593,22 +595,3 @@ def _render_upload_summary(upload_modules: List[Dict[str, Any]]) -> None:
         count = len(st.session_state.uploaded_files.get(module_name, []))
         st.text(f"{display_name}: {count}")
 
-
-def _render_file_upload_ui(selected_module: str, is_module_active: bool) -> None:
-    """
-    Backward-compatible wrapper for legacy callers.
-
-    This now routes to the central catalog-driven upload renderer instead of the
-    old hardcoded per-module implementation.
-    """
-    catalog = _get_modules_catalog_from_backend(st.session_state.server_url)
-    upload_modules = catalog.get("upload_modules", [])
-    selected_spec = next(
-        (module for module in upload_modules if module.get("name") == selected_module),
-        {
-            "name": selected_module,
-            "display_name": selected_module.replace("_", " ").title(),
-            "upload_schema_sidebar": {},
-        },
-    )
-    _render_catalog_upload_ui(selected_spec, is_module_active)

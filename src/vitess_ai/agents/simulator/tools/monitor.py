@@ -119,6 +119,7 @@ def monitor2d_params_to_cli(params: dict) -> str:
 
 def _default_monitor1d_path(parsed: dict, resolved_thread_id: str | None) -> None:
     """Set default fMonitorFilename. Use filename only so -O is resolved relative to -P (run directory)."""
+    _ = resolved_thread_id  # Kept for internal call compatibility
     val = parsed.get("fMonitorFilename") or ""
     if not val.strip():
         parsed["fMonitorFilename"] = "monitor1D.dat"
@@ -134,6 +135,7 @@ def _default_monitor1d_path(parsed: dict, resolved_thread_id: str | None) -> Non
 
 def _default_monitor2d_path(parsed: dict, resolved_thread_id: str | None) -> None:
     """Set default fMonitorFilename. Use filename only so -O is resolved relative to -P (run directory)."""
+    _ = resolved_thread_id  # Kept for internal call compatibility
     val = parsed.get("fMonitorFilename") or ""
     if not val.strip():
         parsed["fMonitorFilename"] = "monitor2D.dat"

@@ -1,12 +1,11 @@
-from typing import Any, Literal, NotRequired, Optional, Union, Dict, List
+from typing import Any, Literal, NotRequired, Optional, Dict, List
 from datetime import datetime
-from uuid import UUID
 from enum import Enum
 
-from pydantic import BaseModel, Field, SerializeAsAny, validator
+from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-from vitess_ai.schema.llm_models import AllModelEnum, BlabladorModelName, OpenAIModelName, Provider
+from vitess_ai.schema.llm_models import Provider
 from vitess_ai.schema.base import FillingStage
 
 

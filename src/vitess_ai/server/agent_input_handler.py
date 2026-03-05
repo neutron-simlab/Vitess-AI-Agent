@@ -59,6 +59,7 @@ class AgentInputHandler:
         run_id = run_id or uuid4()
         thread_id = thread_id or str(uuid4())
         user_id = user_id or str(uuid4())
+        _ = agent  # Kept for method signature compatibility
         provider, model = _normalize_provider_model(provider, model)
         
         configurable: dict[str, Any] = {
@@ -120,4 +121,3 @@ class AgentInputHandler:
             logger.error(f"Failed to access agent state: {e}", exc_info=True)
             # Return False on error - will start fresh
             return False
-

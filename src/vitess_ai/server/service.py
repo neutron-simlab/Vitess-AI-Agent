@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Simple lifespan for in-memory only operation.
     """
+    _ = app
     # No database/store initialization needed for in-memory operation
     yield
 

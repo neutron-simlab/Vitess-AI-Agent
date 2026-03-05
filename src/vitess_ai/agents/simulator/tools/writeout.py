@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain.tools import ToolRuntime, tool
-from vitess_ai.schema.writeout_module import WriteoutParameters, VtFilterLimits, VtOutputFlags
+from vitess_ai.schema.writeout_module import WriteoutParameters, VtFilterLimits
 from vitess_ai.schema.base import get_field_flag
 from vitess_ai.agents.simulator.tools.runtime_utils import resolve_thread_id
 

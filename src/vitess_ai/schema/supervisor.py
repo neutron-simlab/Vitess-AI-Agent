@@ -63,7 +63,6 @@ def create_routing_decision_model(module_names: List[str]) -> Type[BaseModel]:
     """
     # Create all possible target module values: modules + "simulation" + None
     all_options = module_names + ["simulation"]
-    valid_options = set(all_options + [None])
     
     # Create Literal type dynamically
     # For runtime creation, construct Literal with values

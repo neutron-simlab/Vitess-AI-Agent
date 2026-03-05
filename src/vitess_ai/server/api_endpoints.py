@@ -238,7 +238,7 @@ async def restart(
         Dictionary with restart status and agent info
     """
     try:
-        agent = await restart_agent(agent_id, provider=provider, model=model)
+        await restart_agent(agent_id, provider=provider, model=model)
         
         # Determine the actual provider/model used
         actual_provider = provider or global_config.DEFAULT_PROVIDER

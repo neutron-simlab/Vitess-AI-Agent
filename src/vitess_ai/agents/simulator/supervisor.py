@@ -9,7 +9,7 @@ management and checkpoint-based resumption.
 import json
 import time
 from typing import Dict, List, Any, Optional
-from langchain_core.messages import SystemMessage, AIMessage, ToolMessage, HumanMessage
+from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
