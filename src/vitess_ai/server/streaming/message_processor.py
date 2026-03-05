@@ -33,6 +33,7 @@ class MessageProcessor:
         user_input_message: str,
         streamed_message_ids: set[str],
         default_module: str = "supervisor",
+        delegated_task_metadata: Optional[dict[str, dict[str, Any]]] = None,
     ):
         self.agent = agent
         self.config = config
@@ -40,6 +41,9 @@ class MessageProcessor:
         self.user_input_message = user_input_message
         self.streamed_message_ids = streamed_message_ids
         self.default_module = default_module
+        self.delegated_task_metadata = (
+            delegated_task_metadata if delegated_task_metadata is not None else {}
+        )
     
     def _create_ai_message(self, parts: dict) -> AIMessage:
         """Create an AIMessage from parts dictionary."""
@@ -81,6 +85,51 @@ class MessageProcessor:
             processed_messages.append(self._create_ai_message(current_message))
         
         return processed_messages
+
+    def _enrich_tool_message_metadata(self, chat_message: Any) -> None:
+        """
+        Attach additive tool-classification metadata for UI rendering policy.
+
+        Classification precedence:
+        1) plot_tool_result (preserves existing plot rendering path)
+        2) delegated_subagent_result (task tool completion for deep-agent delegation)
+        3) regular_tool_result (all other tool messages)
+        """
+        if getattr(chat_message, "type", None) != "tool":
+            return
+
+        custom_data = dict(getattr(chat_message, "custom_data", {}) or {})
+
+        if custom_data.get("plot_data"):
+            custom_data["tool_kind"] = "plot_tool_result"
+            custom_data["display_mode"] = "inline"
+            chat_message.custom_data = custom_data
+            return
+
+        task_id = getattr(chat_message, "tool_call_id", None)
+        delegated_meta = self.delegated_task_metadata.get(task_id) if task_id else None
+        if delegated_meta:
+            custom_data.update(
+                {
+                    "tool_kind": "delegated_subagent_result",
+                    "subagent_type": delegated_meta.get("subagent_type"),
+                    "delegated_task_id": delegated_meta.get("delegated_task_id") or task_id,
+                    "display_mode": delegated_meta.get("display_mode", "hidden_by_default"),
+                }
+            )
+            if delegated_meta.get("status"):
+                custom_data["delegated_status"] = delegated_meta["status"]
+            if delegated_meta.get("pregel_id"):
+                custom_data["pregel_id"] = delegated_meta["pregel_id"]
+            if delegated_meta.get("description"):
+                custom_data["delegated_description"] = delegated_meta["description"]
+            if delegated_meta.get("result_preview"):
+                custom_data["result_preview"] = delegated_meta["result_preview"]
+        else:
+            custom_data["tool_kind"] = "regular_tool_result"
+            custom_data["display_mode"] = "inline"
+
+        chat_message.custom_data = custom_data
     
     async def process_and_yield_messages(
         self,
@@ -121,6 +170,7 @@ class MessageProcessor:
                 # Convert to ChatMessage
                 chat_message = langchain_to_chat_message(message, module_name=module_for_message)
                 chat_message.run_id = str(self.run_id)
+                self._enrich_tool_message_metadata(chat_message)
                 
                 # Filter out duplicate user input messages
                 if chat_message.type == "human" and chat_message.content == self.user_input_message:

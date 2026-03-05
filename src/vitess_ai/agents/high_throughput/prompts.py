@@ -66,6 +66,16 @@ e.g., read-in/guide/writeout/monitor1d/monitor2d parameters, it means read-in/gu
 ================================================================================
 PHASE 3: MODULE SUBAGENT VALIDATION
 ================================================================================
+REQUIRED MODULES CHECKLIST (all five must have submit_module_result before PHASE 4):
+  1. readin   — delegate, get submit_module_result
+  2. guide    — delegate, get submit_module_result
+  3. writeout — delegate, get submit_module_result
+  4. monitor1d — delegate, get submit_module_result (do NOT skip)
+  5. monitor2d — delegate, get submit_module_result (do NOT skip)
+
+If you proceed to write_simulation_matrix without all five, the tool will reject the
+matrix and return an error asking you to validate monitor1d and monitor2d.
+
 Do NOT interpret or generate module parameters yourself (e.g. do not set eGuideShapeY
 or build CLI flags). Your job is to DELEGATE the user's intent to the module subagent
 (e.g. "User wants guide eGuideShapeY linear" or "User wants to vary FactInt with
@@ -110,12 +120,16 @@ read the subagent result as a dictionary (e.g. result.get("validation_passed"), 
 If validation fails (validation_passed: False), ask the user to correct the input via UI
 and re-validate after correction.
 
+When reporting delegated outcomes to the user:
+- Keep user-facing summaries concise where possible.
+- Do not lose or omit structured validated parameters needed for downstream tools.
+
 ================================================================================
 PHASE 4: SIMULATION MATRIX GENERATION
 ================================================================================
 1. Collect all parameter sets from subagents (only from submit_module_result with validation_passed: True and "parameters").
-2. Before calling write_simulation_matrix, ensure every module's data comes from a successful submit_module_result—
-   including readin, guide, writeout, monitor1d, and monitor2d (all five must be present).
+2. Before calling write_simulation_matrix, ensure you have submit_module_result for ALL FIVE modules:
+   readin, guide, writeout, monitor1d, monitor2d. Missing monitor1d or monitor2d will cause write_simulation_matrix to fail.
 3. Build the simulation list according to the user's choice (from PHASE 2):
    - If the user chose CARTESIAN PRODUCT: take the Cartesian product of parameter sets across modules.
      Example: readin 4 sets × guide 1 set × writeout 1 set = 4 simulations; readin 4 × guide 3 = 12 simulations.
@@ -248,7 +262,8 @@ MODULE_SEMANTIC_REQUIRED_FIELDS: dict[str, list[str]] = {
 
 MODULE_FILE_GUIDANCE: dict[str, str] = {
     "readin": (
-        "Prefer uploaded files from thread storage. Use file-status/get-files tooling first. "
+        "Must use uploaded files from thread storage. Use `file_status` and `get_files` first. "
+        "If no explicit file list is provided, call `validate_readin_module` and let it resolve files from thread uploads. "
         "Do not ask users to type full file paths manually when files are already present."
     ),
     "guide": (
@@ -333,6 +348,8 @@ def get_module_subagent_system_prompt(
         "validation_passed=False and error_message=<errors or message>. "
         "Batch example: parameters=[{\"ParamA\": 1, \"ParamB\": 10}, {\"ParamA\": 2, \"ParamB\": 20}]. "
         "Do not report task completion until you have called submit_module_result.\n"
+        "After calling submit_module_result, return the structured validated payload so the orchestrator can consume it reliably.\n"
+        "Do not omit validated parameters from the final subagent response.\n"
         "- Pass `thread_id` to thread-aware tools when available.\n"
         "- Return validated, structured JSON-ready values.\n\n"
         f"Available tools for this subagent: {tools_str}"

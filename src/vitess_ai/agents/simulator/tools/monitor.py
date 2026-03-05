@@ -93,6 +93,8 @@ def monitor1d_params_to_cli(params: dict) -> str:
         if value is None:
             continue
         flag = get_field_flag(Monitor1DParameters, key)
+        if not flag:
+            continue  # Skip unknown keys so we never emit bare values (e.g. "1 1")
         if isinstance(value, (int, float, str)):
             cli_params.append((flag, str(value)))
         elif hasattr(value, "value"):
@@ -106,6 +108,8 @@ def monitor2d_params_to_cli(params: dict) -> str:
         if value is None:
             continue
         flag = get_field_flag(Monitor2DParameters, key)
+        if not flag:
+            continue  # Skip unknown keys so we never emit bare values (e.g. "1 1" after -Ofile)
         if isinstance(value, (int, float, str)):
             cli_params.append((flag, str(value)))
         elif hasattr(value, "value"):

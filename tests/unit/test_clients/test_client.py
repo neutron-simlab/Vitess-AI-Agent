@@ -438,6 +438,30 @@ class TestParseStreamLine:
         result = client._parse_stream_line(line)
         
         assert result is None
+
+    def test_task_lifecycle_parsing(self):
+        """Test delegated task lifecycle parsing"""
+        client = AgentClient(get_info=False)
+
+        line = (
+            'data: {"type":"task_lifecycle","content":{'
+            '"run_id":"run-1",'
+            '"sequence":1,'
+            '"phase":"pending",'
+            '"task_id":"task-1",'
+            '"subagent_type":"researcher",'
+            '"description":"Research latest AI safety developments",'
+            '"status":"pending",'
+            '"pregel_id":null,'
+            '"result_preview":null,'
+            '"timestamp":"2026-01-01T00:00:00+00:00"'
+            '}}'
+        )
+        result = client._parse_stream_line(line)
+
+        assert isinstance(result, dict)
+        assert result["type"] == "task_lifecycle"
+        assert result["content"]["task_id"] == "task-1"
     
     def test_invalid_json(self):
         """Test invalid JSON handling"""
@@ -505,6 +529,30 @@ class TestTokenHelpers:
         # Not a token
         assert client.get_token_content(ChatMessage(type="ai", content="message")) is None
 
+    def test_is_task_lifecycle_event(self):
+        """Test lifecycle event detection helper"""
+        client = AgentClient(get_info=False)
+
+        lifecycle_event = {"type": "task_lifecycle", "content": {"task_id": "task-1"}}
+        token_event = {"type": "token", "module": "default", "content": "hello"}
+
+        assert client.is_task_lifecycle_event(lifecycle_event) is True
+        assert client.is_task_lifecycle_event(token_event) is False
+
+    def test_get_task_lifecycle_content(self):
+        """Test lifecycle payload extraction helper"""
+        client = AgentClient(get_info=False)
+
+        lifecycle_event = {
+            "type": "task_lifecycle",
+            "content": {"task_id": "task-1", "status": "running"},
+        }
+        assert client.get_task_lifecycle_content(lifecycle_event) == {
+            "task_id": "task-1",
+            "status": "running",
+        }
+        assert client.get_task_lifecycle_content({"type": "token", "content": "x"}) is None
+
 
 @pytest.mark.unit
 class TestRestart:
@@ -553,4 +601,3 @@ class TestRestart:
         
         with pytest.raises(AgentClientError):
             client.restart()
-

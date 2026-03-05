@@ -73,6 +73,8 @@ def sample_simulation_matrix():
                     "iDetectColor": -1,
                     "FactInt": 1.0,
                 },
+                "monitor1d": {"fMonitorFilename": "monitor1D.dat", "nBinsX": 100},
+                "monitor2d": {"fMonitorFilename": "monitor2D.dat", "nBinsX": 100, "nBinsY": 100},
             },
             {
                 "id": "sim_002",
@@ -113,6 +115,8 @@ def sample_simulation_matrix():
                     "iDetectColor": -1,
                     "FactInt": 1.0,
                 },
+                "monitor1d": {"fMonitorFilename": "monitor1D.dat", "nBinsX": 100},
+                "monitor2d": {"fMonitorFilename": "monitor2D.dat", "nBinsX": 100, "nBinsY": 100},
             },
             {
                 "id": "sim_003",
@@ -153,6 +157,8 @@ def sample_simulation_matrix():
                     "iDetectColor": -1,
                     "FactInt": 1.0,
                 },
+                "monitor1d": {"fMonitorFilename": "monitor1D.dat", "nBinsX": 100},
+                "monitor2d": {"fMonitorFilename": "monitor2D.dat", "nBinsX": 100, "nBinsY": 100},
             },
         ]
     }
@@ -517,6 +523,28 @@ class TestAsyncTools:
         assert result["success"] is False
         assert "invalid" in result["message"].lower() or "error" in result["message"].lower()
         assert "sim_001" in result["message"] or "readin" in result["message"]
+        assert result.get("file_path") is None
+
+    async def test_write_simulation_matrix_rejects_missing_required_modules(self, temp_dir, sample_simulation_matrix, monkeypatch):
+        """write_simulation_matrix must reject simulations missing any of the five modules (e.g. monitor2d)."""
+        from vitess_ai.agents.high_throughput.tools import write_simulation_matrix
+
+        monkeypatch.setenv("THREAD_ID", "test-thread")
+        monkeypatch.setattr(
+            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            str(temp_dir),
+        )
+        simulations = sample_simulation_matrix["simulations"]
+        # Remove monitor1d and monitor2d from first sim to simulate deep agent skipping them
+        sim_missing_monitors = [{**s, "monitor1d": None, "monitor2d": None} if s.get("id") == "sim_001" else s for s in simulations]
+        result = await write_simulation_matrix.ainvoke({
+            "simulations": sim_missing_monitors,
+            "varied_parameters": sample_simulation_matrix["metadata"]["varied_parameters"],
+            "thread_id": "test-thread",
+        })
+        assert result["success"] is False
+        assert "monitor1d" in result["message"] or "monitor2d" in result["message"]
+        assert "five" in result["message"].lower() or "five modules" in result["message"].lower()
         assert result.get("file_path") is None
 
     async def test_read_simulation_matrix(self, temp_dir, sample_simulation_matrix, monkeypatch):

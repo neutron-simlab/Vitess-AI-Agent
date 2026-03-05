@@ -5,8 +5,8 @@ This module provides functions for rendering chat messages, badges, and content
 with consistent styling across the application.
 """
 import json
+import re
 import streamlit as st
-from pathlib import Path
 from typing import Dict, Any, Optional
 import markdown
 
@@ -17,10 +17,6 @@ try:
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
-
-# Paths and assets
-_assets_dir = Path(__file__).parent / "assets"
-_logo_path = _assets_dir / "logo.png"
 
 # Module color mapping for visual differentiation (fallback for when dynamic info unavailable)
 MODULE_COLORS = {
@@ -52,6 +48,9 @@ COLOR_PALETTE = [
     "blue", "green", "orange", "violet", "red", "purple", 
     "pink", "yellow", "cyan", "teal", "indigo", "brown"
 ]
+
+# Delegated task lifecycle status values
+TASK_STATUS_VALUES = {"pending", "running", "complete"}
 
 
 def get_module_info_from_server(server_url: str) -> Dict[str, Any]:
@@ -136,6 +135,73 @@ def get_module_color(module_name: str, dynamic_modules: Optional[Dict[str, Any]]
     
     # Fallback to default
     return MODULE_COLORS["default"]
+
+
+def apply_task_lifecycle_event(
+    current_tasks: Dict[str, Dict[str, Any]],
+    event_content: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Apply one task_lifecycle event to per-turn task state (pure helper).
+
+    Args:
+        current_tasks: Existing task map keyed by task_id
+        event_content: Parsed lifecycle event payload
+
+    Returns:
+        Updated task map (new dictionary)
+    """
+    updated_tasks: Dict[str, Dict[str, Any]] = {
+        task_id: dict(task_data)
+        for task_id, task_data in (current_tasks or {}).items()
+    }
+
+    task_id = str(event_content.get("task_id") or "").strip()
+    if not task_id:
+        return updated_tasks
+
+    existing = updated_tasks.get(task_id, {})
+    status = str(
+        event_content.get("status")
+        or event_content.get("phase")
+        or existing.get("status")
+        or "pending"
+    ).lower()
+    if status not in TASK_STATUS_VALUES:
+        status = "pending"
+
+    updated_tasks[task_id] = {
+        "task_id": task_id,
+        "run_id": event_content.get("run_id", existing.get("run_id")),
+        "sequence": event_content.get("sequence", existing.get("sequence")),
+        "phase": event_content.get("phase", existing.get("phase")),
+        "status": status,
+        "subagent_type": event_content.get("subagent_type", existing.get("subagent_type", "unknown")),
+        "description": event_content.get("description", existing.get("description", "")),
+        "pregel_id": event_content.get("pregel_id", existing.get("pregel_id")),
+        "result_preview": event_content.get("result_preview", existing.get("result_preview")),
+        "timestamp": event_content.get("timestamp", existing.get("timestamp")),
+    }
+    return updated_tasks
+
+
+def get_task_lifecycle_counts(tasks: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
+    """
+    Count pending/running/complete tasks from lifecycle state.
+
+    Args:
+        tasks: Task map keyed by task_id
+
+    Returns:
+        Dict with counts for pending, running, and complete
+    """
+    counts = {"pending": 0, "running": 0, "complete": 0}
+    for task in (tasks or {}).values():
+        status = str(task.get("status", "pending")).lower()
+        if status not in counts:
+            status = "pending"
+        counts[status] += 1
+    return counts
 
 
 def render_header_with_logo() -> None:
@@ -254,6 +320,154 @@ def _get_message_from_content(content: Any) -> Optional[str]:
     return None
 
 
+def _parse_json_like_content(content: Any) -> Optional[Dict[str, Any] | list[Any]]:
+    """Parse tool content into JSON-compatible Python data when possible."""
+    if isinstance(content, (dict, list)):
+        return content
+    if content is None:
+        return None
+
+    text = str(content).strip()
+    if not text:
+        return None
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, (dict, list)):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
+    if fenced_match:
+        try:
+            parsed = json.loads(fenced_match.group(1))
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    start_obj = text.find("{")
+    end_obj = text.rfind("}")
+    if 0 <= start_obj < end_obj:
+        candidate = text[start_obj : end_obj + 1]
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return None
+
+
+def extract_delegated_tool_summary(
+    content: Any,
+    custom_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Normalize delegated tool payload into a compact, structured summary.
+
+    Returns:
+        Dict with keys: module, validation_passed, parameters_count, parameters, raw_payload
+    """
+    payload = _parse_json_like_content(content)
+    module = None
+    validation_passed = None
+    parameters: Any = None
+
+    if isinstance(payload, dict):
+        module = payload.get("module") or payload.get("module_name")
+        if isinstance(payload.get("validation_passed"), bool):
+            validation_passed = payload.get("validation_passed")
+        elif isinstance(payload.get("validation_status"), bool):
+            validation_passed = payload.get("validation_status")
+        parameters = payload.get("parameters")
+
+    if not module and custom_data:
+        module = custom_data.get("subagent_type")
+
+    parameters_count = 0
+    if isinstance(parameters, dict):
+        parameters_count = 1
+    elif isinstance(parameters, list):
+        parameters_count = len(parameters)
+
+    return {
+        "module": module,
+        "validation_passed": validation_passed,
+        "parameters_count": parameters_count,
+        "parameters": parameters,
+        "raw_payload": payload if payload is not None else content,
+    }
+
+
+def should_hide_delegated_tool_body(
+    custom_data: Optional[Dict[str, Any]],
+    show_delegated_tool_bodies: bool,
+) -> bool:
+    """Return True when delegated tool body should be hidden in default chat view."""
+    if show_delegated_tool_bodies:
+        return False
+    custom_data = custom_data or {}
+    return (
+        custom_data.get("tool_kind") == "delegated_subagent_result"
+        and custom_data.get("display_mode") == "hidden_by_default"
+    )
+
+
+def _render_delegated_tool_result_card(
+    message: ChatMessage,
+    color: str,
+    show_raw_payload: bool = False,
+) -> None:
+    """Render compact delegated-tool card with optional raw payload expander."""
+    custom_data = message.custom_data or {}
+    summary = extract_delegated_tool_summary(message.content, custom_data)
+
+    module_name = str(summary.get("module") or "unknown")
+    delegated_task_id = custom_data.get("delegated_task_id") or message.tool_call_id
+    validation_value = summary.get("validation_passed")
+    if validation_value is True:
+        validation_label = "True"
+    elif validation_value is False:
+        validation_label = "False"
+    else:
+        validation_label = "Unknown"
+
+    st.markdown(
+        (
+            f'<div style="border-left: 4px solid {color}; padding-left: 10px; margin: 5px 0;">'
+            f"<strong>Delegated Subagent Result</strong><br/>"
+            f"Module: <code>{module_name}</code><br/>"
+            f"Validation passed: <code>{validation_label}</code><br/>"
+            f"Parameter sets: <code>{summary.get('parameters_count', 0)}</code>"
+            f"</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+    result_preview = custom_data.get("result_preview")
+    if isinstance(result_preview, str) and result_preview.strip():
+        st.caption(result_preview.strip())
+    if delegated_task_id:
+        st.caption(f"Task ID: {delegated_task_id}")
+
+    if not show_raw_payload:
+        return
+
+    with st.expander("View raw tool payload", expanded=False):
+        raw_payload = summary.get("raw_payload")
+        if isinstance(raw_payload, (dict, list)):
+            st.json(raw_payload)
+        else:
+            raw_text = str(raw_payload or "").strip()
+            if raw_text:
+                language = "json" if raw_text.startswith("{") or raw_text.startswith("[") else None
+                st.code(raw_text, language=language)
+            else:
+                st.caption("No payload.")
+
+
 def render_content(content: Any, color: str, custom_data: Optional[Dict[str, Any]] = None) -> None:
     """
     Render message content uniformly (JSON or markdown).
@@ -356,9 +570,21 @@ def render_message(message: ChatMessage, show_system: bool = False) -> None:
             
             # Render header (badge + tool indicator)
             render_message_header(badge_text, "tool")
-            
-            # Render content uniformly
-            if message.content:
+
+            show_delegated_tool_bodies = bool(st.session_state.get("show_delegated_tool_bodies", False))
+            tool_kind = str(custom_data.get("tool_kind", "regular_tool_result"))
+            is_plot_tool = tool_kind == "plot_tool_result"
+
+            if should_hide_delegated_tool_body(custom_data, show_delegated_tool_bodies):
+                _render_delegated_tool_result_card(
+                    message,
+                    color,
+                    show_raw_payload=show_delegated_tool_bodies,
+                )
+            elif message.content and not is_plot_tool and not show_delegated_tool_bodies:
+                with st.expander("View tool payload", expanded=False):
+                    render_content(message.content, color, custom_data=message.custom_data)
+            elif message.content:
                 render_content(message.content, color, custom_data=message.custom_data)
     
     elif message.type == "system":
@@ -433,3 +659,46 @@ def finalize_streaming_message(
         # Render content with JSON/markdown logic
         if content:
             render_content(content, color, custom_data=custom_data)
+
+
+def render_task_lifecycle_stream(
+    tasks: Dict[str, Dict[str, Any]],
+    stream_placeholder,
+) -> None:
+    """
+    Render compact delegated-task lifecycle updates inside an active chat stream.
+
+    This view is intentionally minimal for in-message monitoring while tokens stream.
+    """
+    if stream_placeholder is None:
+        return
+    if not tasks:
+        stream_placeholder.empty()
+        return
+
+    counts = get_task_lifecycle_counts(tasks)
+
+    def _sort_key(task: Dict[str, Any]) -> tuple[int, str]:
+        sequence = task.get("sequence")
+        if isinstance(sequence, int):
+            return sequence, str(task.get("task_id", ""))
+        return 10**9, str(task.get("task_id", ""))
+
+    lines = [
+        f"**Delegated Tasks**  ",
+        f"Pending: {counts['pending']} | Running: {counts['running']} | Complete: {counts['complete']}",
+        "",
+    ]
+    for task in sorted(tasks.values(), key=_sort_key):
+        subagent_type = str(task.get("subagent_type", "unknown"))
+        status = str(task.get("status", "pending")).upper()
+        description = str(task.get("description", "")).strip()
+        task_id = str(task.get("task_id", "")).strip()
+        line = f"- `{status}` **{subagent_type}**"
+        if description:
+            line += f": {description}"
+        if task_id:
+            line += f" (`{task_id}`)"
+        lines.append(line)
+
+    stream_placeholder.markdown("\n".join(lines))

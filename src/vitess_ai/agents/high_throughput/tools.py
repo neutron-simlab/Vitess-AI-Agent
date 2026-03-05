@@ -711,19 +711,6 @@ async def generate_plot_2d(
 # TOOL EXPORTS
 # ============================================================================
 
-def get_high_throughput_tools() -> list[Any]:
-    """Return all tools for the high-throughput agent."""
-    return [
-        list_thread_input_files,
-        write_simulation_matrix,
-        read_simulation_matrix,
-        convert_matrix_to_run_specs,
-        run_batch_from_matrix,
-        generate_plot_1d,
-        generate_plot_2d,
-    ]
-
-
 def get_sim_runner_tools() -> list[Any]:
     """Return tools for the simulation runner subagent.
 

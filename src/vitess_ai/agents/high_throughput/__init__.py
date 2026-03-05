@@ -8,7 +8,6 @@ module subagents, and executes simulations sequentially via MCP.
 
 from vitess_ai.agents.high_throughput.agent import HighThroughputAgent, create_default_high_throughput
 from vitess_ai.agents.high_throughput.tools import (
-    get_high_throughput_tools,
     get_shared_high_throughput_tools,
     get_sim_runner_tools,
 )
@@ -16,7 +15,6 @@ from vitess_ai.agents.high_throughput.tools import (
 __all__ = [
     "HighThroughputAgent",
     "create_default_high_throughput",
-    "get_high_throughput_tools",
     "get_shared_high_throughput_tools",
     "get_sim_runner_tools",
 ]

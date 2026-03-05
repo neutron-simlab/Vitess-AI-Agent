@@ -79,10 +79,19 @@ def render_sidebar() -> None:
             # Keep modes isolated by resetting conversation/thread context.
             st.session_state.thread_id = str(uuid4())
             st.session_state.messages = []
+            st.session_state.current_turn_tasks = {}
             st.session_state.uploaded_files = {}
             st.session_state.welcome_initialized = False
             st.info(f"Switched to **{selected_mode}** mode.")
             st.rerun()
+
+        st.checkbox(
+            "Show delegated tool bodies",
+            value=bool(st.session_state.get("show_delegated_tool_bodies", False)),
+            key="show_delegated_tool_bodies",
+            help="Debug option: render full delegated task tool payloads inline in chat.",
+            disabled=selected_agent_id != "high_throughput",
+        )
 
         st.divider()
 

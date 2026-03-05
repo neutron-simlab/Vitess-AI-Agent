@@ -268,6 +268,13 @@ class AgentClient:
             elif parsed_type.startswith("token"):
                 content = parsed.get("content", "")
                 return self._normalize_token(parsed_type, content)
+
+            # Pass through structured delegated-task lifecycle events
+            elif parsed_type == "task_lifecycle":
+                content = parsed.get("content", {})
+                if not isinstance(content, dict):
+                    content = {"value": content}
+                return {"type": "task_lifecycle", "content": content}
             
             # Fallback for unknown types
             else:
@@ -489,6 +496,20 @@ class AgentClient:
         if isinstance(message, dict) and self.is_token_message(message):
             return message.get("content")
         return None
+
+    def is_task_lifecycle_event(self, message: ChatMessage | str | dict) -> bool:
+        """Check whether a stream item is a delegated task lifecycle event."""
+        return (
+            isinstance(message, dict)
+            and message.get("type") == "task_lifecycle"
+            and isinstance(message.get("content"), dict)
+        )
+
+    def get_task_lifecycle_content(self, message: ChatMessage | str | dict) -> dict[str, Any] | None:
+        """Get lifecycle payload for task events."""
+        if not self.is_task_lifecycle_event(message):
+            return None
+        return message.get("content")
 
     def restart(
         self,

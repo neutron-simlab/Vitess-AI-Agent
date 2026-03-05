@@ -55,6 +55,9 @@ if "server_connected" not in st.session_state:
 if "show_system_messages" not in st.session_state:
     st.session_state.show_system_messages = False
 
+if "show_delegated_tool_bodies" not in st.session_state:
+    st.session_state.show_delegated_tool_bodies = False
+
 if "selected_provider" not in st.session_state:
     # Initialize provider from available providers
     available_providers = get_available_providers()

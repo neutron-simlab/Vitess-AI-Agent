@@ -7,10 +7,8 @@ to process and convert LangGraph streaming events into chat messages.
 
 from typing import Any, Optional
 
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
-from langgraph.graph.state import CompiledStateGraph
+from langchain_core.messages import AIMessageChunk, BaseMessage
 from langgraph.types import Overwrite
-from langchain_core.runnables import RunnableConfig
 
 from vitess_ai.server.module_tracker import ModuleTracker
 from vitess_ai.server.utils import (
@@ -23,31 +21,15 @@ import json
 class UpdatesStreamHandler:
     """Handler for stream_mode='updates' events."""
     
-    def __init__(
-        self,
-        agent: CompiledStateGraph,
-        config: RunnableConfig,
-        run_id: str,
-        user_input_message: str
-    ):
-        self.agent = agent
-        self.config = config
-        self.run_id = run_id
-        self.user_input_message = user_input_message
-    
     def process_updates(
         self,
         event: dict[str, Any],
-        node_path: Optional[str],
-        current_module: Optional[str]
     ) -> list[BaseMessage]:
         """
         Process updates stream events and extract messages.
         
         Args:
             event: The updates event dictionary
-            node_path: Optional node path for module detection
-            current_module: Current module from state
             
         Returns:
             List of messages extracted from updates
@@ -81,25 +63,21 @@ class MessagesStreamHandler:
     
     def __init__(
         self,
-        run_id: str,
         current_module: Optional[str],
         default_module: str = "supervisor",
     ):
-        self.run_id = run_id
         self.current_module = current_module
         self.default_module = default_module
     
     def process_messages(
         self,
         event: tuple[BaseMessage, dict[str, Any]],
-        user_input_message: str
     ) -> Optional[str]:
         """
         Process messages stream events and yield token chunks.
         
         Args:
             event: Tuple of (message, metadata)
-            user_input_message: Original user input message to filter duplicates
             
         Returns:
             SSE data string with token chunk, or None if should be skipped
