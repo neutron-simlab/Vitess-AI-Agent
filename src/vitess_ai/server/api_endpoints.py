@@ -99,7 +99,7 @@ async def message_generator(
             str(run_id),
             user_input.message,
             default_module=agent_id,
-            enable_task_lifecycle=(agent_id == "high_throughput"),
+            enable_task_lifecycle=(agent_id == "advanced_mode"),
         )
         
         # Initialize streamed_message_ids from existing state to prevent duplicates

@@ -56,7 +56,6 @@ class LLMFactory:
             'api_key': config.OPENAI_API_KEY,
             'model': model,
             'temperature': temperature,
-            'max_tokens': kwargs.get('max_tokens', config.MAX_TOKENS),
             'timeout': kwargs.get('timeout', config.TIMEOUT_SECONDS),
             'max_retries': kwargs.get('max_retries', config.MAX_RETRIES),
         }
@@ -70,7 +69,7 @@ class LLMFactory:
         """Create Blablador LLM (uses ChatOpenAI with custom base_url)
         
         Note: timeout is properly configured here to prevent hanging.
-        The timeout value (default 60s from config.TIMEOUT_SECONDS) 
+        The timeout value (default 120s from config.TIMEOUT_SECONDS) 
         is passed to ChatOpenAI which will raise a timeout error if exceeded.
         """
         config = _get_config()
@@ -80,7 +79,6 @@ class LLMFactory:
             'base_url': config.BLABLADOR_BASE_URL,
             'model': model,
             'temperature': temperature,
-            'max_tokens': kwargs.get('max_tokens', config.MAX_TOKENS),
             'timeout': timeout,  # Timeout in seconds - prevents hanging on Blablador
             'max_retries': kwargs.get('max_retries', config.MAX_RETRIES),
         }

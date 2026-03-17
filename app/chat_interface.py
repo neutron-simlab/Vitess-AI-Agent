@@ -127,7 +127,7 @@ def render_chat_interface() -> None:
     render_header_with_logo()
 
     _initialize_task_lifecycle_state()
-    is_high_throughput_mode = st.session_state.get("selected_agent_id") == "high_throughput"
+    is_advanced_mode = st.session_state.get("selected_agent_id") == "advanced_mode"
     
     # Auto-trigger initial welcome from server when connected and history is empty
     if (
@@ -138,7 +138,7 @@ def render_chat_interface() -> None:
     ):
         st.session_state.welcome_initialized = True
         with st.chat_message("assistant"):
-            lifecycle_placeholder = st.empty() if is_high_throughput_mode else None
+            lifecycle_placeholder = st.empty() if is_advanced_mode else None
             _reset_task_lifecycle_state(task_stream_placeholder=lifecycle_placeholder)
             message_placeholder = st.empty()
             response_text = ""
@@ -210,7 +210,7 @@ def render_chat_interface() -> None:
 
             # Stream response
             with st.chat_message("assistant"):
-                lifecycle_placeholder = st.empty() if is_high_throughput_mode else None
+                lifecycle_placeholder = st.empty() if is_advanced_mode else None
                 _reset_task_lifecycle_state(task_stream_placeholder=lifecycle_placeholder)
                 message_placeholder = st.empty()
                 response_text = ""

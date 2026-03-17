@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from vitess_ai.core.log import get_logger
 from vitess_ai.agents.simulator import SimulatorAgent, create_default_simulator
-from vitess_ai.agents.high_throughput import HighThroughputAgent, create_default_high_throughput
+from vitess_ai.agents.advanced_mode import AdvancedModeAgent, create_default_advanced_mode
 
 # Backward compatibility alias
 SupervisorAgent = SimulatorAgent
@@ -58,16 +58,16 @@ async def _create_supervisor_agent(provider: str, model: str) -> tuple[Superviso
     return (supervisor, supervisor.app)
 
 
-async def _create_high_throughput_agent(provider: str, model: str) -> tuple[HighThroughputAgent, CompiledStateGraph]:
-    """Factory function for creating high-throughput agents."""
-    agent = await create_default_high_throughput(provider=provider, model=model)
+async def _create_advanced_mode_agent(provider: str, model: str) -> tuple[AdvancedModeAgent, CompiledStateGraph]:
+    """Factory function for creating advanced mode agents."""
+    agent = await create_default_advanced_mode(provider=provider, model=model)
     return (agent, agent.app)
 
 
 # Register default agent factories
 register_agent_factory("supervisor", _create_supervisor_agent)
 register_agent_factory("simulator", _create_supervisor_agent)  # Alias
-register_agent_factory("high_throughput", _create_high_throughput_agent)
+register_agent_factory("advanced_mode", _create_advanced_mode_agent)
 
 
 def _normalize_provider_model(provider: str | None, model: str | None) -> tuple[str, str]:
@@ -155,7 +155,7 @@ async def get_agent(
             )
     else:
         logger.info(f"Using existing agent: {agent_id} (provider/model from config.configurable will be used per invocation)")
-    
+
     # Return the CompiledStateGraph (app) from the registry
     return _agent_registry[agent_id][1]
 
@@ -168,14 +168,15 @@ async def restart_agent(
     """
     Restart an agent by clearing its state/memory.
     
-    With dynamic model selection, provider/model changes don't require graph restart.
     This function clears conversation state/memory for a fresh start.
-    The graph itself is reused; model selection happens per-invocation via config.
+    Simulator/supervisor agents reuse the same graph and switch models per
+    invocation. Advanced mode agents rebuild their graph with the requested
+    provider/model while optionally clearing memory.
     
     Args:
         agent_id: Agent identifier (e.g., "supervisor")
-        provider: Ignored (kept for backward compatibility). Model selection is per-invocation.
-        model: Ignored (kept for backward compatibility). Model selection is per-invocation.
+        provider: Optional provider override used when rebuilding/restarting.
+        model: Optional model override used when rebuilding/restarting.
     
     Returns:
         CompiledStateGraph for the agent (same graph, cleared state)

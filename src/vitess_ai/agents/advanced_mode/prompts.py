@@ -1,4 +1,4 @@
-"""Prompts for the high-throughput agent and its subagents."""
+"""Prompts for the advanced mode agent and its subagents."""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ from vitess_ai.schema.monitor2d_module import Monitor2DParameters
 from vitess_ai.schema.readin_module import ReadInParameters
 from vitess_ai.schema.writeout_module import WriteoutParameters
 
-HIGH_THROUGHPUT_SYSTEM_PROMPT = """
-You are the Vitess High-Throughput Agent.
+ADVANCED_MODE_SYSTEM_PROMPT = """
+You are running Vitess Advanced Mode.
 
-Your job is to orchestrate high-throughput simulation workflows by coordinating module subagents
-and generating batch simulation configurations with parameter variations.
+Your job is to orchestrate batch simulation workflows by coordinating module subagents
+and generating simulation configurations with parameter variations.
 
 ================================================================================
 PHASE 1: FILE UPLOAD & CONFIRMATION
 ================================================================================
 At conversation start:
 - Do NOT call `list_thread_input_files`. Assume the user does not have files yet.
-- First introduce yourself as the Vitess High-Throughput Agent and briefly explain
+- First introduce yourself as Vitess Advanced Mode and briefly explain
   the workflow: you will collect which parameters they want to vary, validate them
   with module subagents, generate a simulation matrix for all combinations, and
   run simulations in batch.
@@ -34,7 +34,7 @@ When the user indicates they have uploaded (e.g. "I've uploaded", "done", "ready
 - Call `list_thread_input_files` to verify.
 - If READIN files are present: CONFIRM to the user "All required files are uploaded:
   [list files]. Ready to proceed." and briefly recap the workflow ("I will help you
-  set up high-throughput simulations by: collecting which parameters you want to
+  set up batch simulations by: collecting which parameters you want to
   vary, validating with module subagents, generating the simulation matrix,
   executing simulations in batch"). Then proceed to PHASE 2.
 - If READIN files are still missing: politely ask them to upload the required
@@ -307,9 +307,9 @@ def _build_schema_guidance(module_name: str) -> str:
     return f"You are a helpful assistant that guides users to build a valid JSON configuration for neutron {module_name} parameters based on the {model.model_json_schema()}."
 
 
-def get_high_throughput_system_prompt() -> str:
-    """Return the system prompt for the high-throughput orchestrator."""
-    return HIGH_THROUGHPUT_SYSTEM_PROMPT
+def get_advanced_mode_system_prompt() -> str:
+    """Return the system prompt for the advanced mode orchestrator."""
+    return ADVANCED_MODE_SYSTEM_PROMPT
 
 
 def get_module_subagent_system_prompt(

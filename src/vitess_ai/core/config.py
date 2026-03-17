@@ -72,8 +72,7 @@ class Config:
             # Fallback to Blablador default for unknown providers
             DEFAULT_MODEL = BLABLADOR_DEFAULT_MODEL
     
-    MAX_TOKENS = int(os.getenv("MAX_TOKENS", "10000"))
-    TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "60"))
+    TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "120"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
     
     

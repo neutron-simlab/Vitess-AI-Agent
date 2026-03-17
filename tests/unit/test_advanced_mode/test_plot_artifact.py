@@ -195,12 +195,12 @@ class TestToolResponseFormat:
     """Verify the tools declare content_and_artifact format."""
 
     def test_generate_plot_1d_response_format(self):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_1d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_1d
 
         assert generate_plot_1d.response_format == "content_and_artifact"
 
     def test_generate_plot_2d_response_format(self):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_2d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
 
         assert generate_plot_2d.response_format == "content_and_artifact"
 
@@ -221,7 +221,7 @@ class TestPlotToolErrorPaths:
     """
 
     async def test_generate_plot_2d_no_thread_id(self, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_2d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
 
         monkeypatch.delenv("THREAD_ID", raising=False)
 
@@ -234,7 +234,7 @@ class TestPlotToolErrorPaths:
         assert artifact.get("success") is False
 
     async def test_generate_plot_1d_no_thread_id(self, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_1d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_1d
 
         monkeypatch.delenv("THREAD_ID", raising=False)
 
@@ -247,10 +247,10 @@ class TestPlotToolErrorPaths:
         assert artifact.get("success") is False
 
     async def test_generate_plot_2d_missing_output_dir(self, tmp_path, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_2d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
 
@@ -263,10 +263,10 @@ class TestPlotToolErrorPaths:
         assert artifact.get("success") is False
 
     async def test_generate_plot_2d_no_monitor_file(self, tmp_path, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_2d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
         outputs = tmp_path / "tid" / "outputs"
@@ -282,10 +282,10 @@ class TestPlotToolErrorPaths:
         assert artifact["plot_data"] == {}
 
     async def test_generate_plot_1d_no_monitor_file(self, tmp_path, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_1d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_1d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
         outputs = tmp_path / "tid" / "outputs"

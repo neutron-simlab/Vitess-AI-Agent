@@ -1,14 +1,14 @@
 import pytest
 
-from vitess_ai.agents.high_throughput.prompts import (
-    get_high_throughput_system_prompt,
+from vitess_ai.agents.advanced_mode.prompts import (
+    get_advanced_mode_system_prompt,
     get_module_subagent_system_prompt,
 )
 
 
 @pytest.mark.unit
 def test_orchestrator_prompt_preserves_structured_parameter_flow() -> None:
-    prompt = get_high_throughput_system_prompt()
+    prompt = get_advanced_mode_system_prompt()
 
     assert "Do not lose or omit structured validated parameters needed for downstream tools." in prompt
     assert "Keep user-facing summaries concise where possible." in prompt

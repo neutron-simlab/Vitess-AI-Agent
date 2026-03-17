@@ -1,5 +1,5 @@
 """
-High-throughput agent built with LangChain Deep Agents.
+Advanced mode agent built with LangChain Deep Agents.
 
 This graph is intentionally separate from the supervisor graph and is meant for
 advanced, exploratory workflows (multi-step simulation orchestration).
@@ -12,27 +12,28 @@ from typing import Any
 
 from langgraph.checkpoint.memory import InMemorySaver
 
+from vitess_ai.agents.simulator.middleware import DynamicModelMiddleware
 from vitess_ai.core.config import global_config
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from vitess_ai.core.log import get_logger
-from vitess_ai.agents.high_throughput.prompts import (
-    get_high_throughput_system_prompt,
+from vitess_ai.agents.advanced_mode.prompts import (
+    get_advanced_mode_system_prompt,
     get_module_subagent_system_prompt,
     get_sim_runner_system_prompt,
 )
-from vitess_ai.agents.high_throughput.tools import (
-    get_shared_high_throughput_tools,
+from vitess_ai.agents.advanced_mode.tools import (
+    get_shared_advanced_mode_tools,
     get_sim_runner_tools,
     submit_module_result,
 )
 
 
-class HighThroughputAgent:
+class AdvancedModeAgent:
     """
-    High-throughput orchestrator using `create_deep_agent(...)`.
+    Advanced mode orchestrator using `create_deep_agent(...)`.
 
     Architecture:
-    - Main high-throughput agent orchestrator
+    - Main advanced mode agent orchestrator
     - Module subagents (readin/guide/writeout/monitor)
     - Simulation runner subagent
     - Filesystem backend for persistent analysis context
@@ -85,6 +86,7 @@ class HighThroughputAgent:
                         tool_names=[t.name for t in module_tools],
                     ),
                     "tools": module_tools,
+                    "middleware": [DynamicModelMiddleware()],
                 }
             )
 
@@ -97,15 +99,16 @@ class HighThroughputAgent:
         subagents.append(
             {
                 "name": "sim-runner",
-                "description": "Generate and run high-throughput Vitess simulations from module results.",
+                "description": "Generate and run batch Vitess simulations from module results.",
                 "system_prompt": get_sim_runner_system_prompt(),
                 "tools": get_sim_runner_tools(),
+                "middleware": [DynamicModelMiddleware()],
             }
         )
         return subagents
 
     async def initialize(self, force_reinitialize: bool = False) -> None:
-        """Initialize (or reinitialize) the high-throughput graph."""
+        """Initialize (or reinitialize) the advanced mode graph."""
         if self.initialized and not force_reinitialize:
             return
 
@@ -114,7 +117,7 @@ class HighThroughputAgent:
             from deepagents.backends.filesystem import FilesystemBackend
         except ImportError as exc:
             raise RuntimeError(
-                "High-throughput agent requires the `deepagents` package. Install it with `pip install deepagents`."
+                "Advanced mode agent requires the `deepagents` package. Install it with `pip install deepagents`."
             ) from exc
 
         if force_reinitialize:
@@ -127,17 +130,18 @@ class HighThroughputAgent:
         Path(self.filesystem_root).mkdir(parents=True, exist_ok=True)
         backend = FilesystemBackend(root_dir=self.filesystem_root)
         self.app = create_deep_agent(
-            name="high_throughput",
+            name="advanced_mode",
             model=llm,
-            tools=get_shared_high_throughput_tools(),
+            tools=get_shared_advanced_mode_tools(),
+            middleware=[DynamicModelMiddleware()],
             subagents=subagents,
             backend=backend,
             checkpointer=self.memory,
-            system_prompt=get_high_throughput_system_prompt(),
+            system_prompt=get_advanced_mode_system_prompt(),
         )
         self.initialized = True
         self.logger.info(
-            "High-throughput agent initialized (provider=%s, model=%s, subagents=%s)",
+            "Advanced mode agent initialized (provider=%s, model=%s, subagents=%s)",
             self.provider,
             self.model,
             [subagent.get("name") for subagent in subagents],
@@ -150,7 +154,7 @@ class HighThroughputAgent:
         clear_state: bool = True,
     ) -> None:
         """
-        Restart high-throughput graph with optional provider/model updates.
+        Restart advanced mode graph with optional provider/model updates.
 
         Args:
             provider: Optional provider override.
@@ -168,11 +172,11 @@ class HighThroughputAgent:
         await self.initialize(force_reinitialize=True)
 
 
-async def create_default_high_throughput(
+async def create_default_advanced_mode(
     provider: str = global_config.DEFAULT_PROVIDER,
     model: str = global_config.DEFAULT_MODEL,
-) -> HighThroughputAgent:
+) -> AdvancedModeAgent:
     """Factory helper used by the agent registry."""
-    agent = HighThroughputAgent(provider=provider, model=model)
+    agent = AdvancedModeAgent(provider=provider, model=model)
     await agent.initialize()
     return agent

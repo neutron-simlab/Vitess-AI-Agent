@@ -71,10 +71,10 @@ class TestPlot2dArtifactPipeline:
     """
 
     async def test_full_pipeline(self, tmp_path, outputs_dir, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_2d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
 
@@ -105,10 +105,10 @@ class TestPlot2dArtifactPipeline:
 
     async def test_content_is_small_artifact_is_large(self, tmp_path, outputs_dir, monkeypatch):
         """The whole point: content is tiny, artifact carries the big payload."""
-        from vitess_ai.agents.high_throughput.tools import generate_plot_2d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
 
@@ -134,10 +134,10 @@ class TestPlot1dArtifactPipeline:
     """End-to-end: monitor1D.dat → generate_plot_1d → ChatMessage with plot."""
 
     async def test_full_pipeline(self, tmp_path, outputs_dir, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_1d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_1d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
 
@@ -176,10 +176,10 @@ class TestPlotWithRunId:
     """Verify per-run sub-directories are resolved correctly."""
 
     async def test_2d_plot_with_run_id(self, tmp_path, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_2d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
 
@@ -195,10 +195,10 @@ class TestPlotWithRunId:
         assert "monitor2d" in artifact["plot_data"]
 
     async def test_1d_plot_with_run_id(self, tmp_path, monkeypatch):
-        from vitess_ai.agents.high_throughput.tools import generate_plot_1d
+        from vitess_ai.agents.advanced_mode.tools import generate_plot_1d
 
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(tmp_path),
         )
 

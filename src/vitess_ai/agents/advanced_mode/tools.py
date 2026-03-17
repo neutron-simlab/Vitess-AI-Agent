@@ -1,5 +1,5 @@
 """
-Tools for high-throughput agent.
+Tools for advanced mode agent.
 
 Simplified version that delegates simulation execution to MCP supervisor tools.
 """
@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from langchain.tools import tool
 
@@ -246,7 +246,6 @@ async def list_thread_input_files(thread_id: str | None = None) -> dict[str, Any
 @tool
 async def write_simulation_matrix(
     simulations: list[dict[str, Any]],
-    varied_parameters: list[dict[str, Any]],
     thread_id: str | None = None,
     filename: str = "simulation_matrix.json",
 ) -> dict[str, Any]:
@@ -255,7 +254,6 @@ async def write_simulation_matrix(
 
     Args:
         simulations: List of simulation configs with module parameters.
-        varied_parameters: List of varied parameter specs.
         thread_id: Optional thread ID.
         filename: Output filename (default: simulation_matrix.json).
 
@@ -267,8 +265,12 @@ async def write_simulation_matrix(
         return {"success": False, "message": "No thread_id available.", "file_path": None}
 
     invalid = []
+    missing_required = []
     for i, sim in enumerate(simulations):
         sim_id = sim.get("id", f"sim_{i + 1:03d}")
+        for module_name in CANONICAL_EXECUTION_ORDER:
+            if sim.get(module_name) is None:
+                missing_required.append(f"{sim_id}/{module_name}")
         for module_name, value in sim.items():
             if module_name == "id":
                 continue
@@ -281,6 +283,17 @@ async def write_simulation_matrix(
             "file_path": None,
             "message": f"Simulation matrix contains invalid or error-shaped module data; do not use validation errors as parameters. Invalid entries: {', '.join(invalid)}",
         }
+    if missing_required:
+        return {
+            "success": False,
+            "thread_id": resolved_thread_id,
+            "file_path": None,
+            "message": (
+                "Simulation matrix must include all five modules "
+                f"(readin, guide, writeout, monitor1d, monitor2d). "
+                f"Missing entries: {', '.join(missing_required)}"
+            ),
+        }
 
     output_dir = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -291,7 +304,6 @@ async def write_simulation_matrix(
             "created_at": datetime.now(timezone.utc).isoformat(),
             "thread_id": resolved_thread_id,
             "total_simulations": len(simulations),
-            "varied_parameters": varied_parameters,
         },
         "simulations": simulations,
     }
@@ -724,8 +736,8 @@ def get_sim_runner_tools() -> list[Any]:
     ]
 
 
-def get_shared_high_throughput_tools() -> list[Any]:
-    """Return tools shared by the main high-throughput orchestrator."""
+def get_shared_advanced_mode_tools() -> list[Any]:
+    """Return tools shared by the main advanced mode orchestrator."""
     return [
         list_thread_input_files,
         write_simulation_matrix,

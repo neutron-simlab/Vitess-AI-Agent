@@ -29,7 +29,7 @@ def _build_processor() -> StreamEventProcessor:
         config={},
         run_id="run-1",
         user_input_message="test",
-        default_module="high_throughput",
+        default_module="advanced_mode",
         enable_task_lifecycle=True,
     )
 

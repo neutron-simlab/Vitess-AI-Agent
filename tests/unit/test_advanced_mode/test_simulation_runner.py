@@ -1,5 +1,5 @@
 """
-Tests for high-throughput simulation runner tools (simplified version).
+Tests for advanced mode simulation runner tools (simplified version).
 
 Tests cover:
 - Simulation matrix writing/reading
@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from vitess_ai.agents.high_throughput.tools import (
+from vitess_ai.agents.advanced_mode.tools import (
     _convert_simulation_to_module_results,
     _resolve_thread_id,
     MODULE_CLI_CONVERTERS,
@@ -472,11 +472,11 @@ class TestAsyncTools:
 
     async def test_write_simulation_matrix(self, temp_dir, sample_simulation_matrix, monkeypatch):
         """Test write_simulation_matrix tool."""
-        from vitess_ai.agents.high_throughput.tools import write_simulation_matrix
+        from vitess_ai.agents.advanced_mode.tools import write_simulation_matrix
         
         monkeypatch.setenv("THREAD_ID", "test-thread")
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(temp_dir)
         )
         
@@ -498,11 +498,11 @@ class TestAsyncTools:
 
     async def test_write_simulation_matrix_rejects_error_shaped(self, temp_dir, monkeypatch):
         """Test write_simulation_matrix rejects simulations with error-shaped module data."""
-        from vitess_ai.agents.high_throughput.tools import write_simulation_matrix
+        from vitess_ai.agents.advanced_mode.tools import write_simulation_matrix
 
         monkeypatch.setenv("THREAD_ID", "test-thread")
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(temp_dir),
         )
 
@@ -527,11 +527,11 @@ class TestAsyncTools:
 
     async def test_write_simulation_matrix_rejects_missing_required_modules(self, temp_dir, sample_simulation_matrix, monkeypatch):
         """write_simulation_matrix must reject simulations missing any of the five modules (e.g. monitor2d)."""
-        from vitess_ai.agents.high_throughput.tools import write_simulation_matrix
+        from vitess_ai.agents.advanced_mode.tools import write_simulation_matrix
 
         monkeypatch.setenv("THREAD_ID", "test-thread")
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(temp_dir),
         )
         simulations = sample_simulation_matrix["simulations"]
@@ -549,11 +549,11 @@ class TestAsyncTools:
 
     async def test_read_simulation_matrix(self, temp_dir, sample_simulation_matrix, monkeypatch):
         """Test read_simulation_matrix tool."""
-        from vitess_ai.agents.high_throughput.tools import read_simulation_matrix
+        from vitess_ai.agents.advanced_mode.tools import read_simulation_matrix
         
         monkeypatch.setenv("THREAD_ID", "test-thread")
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(temp_dir)
         )
         
@@ -570,11 +570,11 @@ class TestAsyncTools:
 
     async def test_convert_matrix_to_run_specs(self, temp_dir, sample_simulation_matrix, monkeypatch):
         """Test convert_matrix_to_run_specs tool."""
-        from vitess_ai.agents.high_throughput.tools import convert_matrix_to_run_specs
+        from vitess_ai.agents.advanced_mode.tools import convert_matrix_to_run_specs
         
         monkeypatch.setenv("THREAD_ID", "test-thread")
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(temp_dir)
         )
         
@@ -603,10 +603,10 @@ class TestAsyncTools:
 
     async def test_convert_matrix_file_not_found(self, temp_dir, monkeypatch):
         """Test convert_matrix_to_run_specs when file not found."""
-        from vitess_ai.agents.high_throughput.tools import convert_matrix_to_run_specs
+        from vitess_ai.agents.advanced_mode.tools import convert_matrix_to_run_specs
         
         monkeypatch.setattr(
-            "vitess_ai.agents.high_throughput.tools.global_config.VITESS_PROJECT_PATH",
+            "vitess_ai.agents.advanced_mode.tools.global_config.VITESS_PROJECT_PATH",
             str(temp_dir)
         )
         

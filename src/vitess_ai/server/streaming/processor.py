@@ -54,7 +54,7 @@ class StreamEventProcessor:
         # Uses message IDs (from LangChain BaseMessage.id) or hash fallback
         self._streamed_message_ids: set[str] = set()
 
-        # High-throughput lifecycle tracking (delegated subagent task tool calls)
+        # Advanced mode lifecycle tracking (delegated subagent task tool calls)
         self._active_subagents: dict[str, dict[str, Any]] = {}
         self._pregel_to_subagent: dict[str, str] = {}
         self._task_tool_metadata: dict[str, dict[str, Any]] = {}
