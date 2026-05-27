@@ -43,9 +43,31 @@ The system uses LangGraph to orchestrate specialized module agents in a unified 
 
 ### 1. Clone the Repository
 
+This project includes the [`vitess-rag`](https://github.com/neutron-simlab/vitess-rag) documentation RAG package as a Git submodule at `rag/vitess-rag`. Initialize it when you clone:
+
 ```bash
-git clone <repository-url>
+git clone --recurse-submodules <repository-url>
 cd Vitess-AI-Agent
+```
+
+If you already cloned without submodules, initialize them from the repo root:
+
+```bash
+git submodule update --init --recursive
+```
+
+Verify the submodule is present:
+
+```bash
+test -f rag/vitess-rag/pyproject.toml && echo "vitess-rag submodule OK"
+```
+
+Without the submodule, local installs (`uv sync`) and Docker builds will fail because `vitess-rag` is a path dependency in `pyproject.toml`.
+
+To update the submodule later after pulling upstream changes:
+
+```bash
+git submodule update --init --recursive
 ```
 
 ### 2. Configure Environment Variables
@@ -268,6 +290,15 @@ docker compose build --no-cache
 docker system df
 ```
 
+**Missing `rag/vitess-rag` submodule:**
+```bash
+# Initialize submodules from the repo root
+git submodule update --init --recursive
+
+# Or re-clone with submodules
+git clone --recurse-submodules <repository-url>
+```
+
 **API key errors:**
 ```bash
 # Verify API keys are set correctly
@@ -285,6 +316,7 @@ vitess-ai-agent/
 ├── src/vitess_ai/
 │   ├── clients/            # API client library
 │   ├── modules/            # Central module catalog (graph + UI + upload metadata)
+│   ├── retrieval/          # VITESS documentation RAG adapters
 │   ├── server/             # FastAPI server and endpoints
 │   │   └── streaming/      # Streaming event processors
 │   ├── server_agents/      # Server-optimized agents
@@ -292,6 +324,8 @@ vitess-ai-agent/
 │   ├── prompts/            # Agent prompts
 │   ├── schema/             # Pydantic schemas
 │   └── core/               # Core utilities
+├── rag/
+│   └── vitess-rag/         # Git submodule: VITESS documentation RAG package
 ├── main.py                 # Server entry point
 ├── docker-compose.yml      # Docker Compose configuration
 ├── Dockerfile              # Docker image definition
