@@ -25,6 +25,7 @@ dependencies = [
     "numpy>=2.3.4",
     "plotly>=6.5.0",
     "markdown>=3.10",
+    "vitess-rag",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,9 @@ inmem = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+vitess-rag = { path = "rag/vitess-rag" }
 
 [dependency-groups]
 dev = [

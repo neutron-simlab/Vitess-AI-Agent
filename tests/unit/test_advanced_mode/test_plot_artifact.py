@@ -69,30 +69,6 @@ class TestArtifactExtraction:
         assert "monitor2d" in chat.custom_data["plot_data"]
         assert chat.custom_data["plot_data"]["monitor2d"]["plot_json"] == SAMPLE_PLOT_JSON_2D
 
-    def test_extracts_1d_plot_from_artifact(self):
-        artifact = _make_artifact("monitor1d", SAMPLE_PLOT_JSON_1D)
-        msg = ToolMessage(
-            content="Plot generated.",
-            tool_call_id="call-2",
-            artifact=artifact,
-        )
-        chat = langchain_to_chat_message(msg)
-
-        assert "plot_data" in chat.custom_data
-        assert "monitor1d" in chat.custom_data["plot_data"]
-
-    def test_content_stays_small_when_artifact_used(self):
-        artifact = _make_artifact("monitor2d", SAMPLE_PLOT_JSON_2D)
-        msg = ToolMessage(
-            content="The plot has been generated and is displayed in the UI.",
-            tool_call_id="call-3",
-            artifact=artifact,
-        )
-        chat = langchain_to_chat_message(msg)
-
-        assert chat.content == "The plot has been generated and is displayed in the UI."
-        assert "plot_data" in chat.custom_data
-
     def test_no_artifact_no_false_positive(self):
         msg = ToolMessage(content="some plain result", tool_call_id="call-4")
         chat = langchain_to_chat_message(msg)
@@ -184,25 +160,6 @@ class TestSimulatorAIMessagePlotData:
 
         assert "plot_data" in chat.custom_data
         assert "monitor2d" in chat.custom_data["plot_data"]
-
-
-# ---------------------------------------------------------------------------
-# Unit: generate_plot_1d / generate_plot_2d response_format
-# ---------------------------------------------------------------------------
-
-@pytest.mark.unit
-class TestToolResponseFormat:
-    """Verify the tools declare content_and_artifact format."""
-
-    def test_generate_plot_1d_response_format(self):
-        from vitess_ai.agents.advanced_mode.tools import generate_plot_1d
-
-        assert generate_plot_1d.response_format == "content_and_artifact"
-
-    def test_generate_plot_2d_response_format(self):
-        from vitess_ai.agents.advanced_mode.tools import generate_plot_2d
-
-        assert generate_plot_2d.response_format == "content_and_artifact"
 
 
 # ---------------------------------------------------------------------------

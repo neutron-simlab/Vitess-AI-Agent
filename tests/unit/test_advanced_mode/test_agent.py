@@ -4,7 +4,6 @@ import pytest
 
 import vitess_ai.agents.advanced_mode.agent as advanced_mode_agent_module
 from vitess_ai.agents.advanced_mode.agent import AdvancedModeAgent
-from vitess_ai.agents.simulator.middleware import DynamicModelMiddleware
 
 
 def _fake_tool(name: str) -> SimpleNamespace:
@@ -12,52 +11,8 @@ def _fake_tool(name: str) -> SimpleNamespace:
 
 
 @pytest.mark.unit
-def test_build_subagents_attach_dynamic_model_middleware(monkeypatch) -> None:
-    fake_modules = [
-        SimpleNamespace(
-            name="readin",
-            description="Read input configuration",
-            tool_factory=lambda: [_fake_tool("readin-tool")],
-        ),
-        SimpleNamespace(
-            name="guide",
-            description="Guide configuration",
-            tool_factory=lambda: [_fake_tool("guide-tool")],
-        ),
-        SimpleNamespace(
-            name="writeout",
-            description="Write output configuration",
-            tool_factory=lambda: [_fake_tool("writeout-tool")],
-        ),
-        SimpleNamespace(
-            name="monitor1d",
-            description="Monitor1D configuration",
-            tool_factory=lambda: [_fake_tool("monitor1d-tool")],
-        ),
-        SimpleNamespace(
-            name="monitor2d",
-            description="Monitor2D configuration",
-            tool_factory=lambda: [_fake_tool("monitor2d-tool")],
-        ),
-    ]
-
-    monkeypatch.setattr(
-        "vitess_ai.modules.get_graph_module_metadata",
-        lambda: fake_modules,
-    )
-
-    agent = AdvancedModeAgent()
-    subagents = agent._build_subagents()
-
-    assert len(subagents) == 6
-    for spec in subagents:
-        middleware = spec.get("middleware", [])
-        assert any(isinstance(mw, DynamicModelMiddleware) for mw in middleware)
-
-
-@pytest.mark.unit
 @pytest.mark.asyncio
-async def test_initialize_passes_dynamic_model_middleware_to_deep_agent(
+async def test_initialize_mounts_docs_backend_when_rag_data_dir_exists(
     monkeypatch,
     temp_dir,
 ) -> None:
@@ -69,8 +24,14 @@ async def test_initialize_passes_dynamic_model_middleware_to_deep_agent(
         return object()
 
     class DummyFilesystemBackend:
-        def __init__(self, root_dir: str):
+        def __init__(self, root_dir: str, virtual_mode: bool = False):
             self.root_dir = root_dir
+            self.virtual_mode = virtual_mode
+
+    class DummyCompositeBackend:
+        def __init__(self, default, routes):
+            self.default = default
+            self.routes = routes
 
     monkeypatch.setattr("deepagents.create_deep_agent", fake_create_deep_agent)
     monkeypatch.setattr(
@@ -78,9 +39,21 @@ async def test_initialize_passes_dynamic_model_middleware_to_deep_agent(
         DummyFilesystemBackend,
     )
     monkeypatch.setattr(
+        "deepagents.backends.composite.CompositeBackend",
+        DummyCompositeBackend,
+    )
+    monkeypatch.setattr(
         advanced_mode_agent_module,
         "get_shared_advanced_mode_tools",
         lambda: [_fake_tool("shared-tool")],
+    )
+
+    docs_dir = temp_dir / "docs"
+    docs_dir.mkdir()
+    monkeypatch.setattr(
+        advanced_mode_agent_module.global_config,
+        "VITESS_RAG_DATA_DIR",
+        str(docs_dir),
     )
 
     agent = AdvancedModeAgent(filesystem_root=str(temp_dir))
@@ -94,7 +67,6 @@ async def test_initialize_passes_dynamic_model_middleware_to_deep_agent(
                 "description": "runner",
                 "system_prompt": "prompt",
                 "tools": [_fake_tool("runner-tool")],
-                "middleware": [DynamicModelMiddleware()],
             }
         ],
     )
@@ -104,5 +76,8 @@ async def test_initialize_passes_dynamic_model_middleware_to_deep_agent(
     assert agent.initialized is True
     assert agent.app is not None
     kwargs = captured["kwargs"]
-    middleware = kwargs["middleware"]
-    assert any(isinstance(mw, DynamicModelMiddleware) for mw in middleware)
+    backend = kwargs["backend"]
+    assert backend.default.virtual_mode is True
+    assert "/docs/" in backend.routes
+    assert backend.routes["/docs/"].root_dir == str(docs_dir.resolve())
+    assert backend.routes["/docs/"].virtual_mode is True

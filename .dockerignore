@@ -36,6 +36,8 @@ ENV/
 # Documentation
 *.md
 !README.md
+!rag/vitess-rag/README.md
+!rag/vitess-rag/data/*.md
 
 # Test files
 tests/

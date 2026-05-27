@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from langchain.tools import tool
 
@@ -18,6 +18,7 @@ from vitess_ai.agents.simulator.tools.readin import readin_params_to_cli
 from vitess_ai.agents.simulator.tools.guide import guide_params_to_cli
 from vitess_ai.agents.simulator.tools.writeout import writeout_params_to_cli
 from vitess_ai.agents.simulator.tools.monitor import monitor1d_params_to_cli, monitor2d_params_to_cli
+from vitess_ai.retrieval.tools import get_rag_tools
 
 
 def _resolve_thread_id(thread_id: str | None = None) -> str | None:
@@ -746,4 +747,5 @@ def get_shared_advanced_mode_tools() -> list[Any]:
         run_batch_from_matrix,
         generate_plot_1d,
         generate_plot_2d,
+        *get_rag_tools(),
     ]

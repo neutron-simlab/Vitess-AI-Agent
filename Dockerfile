@@ -91,6 +91,8 @@ WORKDIR /app
 
 # Copy dependency files and package source first for better layer caching
 COPY pyproject.toml uv.lock README.md ./
+COPY rag/vitess-rag/pyproject.toml rag/vitess-rag/README.md ./rag/vitess-rag/
+COPY rag/vitess-rag/src/ ./rag/vitess-rag/src/
 COPY src/ ./src/
 
 # Install dependencies using uv
@@ -103,7 +105,7 @@ COPY . .
 RUN chmod +x docker-entrypoint.sh
 
 # Create directories for shared data (will be mounted as volumes in docker-compose)
-RUN mkdir -p /data/projects /data/logs
+RUN mkdir -p /data/projects /data/logs /data/rag
 
 # Expose ports
 EXPOSE 8000 8501 9005

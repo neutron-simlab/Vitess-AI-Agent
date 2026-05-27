@@ -10,12 +10,14 @@ from vitess_ai.schema.monitor1d_module import Monitor1DParameters
 from vitess_ai.schema.monitor2d_module import Monitor2DParameters
 from vitess_ai.schema.readin_module import ReadInParameters
 from vitess_ai.schema.writeout_module import WriteoutParameters
+from vitess_ai.retrieval.prompts import ADVANCED_RAG_DOCUMENTATION_POLICY, MODULE_RAG_CONTEXT_NOTE
 
 ADVANCED_MODE_SYSTEM_PROMPT = """
 You are running Vitess Advanced Mode.
 
 Your job is to orchestrate batch simulation workflows by coordinating module subagents
 and generating simulation configurations with parameter variations.
+""" + ADVANCED_RAG_DOCUMENTATION_POLICY + """
 
 ================================================================================
 PHASE 1: FILE UPLOAD & CONFIRMATION
@@ -341,6 +343,7 @@ def get_module_subagent_system_prompt(
         f"- Mandatory workflow fields: {semantic_required_str}\n"
         f"- File/path handling: {file_guidance}\n"
         f"- Always run `{validation_tool}` before claiming completion.\n"
+        f"- {MODULE_RAG_CONTEXT_NOTE}\n"
         "After running the validation tool, you MUST call `submit_module_result`: "
         "if validation returned validation_status: True, call with validation_passed=True and "
         "parameters=<validated_params from tool> (this can be a dict for one set or list[dict] for batch); "

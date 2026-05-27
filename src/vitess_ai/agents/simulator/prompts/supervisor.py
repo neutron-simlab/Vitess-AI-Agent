@@ -2,39 +2,6 @@
 from typing import List, Dict, Any, Optional
 
 
-SUPERVISOR_WELCOME_MESSAGE = """
-**Neutron Simulation Configuration System**
-
-Welcome! I'm your configurable Simulation Supervisor. I'll guide you through 
-setting up your neutron simulation with the registered modules.
-"""
-
-
-def get_supervisor_welcome_message(modules_info: list, simulation_tools_available: bool = False) -> str:
-    """Generate the welcome message for the supervisor.
-    
-    Args:
-        modules_info: List of formatted module information strings
-        simulation_tools_available: Whether simulation execution tools are available
-        
-    Returns:
-        Formatted welcome message string
-    """
-    welcome_text = SUPERVISOR_WELCOME_MESSAGE
-    
-    if modules_info:
-        welcome_text += "\n\n**Modules to Configure:**\n"
-        welcome_text += "\n".join(modules_info)
-        welcome_text += "\n\nI'll guide you through configuring each module step by step."
-    else:
-        welcome_text += "\n\nNo modules are currently registered. Please register modules before starting configuration."
-    
-    if simulation_tools_available:
-        welcome_text += "\n\n**Simulation Execution**: Once all modules are configured, the simulation will be executed automatically."
-    
-    return welcome_text
-
-
 def get_simulation_execution_prompt(module_results: dict, execution_order: list) -> str:
     """Generate the system prompt for simulation execution.
     
@@ -244,4 +211,3 @@ Your task is to analyze the current state and conversation context to determine 
 Analyze the state and conversation, then return your routing decision."""
     
     return prompt
-

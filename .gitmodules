@@ -1,0 +1,3 @@
+[submodule "rag/vitess-rag"]
+	path = rag/vitess-rag
+	url = https://github.com/neutron-simlab/vitess-rag.git

@@ -51,7 +51,7 @@ class Config:
     # Blablador (OpenAI-compatible API)
     BLABLADOR_API_KEY = os.getenv("BLABLADOR_API_KEY")
     BLABLADOR_BASE_URL = os.getenv("BLABLADOR_BASE_URL")
-    BLABLADOR_DEFAULT_MODEL = os.getenv("BLABLADOR_DEFAULT_MODEL", "1 - GPT-OSS-120b - an open model released by OpenAI in August 2025")
+    BLABLADOR_DEFAULT_MODEL = os.getenv("BLABLADOR_DEFAULT_MODEL", "01 - GPT-OSS-120b - an open model released by OpenAI in August 2025")
     # Optional: Comma-separated list of available Blablador models to show in UI
     # If not set, all models from BlabladorModelName enum will be shown
     BLABLADOR_AVAILABLE_MODELS = os.getenv("BLABLADOR_AVAILABLE_MODELS")
@@ -107,6 +107,17 @@ class Config:
     VITESS_PROJECT_PATH = os.getenv("VITESS_PROJECT_PATH", "/tmp/vitess_project")
     # VITESS_LOG_PATH must be a file path, not a directory
     VITESS_LOG_PATH = os.getenv("VITESS_LOG_PATH", "/tmp/vitess.log")
+
+    # =============================================================================
+    # VITESS DOCUMENTATION RAG
+    # =============================================================================
+
+    VITESS_RAG_ENABLED = os.getenv("VITESS_RAG_ENABLED", "true").lower() == "true"
+    VITESS_RAG_DATA_DIR = os.getenv("VITESS_RAG_DATA_DIR", "rag/vitess-rag/data")
+    VITESS_RAG_PERSIST_PATH = os.getenv("VITESS_RAG_PERSIST_PATH", "rag/chroma_db")
+    VITESS_RAG_COLLECTION = os.getenv("VITESS_RAG_COLLECTION", "vitess_docs")
+    VITESS_RAG_EMBEDDING_MODEL = os.getenv("VITESS_RAG_EMBEDDING_MODEL", "alias-embeddings")
+    VITESS_RAG_REINDEX = os.getenv("VITESS_RAG_REINDEX", "false").lower() == "true"
     
     @classmethod
     def update_vitess_config(
@@ -374,6 +385,7 @@ class Config:
         print(f"✅ LangSmith: {'enabled' if langsmith_enabled else 'disabled'}")
         print(f"✅ Vitess Modules: {cls.VITESS_MODULES_PATH}")
         print(f"✅ Vitess Project: {cls.VITESS_PROJECT_PATH}")
+        print(f"✅ Vitess RAG: {'enabled' if cls.VITESS_RAG_ENABLED else 'disabled'}")
         
         return cls
 

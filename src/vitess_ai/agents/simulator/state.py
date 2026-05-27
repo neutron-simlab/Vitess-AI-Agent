@@ -69,6 +69,7 @@ class UnifiedState(MessagesState):
     thread_id: Optional[str]
     user_id: Optional[str]
     error_message: Optional[str]
+    supervisor_route: Optional[str]
     
     
     def get_current_module_result(self) -> Optional[ModuleResult]:

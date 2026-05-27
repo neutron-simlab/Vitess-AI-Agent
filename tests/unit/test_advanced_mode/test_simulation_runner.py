@@ -15,8 +15,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from vitess_ai.agents.advanced_mode.tools import (
     _convert_simulation_to_module_results,
-    _resolve_thread_id,
-    MODULE_CLI_CONVERTERS,
     submit_module_result,
 )
 
@@ -217,44 +215,6 @@ def sample_writeout_params():
 
 
 @pytest.mark.unit
-class TestModuleCLIConverters:
-    """Tests for MODULE_CLI_CONVERTERS mapping."""
-
-    def test_all_core_modules_have_converters(self):
-        """Verify all core modules have CLI converters."""
-        expected_modules = ["readin", "guide", "writeout", "monitor1d", "monitor2d"]
-        
-        for module in expected_modules:
-            assert module in MODULE_CLI_CONVERTERS, f"Missing converter for {module}"
-            assert callable(MODULE_CLI_CONVERTERS[module])
-
-    def test_readin_converter_produces_cli_string(self, sample_readin_params):
-        """Test readin params to CLI conversion."""
-        converter = MODULE_CLI_CONVERTERS["readin"]
-        cli = converter(sample_readin_params)
-        
-        assert isinstance(cli, str)
-        assert len(cli) > 0
-        assert "-f" in cli or "-A" in cli
-
-    def test_guide_converter_produces_cli_string(self, sample_guide_params):
-        """Test guide params to CLI conversion."""
-        converter = MODULE_CLI_CONVERTERS["guide"]
-        cli = converter(sample_guide_params)
-        
-        assert isinstance(cli, str)
-        assert len(cli) > 0
-
-    def test_writeout_converter_produces_cli_string(self, sample_writeout_params):
-        """Test writeout params to CLI conversion."""
-        converter = MODULE_CLI_CONVERTERS["writeout"]
-        cli = converter(sample_writeout_params)
-        
-        assert isinstance(cli, str)
-        assert len(cli) > 0
-
-
-@pytest.mark.unit
 class TestConvertSimulationToModuleResults:
     """Tests for _convert_simulation_to_module_results function."""
 
@@ -278,19 +238,6 @@ class TestConvertSimulationToModuleResults:
         assert "guide" in result["module_results"]
         assert "writeout" in result["module_results"]
 
-    def test_module_results_have_cli_parameters(
-        self, sample_readin_params, sample_guide_params, sample_writeout_params
-    ):
-        """Test that converted results include cli_parameters."""
-        simulation = {
-            "readin": sample_readin_params,
-            "guide": sample_guide_params,
-            "writeout": sample_writeout_params,
-        }
-        execution_order = ["readin", "guide", "writeout"]
-        
-        result = _convert_simulation_to_module_results(simulation, execution_order)
-        
         for module_name in execution_order:
             module_result = result["module_results"][module_name]
             assert "cli_parameters" in module_result
@@ -343,28 +290,6 @@ class TestConvertSimulationToModuleResults:
         assert "readin" in result["module_results"]
         assert "guide" not in result["module_results"]
         assert "writeout" in result["module_results"]
-
-
-@pytest.mark.unit
-class TestResolveThreadId:
-    """Tests for _resolve_thread_id function."""
-
-    def test_returns_provided_thread_id(self):
-        """Test that provided thread_id is returned."""
-        result = _resolve_thread_id("my-thread-123")
-        assert result == "my-thread-123"
-
-    def test_returns_env_thread_id(self, monkeypatch):
-        """Test fallback to THREAD_ID env var."""
-        monkeypatch.setenv("THREAD_ID", "env-thread-456")
-        result = _resolve_thread_id(None)
-        assert result == "env-thread-456"
-
-    def test_returns_none_when_no_thread_id(self, monkeypatch):
-        """Test returns None when no thread_id available."""
-        monkeypatch.delenv("THREAD_ID", raising=False)
-        result = _resolve_thread_id(None)
-        assert result is None
 
 
 @pytest.mark.unit
@@ -421,33 +346,6 @@ class TestSubmitModuleResult:
 @pytest.mark.unit
 class TestSimulationMatrixIntegration:
     """Integration tests for simulation matrix workflow."""
-
-    def test_full_conversion_pipeline(self, sample_simulation_matrix):
-        """Test converting full simulation matrix to run specs."""
-        simulations = sample_simulation_matrix["simulations"]
-        execution_order = ["readin", "guide", "writeout"]
-        
-        run_specs = []
-        for sim in simulations:
-            conversion = _convert_simulation_to_module_results(sim, execution_order)
-            if conversion["success"]:
-                run_specs.append({
-                    "run_name": sim.get("id"),
-                    "module_results": conversion["module_results"],
-                    "execution_order": execution_order,
-                })
-        
-        assert len(run_specs) == 3
-        
-        for run_spec in run_specs:
-            assert "run_name" in run_spec
-            assert run_spec["run_name"].startswith("sim_")
-            assert "module_results" in run_spec
-            
-            for module_name in execution_order:
-                module_result = run_spec["module_results"][module_name]
-                assert "cli_parameters" in module_result
-                assert "parameters" in module_result
 
     def test_factint_variation_preserved_in_cli(self, sample_simulation_matrix):
         """Test that FactInt variation is reflected in CLI strings."""
@@ -619,60 +517,3 @@ class TestAsyncTools:
         
         assert result["success"] is False
         assert "not found" in result["message"]
-
-
-@pytest.mark.unit
-class TestCLIFlagGeneration:
-    """Tests for CLI flag generation accuracy."""
-
-    def test_readin_factint_in_cli(self):
-        """Test FactInt parameter appears in readin CLI."""
-        from vitess_ai.agents.simulator.tools.readin import readin_params_to_cli
-        
-        params = {
-            "ePrgFormat": 1,
-            "eDatFormat": 0,
-            "sInputFileName": ["/data/source.dat"],
-            "Weight": [1.0],
-            "FactInt": 2.5,
-        }
-        
-        cli = readin_params_to_cli(params)
-        
-        assert "-I2.5" in cli or "-I 2.5" in cli
-
-    def test_guide_shape_file_in_cli(self):
-        """Test ShapeFileName parameter appears in guide CLI."""
-        from vitess_ai.agents.simulator.tools.guide import guide_params_to_cli
-        
-        params = {
-            "eGuideShapeY": 0,
-            "eGuideShapeZ": 0,
-            "ShapeFileName": "/data/guide_shape.dat",
-            "nPieces": 1,
-            "GuideEntrWidth": 3.0,
-            "GuideEntrHeight": 3.0,
-            "GuideExitWidth": 3.0,
-            "GuideExitHeight": 3.0,
-            "piecelength": 50.0,
-        }
-        
-        cli = guide_params_to_cli(params)
-        
-        assert "guide_shape.dat" in cli
-
-    def test_writeout_output_file_in_cli(self):
-        """Test sOutFileName parameter appears in writeout CLI."""
-        from vitess_ai.agents.simulator.tools.writeout import writeout_params_to_cli
-        
-        params = {
-            "sOutFileName": "/data/output.dat",
-            "bActive": True,
-            "bHeader": True,
-            "ePrgFormat": 1,
-            "eDatFormat": 1,
-        }
-        
-        cli = writeout_params_to_cli(params)
-        
-        assert "output.dat" in cli

@@ -157,7 +157,8 @@ For detailed configuration options, see `env.example` which includes comprehensi
 - Requires `OPENAI_API_KEY`
 
 **Blablador**: OpenAI-compatible API
-- Default model: `alias-fast-code` (or as configured)
+- Default model: `01 - GPT-OSS-120b - an open model released by OpenAI in August 2025`
+- Also available: MiniMax-M2.7, Qwen3.5-122B
 - Requires `BLABLADOR_API_KEY` and `BLABLADOR_BASE_URL`
 
 ## Usage

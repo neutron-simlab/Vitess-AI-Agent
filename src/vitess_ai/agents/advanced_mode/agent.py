@@ -114,6 +114,7 @@ class AdvancedModeAgent:
 
         try:
             from deepagents import create_deep_agent
+            from deepagents.backends.composite import CompositeBackend
             from deepagents.backends.filesystem import FilesystemBackend
         except ImportError as exc:
             raise RuntimeError(
@@ -127,8 +128,19 @@ class AdvancedModeAgent:
         llm = self._build_llm()
         subagents = self._build_subagents()
 
-        Path(self.filesystem_root).mkdir(parents=True, exist_ok=True)
-        backend = FilesystemBackend(root_dir=self.filesystem_root)
+        filesystem_root = Path(self.filesystem_root).resolve()
+        filesystem_root.mkdir(parents=True, exist_ok=True)
+        workspace_backend = FilesystemBackend(root_dir=str(filesystem_root), virtual_mode=True)
+        docs_root = Path(global_config.VITESS_RAG_DATA_DIR).resolve()
+        if docs_root.exists():
+            backend = CompositeBackend(
+                default=workspace_backend,
+                routes={
+                    "/docs/": FilesystemBackend(root_dir=str(docs_root), virtual_mode=True),
+                },
+            )
+        else:
+            backend = workspace_backend
         self.app = create_deep_agent(
             name="advanced_mode",
             model=llm,

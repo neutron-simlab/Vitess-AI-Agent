@@ -66,6 +66,15 @@ else
     echo "ℹ️  Production env file not found, using default .env location"
 fi
 
+# Bootstrap VITESS documentation RAG. Failures are non-fatal so the app can
+# still run when credentials or the embedding service are temporarily unavailable.
+if [ "${VITESS_RAG_ENABLED:-true}" = "true" ]; then
+    echo "Bootstrapping VITESS documentation RAG..."
+    uv run python -m vitess_ai.retrieval.bootstrap || true
+else
+    echo "ℹ️  VITESS_RAG_ENABLED is false, skipping RAG bootstrap"
+fi
+
 # Start MCP servers if HTTP transport mode is enabled
 MCP_TRANSPORT_MODE=${MCP_TRANSPORT_MODE:-http}
 if [ "$MCP_TRANSPORT_MODE" = "http" ]; then
@@ -125,4 +134,3 @@ STREAMLIT_PID=$!
 # Start FastAPI in the foreground (so we see logs and it's the main process)
 echo "Starting FastAPI on port 8000..."
 uv run python main.py
-

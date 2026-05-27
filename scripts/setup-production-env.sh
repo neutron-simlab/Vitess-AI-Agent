@@ -185,7 +185,7 @@ MAX_RETRIES=3
 
 # Blablador Settings
 BLABLADOR_BASE_URL=https://api.helmholtz-blablador.fz-juelich.de/v1/
-BLABLADOR_DEFAULT_MODEL=alias-fast-experiment
+BLABLADOR_DEFAULT_MODEL="01 - GPT-OSS-120b - an open model released by OpenAI in August 2025"
 
 # LangSmith Settings
 LANGSMITH_TRACING=true

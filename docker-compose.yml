@@ -24,11 +24,18 @@ services:
     container_name: vitess-ai-agent
     volumes:
       - vitess-projects:/data/projects
+      - vitess-rag:/data/rag
     environment:
       # Vitess paths (automatically set by Docker, no need to configure in .env)
       - VITESS_MODULES_PATH=/vitess/MODULES
       - VITESS_PROJECT_PATH=/data/projects
       - VITESS_LOG_PATH=/data/logs/logfile.log
+      - VITESS_RAG_ENABLED=${VITESS_RAG_ENABLED:-true}
+      - VITESS_RAG_DATA_DIR=${VITESS_RAG_DATA_DIR:-/app/rag/vitess-rag/data}
+      - VITESS_RAG_PERSIST_PATH=${VITESS_RAG_PERSIST_PATH:-/data/rag/chroma_db}
+      - VITESS_RAG_COLLECTION=${VITESS_RAG_COLLECTION:-vitess_docs}
+      - VITESS_RAG_EMBEDDING_MODEL=${VITESS_RAG_EMBEDDING_MODEL:-alias-embeddings}
+      - VITESS_RAG_REINDEX=${VITESS_RAG_REINDEX:-false}
       # Application configuration (loaded from .env in dev, /etc/vitess-ai/.env in prod)
       - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-openai}
       - FALLBACK_PROVIDER=${FALLBACK_PROVIDER:-blablador}
@@ -39,7 +46,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - BLABLADOR_API_KEY=${BLABLADOR_API_KEY:-}
       - BLABLADOR_BASE_URL=${BLABLADOR_BASE_URL:-https://api.helmholtz-blablador.fz-juelich.de/v1/}
-      - BLABLADOR_DEFAULT_MODEL=${BLABLADOR_DEFAULT_MODEL:-alias-fast-code}
+      - BLABLADOR_DEFAULT_MODEL=${BLABLADOR_DEFAULT_MODEL:-01 - GPT-OSS-120b - an open model released by OpenAI in August 2025}
       - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
       - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://eu.api.smith.langchain.com}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
@@ -95,8 +102,9 @@ services:
 volumes:
   vitess-projects:
     driver: local
+  vitess-rag:
+    driver: local
 
 networks:
   vitess-network:
     driver: bridge
-

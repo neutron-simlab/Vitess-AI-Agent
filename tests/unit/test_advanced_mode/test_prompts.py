@@ -4,6 +4,7 @@ from vitess_ai.agents.advanced_mode.prompts import (
     get_advanced_mode_system_prompt,
     get_module_subagent_system_prompt,
 )
+from vitess_ai.retrieval.prompts import ADVANCED_RAG_DOCUMENTATION_POLICY
 
 
 @pytest.mark.unit
@@ -12,6 +13,7 @@ def test_orchestrator_prompt_preserves_structured_parameter_flow() -> None:
 
     assert "Do not lose or omit structured validated parameters needed for downstream tools." in prompt
     assert "Keep user-facing summaries concise where possible." in prompt
+    assert ADVANCED_RAG_DOCUMENTATION_POLICY.strip() in prompt
 
 
 @pytest.mark.unit

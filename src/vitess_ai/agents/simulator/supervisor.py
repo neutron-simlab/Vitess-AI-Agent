@@ -9,7 +9,7 @@ management and checkpoint-based resumption.
 import json
 import time
 from typing import Dict, List, Any, Optional
-from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
+from langchain_core.messages import SystemMessage, AIMessage, ToolMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from vitess_ai.core.llms_providers import create_llm_with_fallback
 from langgraph.graph import StateGraph, END, START
@@ -169,26 +169,6 @@ class SupervisorAgent:
                 self.register_module(module_metadata)
                 return
         raise ValueError(f"Module '{module_name}' not found in catalog")
-    
-    def add_readin_module(self) -> None:
-        """Add the standard readin module"""
-        self.add_module_by_name("readin")
-    
-    def add_guide_module(self) -> None:
-        """Add the standard guide module"""
-        self.add_module_by_name("guide")
-    
-    def add_writeout_module(self) -> None:
-        """Add the standard writeout module"""
-        self.add_module_by_name("writeout")
-    
-    def add_monitor1d_module(self) -> None:
-        """Add the Monitor1D module"""
-        self.add_module_by_name("monitor1d")
-    
-    def add_monitor2d_module(self) -> None:
-        """Add the Monitor2D module"""
-        self.add_module_by_name("monitor2d")
     
     def add_default_modules(self) -> None:
         """Add all default graph modules from the module catalog."""
@@ -682,7 +662,7 @@ Configuration is complete. The simulation parameters are ready for execution.
         
         self.logger.info(f"All {len(execution_order)} modules are completed: {execution_order}")
         return True
-    
+
     def _supervisor_routing_node(
         self, state: UnifiedState, config: Optional[RunnableConfig] = None
     ) -> dict:
@@ -1365,10 +1345,6 @@ Configuration is complete. The simulation parameters are ready for execution.
             # Monitor modules were configured but no plots were generated
             # This could mean files weren't created or there was an error
             self.logger.info("Monitor modules were configured but no plots were generated")
-            # Optionally add a message to inform the user (commented out to avoid noise)
-            # from langchain_core.messages import AIMessage
-            # no_plots_message = AIMessage(content="ℹ️ No visualization data available. Monitor files may not have been generated during simulation.")
-            # messages.append(no_plots_message)
         else:
             # No monitor modules were configured - this is expected, no action needed
             self.logger.info("No monitor modules in execution order, skipping plot generation message")
