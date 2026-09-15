@@ -575,22 +575,23 @@ backfills its single value in plan 02.
 > adding a non-null column without the rest of this list would still produce a
 > `NOT NULL` violation on the first conversation.
 
-**The complete write-and-read path**, all of it in core:
+**The complete write-and-read contract**, all of it in core but split across the
+checkpoint that owns each component:
 
-| Where | Change |
-|---|---|
-| `schema/server.py` — `CreateChatInput` | already requires `agent_id: str` from CP1; CP3 wires that schema contract into storage and authorization |
-| `clients/base.py` — `create_chat` | signature gains `agent_id`, and it is sent in the body |
-| `server/chat/repository.py` — `ensure_owned_chat` | takes `agent_id`, sets it on creation, and **raises `ChatNotFoundError` when an existing chat's `agent_id` differs** — the same shape as the existing owner check, and for the same reason: a mismatch must not reveal that the row exists |
-| listing | `list_chats` filters by `agent_id` when given one, so a UI showing one agent's conversations does not show the other's |
-| serialisation | `agent_id` is returned with the chat, so the UI can restore the right mode rather than guess |
-| stream authorisation | `_authorize_thread` compares the path's `agent_id` against the stored one |
-| resume | `/resume` and `/{agent_id}/resume` do the same |
-| pending-interrupt lookup | same, so a card from one agent cannot be answered into the other |
+| Where | Checkpoint | Change |
+|---|---|---|
+| `schema/server.py` — `CreateChatInput` | CP1 | requires `agent_id: str` |
+| `clients/base.py` — `create_chat` | CP5 | sends the required `agent_id` in the body; CP1 already established the signature |
+| `server/chat/repository.py` — `ensure_owned_chat` | CP3 | takes `agent_id`, sets it on creation, and **raises `ChatNotFoundError` when an existing chat's `agent_id` differs** — the same shape as the existing owner check, and for the same reason: a mismatch must not reveal that the row exists |
+| listing and serialisation | CP3 repository, CP4 routes, CP5 client | the repository can filter by `agent_id` and returns it with each chat, so the UI can restore the right mode rather than guess |
+| stream authorisation | CP4 | `_authorize_thread` compares the path's `agent_id` against the stored one |
+| resume | CP4 | `/resume` and `/{agent_id}/resume` do the same |
+| pending-interrupt lookup | CP4 | same, so a card from one agent cannot be answered into the other |
 
-**Tests — cross-agent rejection, in both directions.** Create a chat under `vitess`,
-then try to stream, resume and read its pending interrupt under `advanced_mode`: each
-must be refused, and refused as *not found* rather than *forbidden*.
+**Tests — cross-agent rejection, in both directions.** CP3 proves the repository refuses
+a wrong owner or agent as *not found* rather than *forbidden*. CP4 repeats that contract
+through the real stream, resume and pending-interrupt routes, because only that
+checkpoint has a server through which to exercise them.
 
 juena-chatbot registers `"juena"` with `set_as_default=True` and behaves exactly as
 before. Core's initial `DEFAULT_AGENT` is `None`; serving without an application having
@@ -621,25 +622,26 @@ it logs everyone out.
 `users` row, thread ownership and memory namespace are real and consistent across
 restarts.
 
-Two things it must do that a real identity provider does for free:
+Two obligations that a real identity provider satisfies for free span CP3's identity
+primitives and CP4's application factory:
 
-**1. Its guard runs at startup, in `create_app` — not as a dependency.** `CoreSettings`
-already carries `BIND_HOST` and `API_PUBLISHED: bool` from CP1, and `create_app` raises at
-construction when `local_principal` is paired with a published API. A *dependency* cannot enforce
-this: it runs on a request, so it would fail the first call rather than refuse to boot,
-and by then the port is already open. The topology it assumes is decision 17 — Streamlit
-published on `127.0.0.1`, the API bound to container loopback and not published at all.
+**1. The guard runs at construction, not as a dependency.** CP3's `local_principal`
+refuses to construct when `API_PUBLISHED` is true or `BIND_HOST` is not loopback. CP4's
+`create_app` checks the fixed-principal marker again when it assembles the application.
+A *dependency* cannot enforce this: it runs on a request, so it would fail the first call
+rather than refuse to boot, and by then the port is already open. The topology it assumes
+is decision 17 — Streamlit published on `127.0.0.1`, the API bound to container loopback
+and not published at all.
 
-**2. It upserts its `users` row inside the database lifespan.** `Chat.user_id` is a
-foreign key to `users.id`; a principal that merely *claims* a UUID produces a foreign-key
-violation on the first conversation. A real provider creates the row as a side effect of
-logging in, and this one has no login to hang it on — so the upsert goes in the startup
+**2. Its `users` row is upserted inside the database lifespan.** CP3 supplies and tests
+the idempotent `ensure_principal_row` operation. CP4 calls it from the application
 lifespan, **after** `database_lifespan` has an engine and **before** the app serves.
+`Chat.user_id` is a foreign key to `users.id`; a principal that merely *claims* a UUID
+produces a foreign-key violation on the first conversation.
 
-Both guards and the upsert are modelled on juena-chatbot's existing refusal to run
-`AUTH_DEV_BYPASS` outside development (`core/config.py:196-200`). Write them and their
-tests **in this checkpoint, with the provider** — a guard added later is a guard that was
-absent during the window somebody first ran the thing on a laptop in a café.
+The guard, fixed-principal marker and row operation land and are tested **in CP3 with the
+provider**. Their integration into `create_app` belongs to CP4, where that factory first
+becomes callable; there is no usable server window between the two checkpoints.
 
 **Done when** a throwaway script creates the three tables against a real Postgres and
 round-trips a session:
@@ -651,18 +653,75 @@ psql "$DATABASE_URL" -c '\d users'
 psql "$DATABASE_URL" -c '\d chats'
 ```
 
-with three things true:
+with these things true:
 
 - `\d users` still shows columns named `saml_subject` and `idp_entity_id`;
 - `\d chats` shows the new `agent_id`, not null;
-- `create_app` raises at construction when `local_principal` is paired with
-  `API_PUBLISHED=true`, and a test asserts it;
-- `local_principal`'s `users` row exists after startup, so inserting a `Chat` for it
-  succeeds — the test that would otherwise only fail in the browser.
+- the session service round-trips and revokes a real persisted session;
+- constructing `local_principal` fails when `API_PUBLISHED=true` or `BIND_HOST` is not
+  loopback;
+- `ensure_principal_row` is idempotent, rejects a changed configured UUID, and creates
+  the foreign-key target needed to insert a `Chat`.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+**Completed 2026-09-15 in core commits `0cfc1e2` and `219aed8`.**
+`server/database/{models,connection,checkpointer,store}.py`, `server/identity.py`, and the
+ownership half of `server/chat/repository.py` are working implementations. Verified
+against a real Postgres:
+
+```text
+\d users     idp_entity_id, saml_subject   (uq_users_idp_subject intact)
+\d chats     agent_id varchar(64) not null
+tests/test_identity_postgres.py            15 passed
+full frozen-lock suite                    203 passed, 1 expected MCP beta warning
+./scripts/check-imports.sh                 import direction ok
+clean-environment import of the new modules  pass, no output
+```
+
+- `User.subject`/`User.issuer` are attribute renames over the original
+  `saml_subject`/`idp_entity_id` columns, and the unique constraint still names the
+  columns. A test reads the live column names back rather than trusting the model.
+- `Chat.agent_id` is `String(64)`, not null, matching `CreateChatInput.agent_id`'s
+  `max_length=64` from CP1.
+- `upsert_principal` takes the fields (`subject`, `issuer`, `email`, `display_name`)
+  rather than an identity object and returns a `Principal`, so core never learns what a
+  SAML assertion is. `create_auth_session` takes that `Principal`; the application's SAML
+  endpoint keeps its existing two-call shape.
+
+**Three decisions taken while implementing, each recorded because it is not in the plan
+above:**
+
+1. **`local_principal` takes its UUID as an argument, not a `CoreSettings` field.**
+   Adding one would force juena-chatbot to configure a value it never reads. The
+   application owns where the id comes from; core owns what it means.
+2. **The publication guard is `refuse_published_api(dependency)` in `identity.py`, called
+   by `local_principal` itself at construction** — not only from `create_app`, which does
+   not exist until CP4. CP4's `create_app` will call it again so a fixed dependency
+   supplied from elsewhere cannot bypass the factory-level check (required in that
+   checkpoint below and noted in `service.py`'s docstring with `ensure_principal_row`).
+   The CP3 helper already asserts both of decision 17's conditions:
+   `API_PUBLISHED` is false *and* `BIND_HOST` is loopback.
+3. **`get_owned_chat`'s `agent_id` is keyword-only with no default.** It accepts `None` —
+   renaming a conversation is addressed by thread alone and those routes carry no agent —
+   but omitting it is impossible. A default would let a CP4 resume route skip the
+   cross-agent check by omission, which is precisely the bug decision 13 exists to
+   prevent, and it would pass every test that did not probe for it. `list_owned_chats`
+   keeps its `None` default deliberately: listing everything shows too much rather than
+   granting anything. A signature test locks the asymmetry.
+
+**What this checkpoint did *not* do, and why:**
+
+- **`load_thread_messages` stays a stub, now pointing at CP4.** It is the one function in
+  `repository.py` that reads message *content* rather than ownership, and it needs
+  `server/utils.langchain_to_chat_message`, which lands with the rest of the server.
+- **Three rows of the write-and-read path are CP4's**, because they live in the routes,
+  not in persistence: `_authorize_thread`, `/resume` and `/{agent_id}/resume`, and the
+  pending-interrupt lookup. The repository enforces the rule they must call; the
+  cross-agent rejection test here covers `ensure_owned_chat` and `get_owned_chat` in both
+  directions (wrong agent, and another user's thread), each refused as *not found*.
+- **`clients/base.py` needed no change** — CP1 had already given `create_chat` its
+  required `agent_id` and `list_chats` its optional one. The bodies land in CP5.
 
 ---
 
@@ -715,6 +774,17 @@ prints `/chats`, `/chats/{thread_id}`, `/stream`, `/stream_with_files`, `/resume
 `/threads/{thread_id}`, `/threads/{thread_id}/pending-interrupt`,
 `/artifacts/{artifact_id}`, `/health` — and **nothing under `/auth/`**, because SAML is
 not here.
+
+The route-list check is necessary but not sufficient. CP4 also has integration tests
+which prove:
+
+- `create_app` rejects a fixed principal when `API_PUBLISHED=true` or `BIND_HOST` is not
+  loopback, while a real identity provider remains publishable;
+- entering the real application lifespan creates the fixed principal's `users` row
+  before serving, so a `Chat` insert succeeds without a manual test call to
+  `ensure_principal_row`;
+- a thread created under `vitess` cannot be streamed, resumed or queried for a pending
+  interrupt under `advanced_mode`; every mismatch is returned as *not found*.
 
 The three `/{agent_id}/…` variants are not optional: `BaseAgentClient` calls them, and v2
 has two agents, so they are the only way to address the second one. An earlier draft
@@ -965,7 +1035,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
-| **Executed** | CP0a, CP0b, CP0, CP1 and CP2 complete through core commit `a97b3c1`; CP3 is next |
+| **Executed** | CP0a, CP0b, CP0, CP1, CP2 and CP3 complete through core commit `219aed8`; CP4 is next |
 | **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |
