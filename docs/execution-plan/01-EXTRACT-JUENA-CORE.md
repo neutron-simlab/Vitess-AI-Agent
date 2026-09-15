@@ -796,7 +796,8 @@ omitted them from this list.
 
 ### What actually landed
 
-**Completed 2026-09-15 in core commit `e11f734`.** `server/errors.py`, `server/utils.py`,
+**Completed 2026-09-15 in core commit `e11f734`, then corrected after review in
+`5df150a`.** `server/errors.py`, `server/utils.py`,
 `server/agent/{registry,input_handler,runtime_model_middleware}.py`,
 `server/streaming/{events,handlers,processor}.py`,
 `server/chat/{input_constants,input_types,input_utils,inputs,endpoints}.py`,
@@ -808,9 +809,9 @@ tree**: `server/interrupts.py` and `server/api/`.
 create_app route list          all 12 documented paths, plus the pre-existing
                                /threads/{thread_id}/pending-approval alias;
                                nothing under /auth/
-tests/test_server_contracts.py        31 passed
+tests/test_server_contracts.py        33 passed
 tests/test_server_routes_postgres.py  14 passed
-full frozen-lock suite               253 passed (203 at CP3, +45 new tests,
+full frozen-lock suite               255 passed (203 at CP3, +47 new tests,
                                      +5 new import-boundary parametrisations)
 ./scripts/check-imports.sh           import direction ok
 clean-environment import of the new modules  pass
@@ -820,6 +821,25 @@ Both new test files were checked by breaking the code they cover: removing
 `ensure_principal_row` from the lifespan fails 11 of the 14 route tests, and dropping the
 `agent_id` comparison from the repository fails exactly the six agent-scoped ones and
 nothing else.
+
+**The post-implementation review found and fixed two runtime defects that those green
+tests did not cover:**
+
+- `PreparedCodeChatInputs.workspace_files` was merged before the upload manifest and
+  turn-scoped `current_message`/code/error files were added. A process-backed workspace
+  therefore saw only the raw upload while the graph saw the complete input set. The merge
+  now happens after every state update is assembled, and a regression asserts the
+  workspace view equals every non-deletion file sent to the graph.
+- the first request cache in `get_agent()` had no concurrency guard. Two simultaneous
+  first requests both ran the factory, returned different graphs and leaked the instance
+  overwritten in `_agent_registry`. Agent-specific async locks now serialize only the
+  first build of each id; a concurrent regression proves one factory call and one shared
+  graph.
+
+The exact frozen-lock suite passes with 255 tests after these corrections. A successful
+`/simulator/stream` request was also exercised manually against the real throwaway
+Postgres/checkpointer and emitted its thread and thinking SSE events. This is a server
+smoke check, not a substitute for plan 02's full application/model streaming check.
 
 **The plan's own acceptance command does not run.** `sorted(r.path for r in app.routes)`
 prints only `/health` on the installed FastAPI 0.141.1 / Starlette 1.6.0: an included
@@ -1153,7 +1173,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
-| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3 and CP4 complete; CP5 is next |
+| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3 and CP4 complete through core commit `5df150a`; CP5 is next |
 | **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |
