@@ -1180,6 +1180,23 @@ and `sandbox-*`, **and the whole host-process mechanism** — no pid files, no `
 runtime directory, no `wait_for_*` loops. The MCP server is a Compose service, so
 `up`, `down`, `logs` and `ps` already cover it. Plus `check-imports`.
 
+**Lock and image provenance.** This is the point where the second consumer actually
+exists, so it owns the other half of 01/CP6's handoff contract:
+
+- `uv.lock` is committed and `uv sync --frozen` passes against the sibling core;
+- core's tree is clean and its exact commit SHA is written into the build record;
+- Compose builds from the parent context, with the Dockerfile path relative to it, and
+  the Dockerfile copies both `juena-core/` and this fresh repository into the image;
+- `Dockerfile.dockerignore` beside the Dockerfile excludes every unrelated sibling,
+  `.git/`, `.venv/`, model cache, Chroma database and generated VITESS build output while
+  retaining the two source trees and `rag/vitess-rag` inputs the image needs;
+- `docker compose build` requires no Git credentials, and the resulting image digest is
+  recorded beside the core SHA.
+
+Do not retrofit the legacy `Vitess-AI-Agent` checkout merely because it currently holds
+these plans. The repository described by this plan is the fresh `vitess-ai-agent` named
+under *Before you start*; its final paths are what the Docker allowlist must test.
+
 **Done when** `./vitess help` lists the commands, `./vitess test-all` is green, and
 `./vitess up` brings up a stack where:
 
@@ -1193,6 +1210,7 @@ runtime directory, no `wait_for_*` loops. The MCP server is a Compose service, s
   `monitor2d` collect theirs conversationally, from the schema default;
 - `WriteoutParameters.sOutFileName` is the only `output.dat` in the system. The old
   `output.out` sidebar default is gone, not reconciled.
+- the build record names a clean core commit SHA and the digest of the image just tested.
 
 ### What actually landed
 

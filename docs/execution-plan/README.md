@@ -167,7 +167,7 @@ Four questions the review left open, now answered:
 
 ---
 
-## Execution state (2026-09-15, through 01/CP4)
+## Execution state (2026-09-15, through 01/CP6)
 
 The repositories and plans now exist. One precondition remains intentionally unresolved:
 the chatbot worktree is dirty and **must not be blindly reverted**. CP1 proceeded only
@@ -177,9 +177,9 @@ still requires a clean baseline before the application cutover.
 
 | Repo | State | What it blocks |
 |---|---|---|
-| `Vitess-AI-Agent` | execution plans versioned on `feature/migrate-to-juena` | receives a plan-record commit after each completed core checkpoint |
+| `Vitess-AI-Agent` | plan 01 execution record complete on `feature/migrate-to-juena`; also holds plans 02 and 03 | plan 02 starts only after the chatbot baseline can be taken cleanly |
 | `juena-chatbot` | `e4a5eb3`; modified `env.example` and `juena`, plus untracked `.claude/` | **plan 02's clean-tree baseline**; these user changes remain untouched |
-| `juena-core` | repository exists; CP0a through CP4 complete through review correction `5df150a` — the server factory, both routers and the interrupt-kind registry now run against a real Postgres | CP5, the client and UI shell, is next |
+| `juena-core` | plan 01 complete; clean handoff commit `23de400`, 289 frozen-lock tests green, import boundary and clean-environment import green | unblocks plan 02 after the chatbot's existing dirty work is finished or committed |
 
 D7 is no longer among the open prerequisites: core is a sibling consumed as a path
 source, v2 is a new repository, and the image COPYs core in — so there is no remote to

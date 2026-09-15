@@ -1113,101 +1113,78 @@ base client and lazy MCP wrapper import without it.
 
 ---
 
-## Checkpoint 6 — lock it
+## Checkpoint 6 — lock and hand off core
 
 **D7 is settled: `juena-core` is a sibling directory consumed as a uv path source, with
 a committed `uv.lock`. No remote, no tag, no build credentials.**
 
+This checkpoint originally required both application locks and Docker images. That made
+the execution order cyclic: plan 02 depends on a completed plan 01 but is where
+juena-chatbot first cuts over, and plan 03 creates the fresh `vitess-ai-agent` repository.
+Neither consumer can be built from core before it exists in its own plan.
+
+There is a second concrete reason not to force the chatbot early. Before the plan-02
+baseline it pins `deepagents==0.6.12`, while core requires `>=0.7.13,<0.8`; a real
+`uv lock --dry-run` reports the pair as unsatisfiable. Updating that dependency before
+recording the baseline would change the application under the instrument meant to prove
+the cutover. The dependency and image work therefore lives at the end of each **consumer**
+plan, after that consumer exists and its tests pass.
+
+### What is locked here
+
+- core's committed `uv.lock` fixes the third-party set measured in CP0b;
+- `uv sync --frozen` and the complete core suite pass from that lock;
+- the core tree is clean and its handoff revision is recorded;
+- plans 02 and 03 each own their path source, application lock, parent-context Docker
+  build, Dockerfile-specific ignore file and image provenance record.
+
+The consumer declaration remains:
+
 ```toml
-# in juena-chatbot and vitess-ai-agent
+dependencies = ["juena-core[ui,mcp]"]
+
 [tool.uv.sources]
 juena-core = { path = "../juena-core" }
 ```
 
-**What the lock does and does not do.** `uv lock` records the resolved *third-party*
-versions from CP0b, and `uv sync --frozen` installs exactly those. It does **not** freeze
-the source bytes of a local directory: a path dependency is installed from whatever is in
-`../juena-core` at the time, and directory dependencies cannot participate in
-hash-checking. So `--frozen` guarantees the dependency set, **not** the core revision.
+**What the lock does and does not do.** An application lock fixes resolved third-party
+versions. It does **not** freeze the bytes of `../juena-core`; directory dependencies
+cannot be hash-checked. Every accepted consumer build must therefore start with a clean
+core tree and record both `git -C ../juena-core rev-parse HEAD` and the resulting image
+digest. The digest freezes the image bytes; the SHA identifies which local core source
+produced them.
 
-An earlier revision said core was "pinned by the committed `uv.lock`". That is wrong, and
-believing it would mean an uncommitted experiment in core silently becoming what an
-application was built against.
+Each consumer builds from the parent directory so Docker can `COPY juena-core/` and the
+application without credentials or a launcher-side vendoring step. Since the context root
+is the parent, the relevant ignore file is `Dockerfile.dockerignore` beside that
+consumer's Dockerfile, not its existing repository `.dockerignore`. The exact COPY paths
+and ignore allowlist are deliberately verified where the consumer's final file tree is
+known: plan 02 step 6 and plan 03 CP6.
 
-**So the revision is pinned by discipline, recorded:**
+This local discipline is intentionally weaker than a tag plus a hash and is appropriate
+for one personal machine. **It stops being sufficient the day a second person builds an
+image**; that is the threshold for adding a remote and switching both sources together.
 
-- **`juena-core` has a clean git tree before any accepted build.** `git status --short`
-  in core is part of the build, not a habit.
-- **The core commit SHA is recorded in each application's build record**, alongside the
-  resolved dependency set. `git -C ../juena-core rev-parse HEAD`.
-- **The resulting image digest is recorded.** That is the only identifier that actually
-  freezes the bytes, and it is what a later "which core was this built from?" is answered
-  with.
-
-This is weaker than a tag plus a hash, and it is the right trade while core and both
-applications sit in one working copy on one machine. **It stops being sufficient the day
-a second person builds an image** — which is the same threshold that reopens the remote.
-
-juena-chatbot's existing unpinned `juena-rag @ git+…` is the counter-example: acceptable
-with one consumer, and a way to break the other application silently with two.
-
-**Docker.** A path dependency has to be inside the build context, so the image **COPYs
-core in** rather than fetching it:
-
-```dockerfile
-COPY juena-core/ /src/juena-core/
-COPY vitess-ai-agent/ /src/app/
-RUN cd /src/app && uv sync --frozen
-```
-
-**Built from the parent directory.** One context, decided here rather than left open:
-
-```yaml
-# vitess-ai-agent/docker-compose.yml
-services:
-  vitess-app:
-    build:
-      context: ..                       # JueNA_knowledge_base/
-      dockerfile: vitess-ai-agent/Dockerfile
-```
-
-and the existing chatbot makes the same context choice explicitly:
-
-```yaml
-# juena-chatbot/docker-compose.yml
-services:
-  juena-chatbot:
-    build:
-      context: ..                       # JueNA_knowledge_base/
-      dockerfile: juena-chatbot/Dockerfile
-```
-
-Not vendoring-by-launcher. A copy step that runs outside `docker build` is a step that can
-be skipped, run stale, or forgotten in CI — and "it builds on my machine and not in
-Compose" is precisely the failure this choice creates. A parent context is visible in the
-Compose file, where anyone debugging the build will look.
-
-Its cost is a larger build context. Because the context root is the parent directory,
-an application-level `.dockerignore` would not be read. Each application therefore keeps
-a **Dockerfile-specific ignore file beside its Dockerfile** — `Dockerfile.dockerignore` —
-excluding sibling `.git/` and `.venv/` directories, `rag/vitess-rag/chroma_db/`, model
-caches, generated VITESS build output and other large local material while explicitly
-retaining the application and `juena-core` sources. Docker gives this file precedence over
-a context-root `.dockerignore`; see Docker's
-[build-context documentation](https://docs.docker.com/build/concepts/context/#dockerignore-files).
-Write and test both files in this checkpoint.
-
-**Done when** both applications `uv sync --frozen` against the sibling, `uv.lock` is
-committed in each, `docker compose build` succeeds from the parent context with **no
-credentials configured anywhere**, and the build record for one image names the core
-commit SHA and the resulting image digest.
-
-*When a second person needs core*, add a remote and switch the source — deferred with the
-rest of production. The recorded core commit SHA, not the lock, names the revision to tag.
+**Done when** `uv lock --check`, `uv sync --frozen`, the full suite, the import-direction
+check and the clean-environment import pass in a clean core tree, and the resulting core
+SHA is written below as the revision handed to plan 02.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+**Completed 2026-09-15 with core handoff commit `23de400`.** Core's tree is clean and its
+committed lock remains unchanged from the dependency set validated in CP0b. The frozen
+suite passes with 289 tests, the AST/shell import-direction gates pass, and importing
+`juena_core.log` with no application environment succeeds.
+
+No consumer file was changed here. That is not a deferral hidden as completion: the
+original acceptance condition was impossible in its own dependency order. The solver
+proved the current chatbot/core `deepagents` constraints cannot coexist, plan 02 still
+requires an untouched clean baseline, and plan 03's fresh v2 repository does not exist
+until that plan starts. Their lock/build/provenance obligations are now explicit in those
+two plans instead of being prerequisites for them.
+
+The pre-existing chatbot changes (`env.example`, `juena`, `.claude/`) remain untouched.
+Plan 02 must finish or commit them before taking its baseline, exactly as its step 1 says.
 
 ---
 
@@ -1236,7 +1213,7 @@ someone checks out the repository on a fresh machine.
 | The middleware order changes during the move and nothing notices | CP2's class-name-order test, made permanent |
 | A `[ui]`-only import leaks into the base package | CP5's clean-room wheel test — **the developer venv already has Streamlit and will mask this** |
 | A `BaseAgentClient` method has no matching route in an application | the reverse-direction route test (CP0) |
-| An accepted image cannot be traced to the local core source that built it | CP6 records a clean core commit SHA and the resulting image digest |
+| An accepted image cannot be traced to the local core source that built it | CP6's consumer build gates require a clean core commit SHA beside the resulting image digest |
 | `local_principal` ships without its loopback refusal | the refusal and its test land in CP3, together |
 
 ## Status
@@ -1245,7 +1222,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
-| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3, CP4 and CP5 complete through core commit `23de400`; CP6 is next |
+| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3, CP4, CP5 and CP6 complete; clean core handoff commit `23de400` |
 | **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |

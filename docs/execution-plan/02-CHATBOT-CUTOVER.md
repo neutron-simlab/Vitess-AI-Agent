@@ -83,6 +83,14 @@ dependencies = ["juena-core[ui,mcp]"]
 juena-core = { path = "../juena-core" }
 ```
 
+This happens **after** the step-1 baseline, not in plan 01. The pre-cutover application
+pins `deepagents==0.6.12`, while core requires `>=0.7.13,<0.8`; uv proves those constraints
+are unsatisfiable. Remove the application's redundant direct LangChain/deepagents bounds
+as their modules are re-pointed, remove `langchain-mcp-adapters` when Context7 moves to
+`juena_core.mcp`, regenerate the lock once, and explain the dependency-node changes with
+the same care as test-node changes. Upgrading first and calling the result a baseline
+would make the baseline measure a different application.
+
 **The lock pins the dependency set; it does not pin core's source** — a path dependency installs whatever is in the sibling directory, and cannot be hash-checked. Core's revision is pinned by discipline instead: a clean core tree, and its commit SHA recorded in the build record (D7, 01/CP6). juena-chatbot's
 existing unpinned `juena-rag @ git+…` is the counter-example: acceptable with one
 consumer, and a way to break the other application silently with two. Run
@@ -286,6 +294,27 @@ and call it from `cmd_test`.
 It is the rule that is cheapest to keep and most expensive to have broken. Nothing else
 enforces it.
 
+### Lock and build the first consumer
+
+Only after the cutover suite and running-system checks pass:
+
+1. verify `git -C ../juena-core status --short` is empty and record
+   `git -C ../juena-core rev-parse HEAD`;
+2. commit juena-chatbot's regenerated `uv.lock`, then prove `uv sync --frozen`;
+3. change the Compose build to parent context (`context: ..`,
+   `dockerfile: juena-chatbot/Dockerfile`) and make every Dockerfile `COPY` source
+   relative to that context, including `juena-core/`;
+4. add `Dockerfile.dockerignore` beside the Dockerfile. Because the context is the parent,
+   the repository `.dockerignore` is not consulted. Exclude sibling `.git/`, `.venv/`,
+   caches, databases, models and unrelated repositories, while explicitly retaining only
+   `juena-chatbot/` and `juena-core/` inputs needed by the build;
+5. run `docker compose build` with no Git/core credentials, then record the core SHA,
+   resolved dependency set and resulting image digest in the application's build record.
+
+The Dockerfile performs the copy. Do not add a launcher command that vendors core before
+the build: that copy can be skipped or stale and is invisible where build failures are
+debugged.
+
 ---
 
 ## Verification
@@ -307,6 +336,8 @@ enforces it.
 
    The model's contract is not part of this refactor. A diff there means something
    crossed the boundary that should not have.
+8. The parent-context Docker build succeeds, and its build record names the clean core
+   SHA and image digest.
 
 ---
 
