@@ -489,7 +489,7 @@ and the printed order matches `juena_agent.py`'s stack **exactly**:
 
 ```
 RepeatedToolCallMiddleware, FilesystemMiddleware, MemoryMiddleware,
-SubAgentMiddleware, SummarizationMiddleware, PatchToolCallsMiddleware,
+SubAgentMiddleware, _DeepAgentsSummarizationMiddleware, PatchToolCallsMiddleware,
 <extra…>, RuntimeModelMiddleware,
 ModelFallbackMiddleware, ModelRetryMiddleware, ToolRetryMiddleware,
 ModelCallLimitMiddleware, ToolCallLimitMiddleware, ToolCallLimitMiddleware
@@ -501,7 +501,47 @@ is the only thing that would catch it.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+Implemented in core commit `a97b3c1` (`feat: extract the shared agent kit`).
+
+- The seven agent-kit modules, `ArtifactStore`, and the runtime-context helper are now
+  working core implementations. `GUARD_FLAG = "juena_repeated_tool_call"` remains
+  unchanged for checkpoint compatibility, while application imports and sandbox-specific
+  naming were removed.
+- `build_specialist_middleware` accepts the application-owned
+  `execution_middleware`/`interrupt_on` pair. A partial pair is rejected, and unattended
+  specialists reject both while omitting the `ask_user` limiter.
+- `build_supervisor_middleware` owns the canonical stack and its single `extra=` splice
+  point. The memory prompt override lives here, not on `build_supervisor_backend`: the
+  middleware is the component that consumes the prompt.
+- `ExecutionEvidence` now requires `graph_run_id`. `execution_events` is a private
+  list-reduced state channel, and root evidence is filtered by
+  `runtime.execution_info.run_id`. A real checkpointed two-turn agent test proves the
+  second response cannot re-report the first turn's execution.
+- Root artifact evidence resolves the event's server-authored artifact ids from the
+  store. This remains correct regardless of whether `ArtifactMessageMiddleware` has
+  already claimed the in-memory delivery queue.
+
+Two plan assumptions were corrected from measured library behavior:
+
+1. Deep Agents 0.7.14's summarization factory returns
+   `_DeepAgentsSummarizationMiddleware`, not `SummarizationMiddleware`. The permanent
+   class-order test asserts the resolved implementation's actual name and position.
+2. LangGraph's public graph-invocation id is `runtime.execution_info.run_id`.
+   `Runtime.config` does not expose top-level `run_id`; CP2's first real two-turn run
+   caught the distinction.
+
+Verification against the committed tree:
+
+```text
+focused CP2 plus schema suite     76 passed
+full frozen-lock suite           187 passed, 1 expected LangChain MCP beta warning
+clean-environment CP2 imports    pass, no output
+./scripts/check-imports.sh       import direction ok
+git diff --check                 pass
+```
+
+The full run included the existing real MCP round trips and real Postgres tests. The
+temporary Postgres service was removed afterward. No juena-chatbot file was changed.
 
 ---
 
@@ -925,7 +965,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
-| **Executed** | CP0a, CP0b, CP0 and CP1 complete through core commit `c85aa9c`; CP2 is next |
+| **Executed** | CP0a, CP0b, CP0, CP1 and CP2 complete through core commit `a97b3c1`; CP3 is next |
 | **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |

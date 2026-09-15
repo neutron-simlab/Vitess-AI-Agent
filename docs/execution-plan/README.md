@@ -179,7 +179,7 @@ still requires a clean baseline before the application cutover.
 |---|---|---|
 | `Vitess-AI-Agent` | execution plans versioned on `feature/migrate-to-juena` | receives a plan-record commit after each completed core checkpoint |
 | `juena-chatbot` | `e4a5eb3`; modified `env.example` and `juena`, plus untracked `.claude/` | **plan 02's clean-tree baseline**; these user changes remain untouched |
-| `juena-core` | repository exists; CP0a, CP0b, CP0 and CP1 complete through `c85aa9c` | CP2 is next |
+| `juena-core` | repository exists; CP0a, CP0b, CP0, CP1 and CP2 complete through `a97b3c1` | CP3 is next |
 
 D7 is no longer among the open prerequisites: core is a sibling consumed as a path
 source, v2 is a new repository, and the image COPYs core in — so there is no remote to
