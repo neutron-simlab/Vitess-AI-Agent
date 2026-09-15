@@ -293,6 +293,21 @@ dictionary the application extends at startup:
 kind it knows; juena-chatbot registers its approval kind in `service.py`. One
 dictionary, one call.
 
+> **Amended by 01/CP4: `register_interrupt_kind(kind, *, event, resume)`,** in a new
+> `server/interrupts.py`. Still one dictionary and one call per application, but each
+> kind registers **two** builders. An event builder alone lets core show a card it cannot
+> resume: the user answers, `/resume` finds no way to turn the reply into a `Command`,
+> and the run stays paused with nothing naming the cause. The two halves have one owner
+> and one lifetime.
+>
+> The event builder also **is** the classifier — it returns `None` for an interrupt that
+> is not its kind — so `interrupt_kind()` needs no separate registration and a kind
+> cannot be recognised but unrenderable.
+>
+> The registry cannot live in `service.py` as sketched: `processor.py` needs it, and
+> `service.py` imports the routers that import `processor`. `service.py` re-exports it,
+> so the documented call site is unchanged.
+
 ### 6. `research/` — stays, but name what will reopen it
 
 **Decision: stays in juena-chatbot. Do not extract it now.**
@@ -515,10 +530,29 @@ So:
 - **v2 subclasses it** with whatever VITESS adds, and with nothing it does not have.
 
 **`server/api/endpoints.py`** has the same shape of problem — it imports sandbox,
-approval and artifact behaviour. **It does not move.** Core exports the pieces the
+approval and artifact behaviour. ~~**It does not move.** Core exports the pieces the
 routes are built from (the stream generator, `_authorize_thread`, the resume dispatcher,
-the artifact responder) and each application assembles its own router from them. The
+the artifact responder) and each application assembles its own router from them.~~ The
 route *paths* stay identical, so the clients and the UI do not change.
+
+> **Superseded by 01/CP4 — it does move, as `build_api_router(principal, …)`.** Two of
+> the three imports that justified keeping it out stopped existing: artifacts became
+> core's in 01/CP2, and the approval became an application-registered interrupt kind in
+> 01/CP4. The third — materialising a thread's files where a process can open them — is a
+> seam **both** applications need, because VITESS binaries read real files from disk
+> exactly as a sandbox mount does, so it became the `ThreadWorkspace` parameter.
+>
+> Two copies of this router would mean two copies of the SSE event ordering, the
+> ownership check, the artifact drain and the thread-event emission, which must not
+> drift. And this decision's own concern — "a `BaseAgentClient` method with no matching
+> route is a 404 nobody notices" — gets *worse* when core defines the client but not the
+> routes: there is then no single place where the two can be compared. 01/CP4's
+> acceptance check is that comparison.
+>
+> What the application still supplies: its identity dependency, its resume union, its
+> `ThreadWorkspace`, its `StreamPolicy`, and the note closing a staged-input manifest.
+> The client half of this decision is unchanged — core gets `BaseAgentClient`, not
+> `AgentClient`.
 
 **The test that keeps this honest** runs in both directions: core must not import an
 application (01/CP0), **and** an application's router must expose the route set core's

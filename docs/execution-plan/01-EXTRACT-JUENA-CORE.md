@@ -762,10 +762,14 @@ registers its own.
 uv run pytest tests/ -q
 
 uv run python - <<'PY'
+from uuid import uuid4
 from juena_core.server.service import create_app
 from juena_core.server.identity import local_principal
-app = create_app(principal=local_principal)
-print(sorted(r.path for r in app.routes))
+app = create_app(principal=local_principal(user_id=uuid4()))
+# NOT `r.path for r in app.routes`: since FastAPI 0.141 an included router is
+# one opaque private `_IncludedRouter` entry there, so that expression prints
+# only /health. The OpenAPI schema is public and flattens inclusion.
+print(sorted(app.openapi()["paths"]))
 PY
 ```
 
@@ -792,7 +796,121 @@ omitted them from this list.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+**Completed 2026-09-15 in core commit `e11f734`.** `server/errors.py`, `server/utils.py`,
+`server/agent/{registry,input_handler,runtime_model_middleware}.py`,
+`server/streaming/{events,handlers,processor}.py`,
+`server/chat/{input_constants,input_types,input_utils,inputs,endpoints}.py`,
+`load_thread_messages` in `server/chat/repository.py`, and `server/service.py` as
+`create_app(...)` are working implementations. Two modules are **new, not in CP0's stub
+tree**: `server/interrupts.py` and `server/api/`.
+
+```text
+create_app route list          all 12 documented paths, plus the pre-existing
+                               /threads/{thread_id}/pending-approval alias;
+                               nothing under /auth/
+tests/test_server_contracts.py        31 passed
+tests/test_server_routes_postgres.py  14 passed
+full frozen-lock suite               253 passed (203 at CP3, +45 new tests,
+                                     +5 new import-boundary parametrisations)
+./scripts/check-imports.sh           import direction ok
+clean-environment import of the new modules  pass
+```
+
+Both new test files were checked by breaking the code they cover: removing
+`ensure_principal_row` from the lifespan fails 11 of the 14 route tests, and dropping the
+`agent_id` comparison from the repository fails exactly the six agent-scoped ones and
+nothing else.
+
+**The plan's own acceptance command does not run.** `sorted(r.path for r in app.routes)`
+prints only `/health` on the installed FastAPI 0.141.1 / Starlette 1.6.0: an included
+router is one opaque `_IncludedRouter` entry in `app.routes`, and `_IncludedRouter` is
+private. Route enumeration goes through `app.openapi()["paths"]`, which is public and
+flattens inclusion. The route list itself is unchanged and complete.
+
+**Decisions taken while implementing, each recorded because it diverges from a plan
+above:**
+
+1. **`server/api/` is in core after all** — 00-BOUNDARY.md decision 10 says it stays in
+   each application. Two of that decision's three reasons have since expired: artifacts
+   became core's in CP2, and approvals became an application-registered interrupt kind in
+   this checkpoint. The third, materialising a thread's files where a process can open
+   them, is a seam **both** applications need — VITESS binaries read real files from disk
+   exactly as a sandbox mount does — so it is a parameter, not a reason for two copies.
+   Keeping two would put the SSE ordering, the ownership check, the artifact drain and the
+   thread-event emission in two places that must not drift, and CP4's own acceptance
+   check cannot pass without it: `create_app(principal=…)` has to produce `/stream`.
+   Decision 10's actual worry — a `BaseAgentClient` method with no matching route — gets
+   *worse* if core defines the client but not the routes.
+2. **`register_interrupt_kind(kind, *, event, resume)` replaces decision 5's
+   `register_interrupt_event(kind, builder)`,** and lives in the new
+   `server/interrupts.py` rather than in `service.py`. Two changes, both forced:
+   - An event builder alone lets core **show** a card it cannot **resume**. The user
+     answers, `/resume` finds no way to turn the reply into a `Command`, and the run stays
+     paused with nothing naming the cause. Rendering and resuming have one owner and one
+     lifetime, so they register together.
+   - The registry cannot live in `service.py`: `processor.py` needs it, and `service.py`
+     imports the routers which import `processor`. Its own stub docstring described that
+     cycle. `service.py` re-exports `register_interrupt_kind`, so the documented call site
+     is unchanged.
+   The event builder doubles as the classifier — it returns `None` for an interrupt that
+   is not its kind — so a kind cannot be recognised but unrenderable. Core registers
+   exactly `clarification`; a test asserts that an unregistered HumanInTheLoop approval is
+   neither classified nor rendered.
+3. **`get_default_agent()` raises `RuntimeError`, not `AgentNotFoundError`.** The first
+   draft raised the latter, and a test caught that `AgentNotFoundError.__init__` overwrites
+   the message with `Agent '<default>' not found`, burying the explanation in `details`.
+   Nothing is missing from the *request*: the application never imported its agent module.
+   A 404 sends whoever is debugging to look at the request instead of at the import, so
+   this now fails like `settings()` and `get_checkpointer()` do, with a message naming the
+   fix. The route helper no longer translates it.
+4. **Three app-specific literals became declared parameters**, because core shipping them
+   would state things that are false elsewhere:
+   - `StreamPolicy(custom_event_types, silent_tools)` replaces the hardcoded
+     `"sandbox_status"` and `tool_name == "execute"` in `processor.py`. `custom_event_types`
+     is an **allowlist**: the `custom` stream mode carries whatever any middleware wrote, so
+     forwarding by default would put internal payloads on a user's wire.
+   - `approval_required_event(..., extra_limits=)` keeps the LangChain
+     `action_requests`/`review_configs` unpacking, which is shared, but the card's
+     `network: none, 2 vCPU, 4 GB` describes juena-chatbot's Podman sandbox and would be a
+     false promise from anywhere else.
+   - `build_inputs_manifest(..., closing_note=)` — the final paragraph is prompt text that
+     names specialists and objectives. Core's default states only a fact.
+5. **`shutdown_agents()` closes `aclose()`/`close()` on the agent instance**, replacing
+   `getattr(instance, "context7_runtime").client`. Core cannot know what an application's
+   resources hold; one documented method is the contract.
+6. **`PreparedCodeChatInputs.sandbox_files` is renamed `workspace_files`**, and the
+   staging call becomes `ThreadWorkspace(stage=…, delete=…)` on `create_app`. Core computes
+   the merged file set and never learns where it lands.
+7. **`streaming/__init__.py` stays a bare `__all__`**, like `database/__init__.py`.
+   Re-exporting `StreamEventProcessor` from it closes the cycle
+   `processor → interrupts → streaming.events → streaming/__init__ → processor`.
+
+**Obligations this creates for plan 02**, none of which a test in core can catch:
+
+| Cutover step | Why |
+|---|---|
+| `JuenaAgentResources` may add `aclose()` — **nothing breaks if it does not** | `shutdown_agents` no longer reaches for `context7_runtime.client`. Per README finding 12 that close is *already* a silent no-op, since the client exposes neither `close` nor `aclose`, so this changes no behaviour today. It matters the day a resources object holds something that genuinely needs closing |
+| `service.py` passes `closing_note=` with juena's **exact** current sentence | plan 02 requires no prompt text to change, and this string is prompt text |
+| `service.py` passes `StreamPolicy(custom_event_types={"sandbox_status"}, silent_tools={"execute"})` | without it the sandbox status events stop reaching the UI and `execute` stdout starts reaching the transcript |
+| `service.py` passes `extra_limits={"network": "none", "cpu": "2 vCPU", "memory": "4 GB"}` to its approval event builder | the card loses its limits block otherwise |
+| the approval kind is registered with **both** an event and a resume builder | `sandbox/approvals.py`'s `_execute_resume` becomes that resume builder; `interrupt_kind`, `get_pending_interrupt` and `get_first_pending_interrupt` are core's now |
+| `ThreadWorkspace(stage=stage_runtime_inputs, delete=delete_runtime_workspace)` | otherwise nothing copies `/inputs` into the sandbox mount |
+| `sandbox_files` call sites become `workspace_files` | a mechanical rename |
+| `ResumeInput` union is composed in juena-chatbot and passed as `resume_input=` | core defines `ResumeBase` and the clarification arm only |
+
+**What this checkpoint did *not* do:**
+
+- **`/auth/dev-login` did not move.** 00's decision 9 part 3 proposed lifting
+  juena-chatbot's `AUTH_DEV_BYPASS` endpoint into core as v2's identity story. CP3's
+  `local_principal` already is that story, and it is strictly better: no route, no
+  session table write, and a guard that refuses at construction rather than one that
+  refuses at request time. A second development identity path in core would be one more
+  way to serve an unauthenticated API.
+- **No route runs a language model.** The agent registered in the route tests is a
+  two-node graph compiled against the real checkpointer. Every property under test is
+  decided before the graph is invoked, or by the checkpointer after it.
+- **`StreamEventProcessor` is not covered end-to-end through `/stream`.** The SSE frames
+  a real turn produces are plan 02's fourth verification item, against the running system.
 
 ---
 
@@ -1035,7 +1153,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
-| **Executed** | CP0a, CP0b, CP0, CP1, CP2 and CP3 complete through core commit `219aed8`; CP4 is next |
+| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3 and CP4 complete; CP5 is next |
 | **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |
