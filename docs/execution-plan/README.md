@@ -167,22 +167,23 @@ Four questions the review left open, now answered:
 
 ---
 
-## Before you can start
+## Execution state (2026-09-15, through 01/CP1)
 
-Three workspace facts. The two dirty worktrees violate preconditions and **must not be
-blindly reverted** — that work should be intentionally completed or committed before the
-baseline in 01 is recorded. The missing core repository is the expected starting condition
-that 01/CP0a handles.
+The repositories and plans now exist. One precondition remains intentionally unresolved:
+the chatbot worktree is dirty and **must not be blindly reverted**. CP1 proceeded only
+after verifying that every copied source file itself matched commit `e4a5eb3`; its unit
+and integration counts are recorded as a dirty-checkout observation in plan 01. Plan 02
+still requires a clean baseline before the application cutover.
 
 | Repo | State | What it blocks |
 |---|---|---|
-| `Vitess-AI-Agent` | modified `.gitignore` plus untracked `docs/execution-plan/` (made versionable deliberately) | the plans and ignore rule must be committed before CP0a begins, so execution has a durable specification |
-| `juena-chatbot` | modified `env.example` and `juena` (the juena-rag cutover) | **01/CP1 and 02's clean-tree check** — CP0a, CP0b and CP0 may proceed, but implementation must not be copied from an uncommitted source snapshot |
-| `juena-core` | does not exist | expected; 01/CP0a creates and initializes it before dependency validation |
+| `Vitess-AI-Agent` | execution plans versioned on `feature/migrate-to-juena` | receives a plan-record commit after each completed core checkpoint |
+| `juena-chatbot` | `e4a5eb3`; modified `env.example` and `juena`, plus untracked `.claude/` | **plan 02's clean-tree baseline**; these user changes remain untouched |
+| `juena-core` | repository exists; CP0a, CP0b, CP0 and CP1 complete through `c85aa9c` | CP2 is next |
 
-D7 is no longer among them: core is a sibling consumed as a path source, v2 is a new
-repository, and the image COPYs core in — so there is no remote to create, no tag to cut
-and no credential to configure before CP0.
+D7 is no longer among the open prerequisites: core is a sibling consumed as a path
+source, v2 is a new repository, and the image COPYs core in — so there is no remote to
+create, no tag to cut and no credential to configure before CP0.
 
 Two consequences constrain the design rather than follow from it.
 

@@ -57,7 +57,7 @@ These have no application-specific content.
 
 | From | To | Note |
 |---|---|---|
-| `schema/server.py` | `schema/server.py` | All 138 lines read. Nothing names JüNA; nothing names a domain. **Moves, but not unchanged:** `CreateChatInput` gains a required `agent_id` — see decision 13 and 01/CP3 |
+| `schema/server.py` | `schema/server.py` | All 138 lines read. Nothing names JüNA; nothing names a domain. **Moves, but not unchanged:** `CreateChatInput` gains a required `agent_id` in 01/CP1; persistence and authorization enforce it in 01/CP3 — see decision 13 |
 | `schema/llm_models.py` | `schema/llm_models.py` | `Provider`, `BlabladorModelName`, `OpenAIModelName`. Arguably app policy — *which* models are offered — but both apps offer the same two providers against the same institute endpoint. One copy |
 | `schema/agents.py` | `schema/agents.py` | `SpecialistReport`, `ResultArtifactEvidence`, `AskUserSchema`. The verified-report contract |
 | `schema/upload_limits.py` | `schema/upload_limits.py` | Keeps its "deliberately dependency-free" property. One change, below |
@@ -126,7 +126,8 @@ The real coupling was measured rather than guessed. Only 19 modules read
 | `artifacts.py` | `ARTIFACT_ROOT`, `AUDIT_FILE` |
 | `log.py` | `LOG_LEVEL`, `LOG_DIR` |
 
-That is about 22 fields. The list is derivable with
+That is 23 fields, plus `BIND_HOST` and `API_PUBLISHED` added by decision 17 below.
+The list is derivable with
 `grep -rn "global_config\.\|get_config()" src/juena/`, filtered to the modules that
 move. It is small enough to be one dataclass, and too large to thread as keyword
 arguments through `build_chat_model` → `resilience_middleware` → `ArtifactStore` →
@@ -354,9 +355,10 @@ registered default is an error, not an implicit choice of JüNA.
 
 **One change to `upload_limits.py`:** it keeps its "deliberately dependency-free"
 property and its comment about the UI being a courtesy and the server being the
-boundary — but `TEXT_READABLE_FILE_TYPES` becomes a default argument rather than a
-module constant, because v2 must accept `.dat`, `.inf`, `.nxs` and `.h5`, which are
-meaningless to juena:
+boundary, but the validator's extension policy becomes injectable. Core retains an
+immutable `DEFAULT_TEXT_READABLE_FILE_TYPES` tuple for the shared UI and derives
+`DEFAULT_SUFFIXES` from it; v2 supplies its own suffix set containing `.dat`, `.inf`,
+`.nxs` and `.h5` rather than mutating core's defaults:
 
 ```python
 validate_attachments(attachments, *, allowed_suffixes=DEFAULT_SUFFIXES,

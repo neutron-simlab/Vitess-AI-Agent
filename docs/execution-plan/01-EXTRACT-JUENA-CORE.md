@@ -50,7 +50,7 @@ dependencies = [
   "langgraph>=1.2,<2",
   "deepagents>=0.7.13,<0.8",
   "fastapi", "uvicorn[standard]", "sse-starlette", "httpx", "httpx-sse",
-  "pydantic", "python-dotenv",
+  "pydantic", "typing-extensions>=4.12",
   "langgraph-checkpoint-postgres", "psycopg[binary,pool]",
   "sqlalchemy[asyncio]", "pyyaml", "pillow",
 ]
@@ -286,10 +286,13 @@ Review corrected three contracts in the interrupted skeleton:
   requires an application-owned `agent_id`. Core no longer silently names JüNA as the
   default application.
 
-The chatbot baseline is **not recorded yet**. Its `juena-rag-cutover` checkout is still
-dirty at `e4a5eb3` (`env.example`, `juena`, and `.claude/`), so running and recording a
-source baseline now would not identify a reproducible snapshot. This does not invalidate
-CP0, but it remains the hard gate before CP1 copies any implementation.
+**Observed chatbot baseline before CP1:** at source commit `e4a5eb3`, `./juena test`
+reported **452 passed, 5 skipped** and `./juena test-integration` reported **16 passed**.
+This is explicitly a dirty-checkout observation, not the clean reproducible baseline the
+gate asked for: `env.example` and `juena` were modified and `.claude/` was untracked.
+The seven files copied by CP1 were individually checked and matched `e4a5eb3` exactly,
+so the extraction source itself is identifiable. Plan 02 must still rerun both baselines
+from a clean chatbot checkout before judging the cutover.
 
 ---
 
@@ -313,8 +316,8 @@ So: import anything, and you have loaded and validated configuration.
 
 ### What lands
 
-**`juena_core/config.py`** — a frozen `CoreSettings` dataclass carrying the ~22 fields
-listed in 00, plus:
+**`juena_core/config.py`** — a frozen `CoreSettings` dataclass carrying the 25 fields
+listed in 00, including `BIND_HOST` and `API_PUBLISHED` from decision 17, plus:
 
 ```python
 def configure(settings: CoreSettings) -> None: ...
@@ -334,6 +337,8 @@ already patch that seam move with it.
 
 **`juena_core/schema/`** — `server.py`, `llm_models.py`, `agents.py`,
 `upload_limits.py`, `interrupts.py` (the generic half of `schema/sandbox.py`, per 00).
+`CreateChatInput.agent_id` is established here with the rest of the wire schema; CP3
+then makes persistence and route authorization enforce it as one coordinated change.
 
 **Watch for `repo_root()`.** `juena/core/paths.py` walks up from `__file__` looking for
 a `pyproject.toml`; from inside an installed package that finds the wrong directory or
@@ -354,7 +359,54 @@ this checkpoint. `env -i` starts a command with no environment variables at all.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+**Completed 2026-09-15 in `juena-core` commit `c85aa9c`.** CP1 replaces the configuration,
+logging, provider and schema stubs with working implementations:
+
+- `CoreSettings` has the complete 25-field boundary and is frozen. `configure()` is
+  idempotent for an equal value but refuses a different second process configuration,
+  preventing cached models and later process-level resources from retaining stale keys.
+  The package top level exports `CoreSettings`, `configure` and `settings`.
+- `config.py` contains no environment or dotenv access. Logging reads `LOG_LEVEL` only
+  when configuring a logger and falls back to `INFO` before application configuration.
+- `llms_providers.py` now uses `settings()` and retains cached LangChain model
+  construction and the measured Blablador context profiles. A new regression caught an
+  inherited bug: Blablador identifiers contain commas, so the old comma split corrupted
+  a configured MiniMax identifier. Filtering now matches complete known identifiers at
+  list boundaries.
+- The server, model, agent and generic interrupt schemas are implemented. Mutable Pydantic
+  container defaults use factories. `CreateChatInput` requires `agent_id` now; CP3 still
+  owns the corresponding database and authorization change.
+- Upload defaults remain available to shared UI code as immutable values, while
+  `is_text_readable_filename` and `validate_attachments` accept application-owned suffix
+  sets and `validate_attachments` accepts application-owned byte/file limits. A permanent
+  test exercises VITESS-like `.dat` and `.h5` policy without changing core globals.
+- The unused direct `python-dotenv` dependency was removed. `typing-extensions>=4.12` is
+  direct because Python 3.11 Pydantic schemas must import `TypedDict` from it. `uv.lock`
+  was regenerated without changing the validated LangChain-family versions.
+
+The gates, from a frozen lock:
+
+```text
+env -i PATH="$PATH" uv run python -c \
+  "import juena_core.log, juena_core.schema.server, juena_core.llms_providers"
+# pass, no output
+
+uv run --frozen --group dev pytest \
+  tests/test_config_and_log.py tests/test_cp1_imports.py \
+  tests/test_llms_providers.py tests/test_schemas.py \
+  tests/test_stub_contracts.py tests/test_import_boundary.py -q
+# 101 passed
+
+uv run --frozen --group dev pytest tests -q
+# 112 passed, 1 expected LangChain MCP beta warning
+
+./scripts/check-imports.sh
+# import direction ok
+```
+
+The full run used the repository's real Postgres service and the existing real MCP
+round trips. The temporary Postgres service was removed after the run. `repo_root()` was
+not copied.
 
 ---
 
@@ -475,18 +527,19 @@ It is written at creation, and checked on lookup and resume. Not nullable, becau
 conversation that does not know its own graph is the bug being prevented. juena-chatbot
 backfills its single value in plan 02.
 
-> **A column is not a feature.** Nothing currently on the path can populate it:
-> `CreateChatInput` (`schema/server.py:127`) carries only `thread_id` and `title`;
-> `create_chat` (`clients/client.py:174`) posts exactly those two; and
+> **A column is not a feature.** At the `e4a5eb3` source snapshot, nothing on the path
+> could populate it: `CreateChatInput` (`schema/server.py:127`) carried only `thread_id`
+> and `title`; `create_chat` (`clients/client.py:174`) posted exactly those two; and
 > `ensure_owned_chat` (`server/chat/repository.py:30`) constructs
-> `Chat(thread_id=..., user_id=...)`. Adding a non-null column without the rest of this
-> list produces a `NOT NULL` violation on the first conversation.
+> `Chat(thread_id=..., user_id=...)`. CP1 now establishes the wire-schema field, but
+> adding a non-null column without the rest of this list would still produce a
+> `NOT NULL` violation on the first conversation.
 
 **The complete write-and-read path**, all of it in core:
 
 | Where | Change |
 |---|---|
-| `schema/server.py` — `CreateChatInput` | gains `agent_id: str` (required). **This is why `schema/server.py` does not "move unchanged"** — 00's disposition table is amended |
+| `schema/server.py` — `CreateChatInput` | already requires `agent_id: str` from CP1; CP3 wires that schema contract into storage and authorization |
 | `clients/base.py` — `create_chat` | signature gains `agent_id`, and it is sent in the body |
 | `server/chat/repository.py` — `ensure_owned_chat` | takes `agent_id`, sets it on creation, and **raises `ChatNotFoundError` when an existing chat's `agent_id` differs** — the same shape as the existing owner check, and for the same reason: a mismatch must not reveal that the row exists |
 | listing | `list_chats` filters by `agent_id` when given one, so a UI showing one agent's conversations does not show the other's |
@@ -531,8 +584,8 @@ restarts.
 Two things it must do that a real identity provider does for free:
 
 **1. Its guard runs at startup, in `create_app` — not as a dependency.** `CoreSettings`
-gains `BIND_HOST` *and* `API_PUBLISHED: bool`, and `create_app` raises at construction
-when `local_principal` is paired with a published API. A *dependency* cannot enforce
+already carries `BIND_HOST` and `API_PUBLISHED: bool` from CP1, and `create_app` raises at
+construction when `local_principal` is paired with a published API. A *dependency* cannot enforce
 this: it runs on a request, so it would fail the first call rather than refuse to boot,
 and by then the port is already open. The topology it assumes is decision 17 — Streamlit
 published on `127.0.0.1`, the API bound to container loopback and not published at all.
@@ -872,6 +925,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
+| **Executed** | CP0a, CP0b, CP0 and CP1 complete through core commit `c85aa9c`; CP2 is next |
 | **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |
