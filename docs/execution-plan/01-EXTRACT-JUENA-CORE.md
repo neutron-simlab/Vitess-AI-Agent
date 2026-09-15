@@ -1014,7 +1014,8 @@ and then **the real test, against the built wheel in a clean environment**:
 
 ```bash
 uv build
-python -m venv /tmp/cleanroom && /tmp/cleanroom/bin/pip install dist/juena_core-*.whl
+.venv/bin/python -m venv /tmp/cleanroom
+/tmp/cleanroom/bin/pip install dist/juena_core-*.whl
 /tmp/cleanroom/bin/python -c "import juena_core.clients.base"
 /tmp/cleanroom/bin/python -c "import juena_core.ui.streaming" \
   && echo "PACKAGING BUG: streamlit module imported without the [ui] extra" && exit 1
@@ -1027,6 +1028,10 @@ Two details, both of which decide whether this test means anything:
   the check would pass while the packaging is broken.
 - **Only the clean room counts.** The development virtual environment already has
   Streamlit installed, so the first sequence passes regardless of what the metadata says.
+- **Use the project's Python to create it.** On the implementation machine the macOS
+  system `python3` is 3.9.6, below this package's declared `>=3.11`; using it fails before
+  the packaging property under test is reached. The environment is still clean — only
+  its interpreter comes from `.venv`, not any installed package.
 
 **The development virtual environment already has Streamlit installed**, so the first
 sequence can pass while the packaging metadata is wrong. Only the clean room proves it.
@@ -1037,7 +1042,74 @@ exception is needed.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+**Completed 2026-09-15 in core commit `23de400`.** All seven CP5 stubs are working
+implementations: `clients/base.py`, `mcp.py` and
+`ui/{math_rendering,chat_storage,client_setup,streaming,components}.py`. Four focused test
+files make the client wire contract, MCP failure policy, UI state-machine seams and math
+normalisation permanent.
+
+```text
+tests/test_{client_contracts,mcp_helpers,ui_contracts,math_rendering}.py  30 passed
+full frozen-lock suite                                                   289 passed
+./scripts/check-imports.sh                                               import direction ok
+development import of clients.base and ui.streaming                     pass
+built-wheel Python 3.11 clean room, no extras:
+  import juena_core.clients.base                                         pass
+  import juena_core.mcp                                                  pass
+  import juena_core.ui.streaming                                         fails on missing
+                                                                          streamlit, as required
+```
+
+The full suite ran against the real throwaway Postgres service and retained CP0b's real
+MCP round trips. The two warnings are the expected `LangChainBetaWarning` for
+`langchain.mcp` and Starlette's upstream AnyIO alias deprecation. `uv.lock` did not
+change. A source scan confirms `juena_core.mcp` is the only production module importing
+`langchain.mcp`.
+
+**Decisions made while finishing the interrupted implementation:**
+
+1. **Unknown SSE objects pass through unchanged.** Core parses its own event vocabulary;
+   an application event keeps its type and fields so the `custom_status` renderer can
+   consume it. The source client's `unknown` summary destroyed exactly the data the
+   application seam needs.
+2. **`resume_stream` requires an interrupt `kind` and accepts its fields generically.**
+   `clarification` is core's one known kind; an application supplies the discriminator it
+   registered in CP4 for approvals or future interrupts. Hard-coding
+   `execute_approval` here would merely move a juena-chatbot literal into core.
+3. **`initialize_client` requires `timeout` as well as `agent_id`.** The source read an
+   application global. Reading `CoreSettings` instead would make server configuration an
+   undocumented precondition of constructing a browser-side HTTP client. Each UI passes
+   its own timeout explicitly.
+4. **Every HTTP 401 becomes `AgentAuthenticationError`.** Session expiry is not a generic
+   transport failure on one privileged route only; applications can now handle it
+   consistently for chat, stream, artifact and thread calls.
+5. **MCP import and policy are separate.** `_load_adapter_class()` delays the beta/extra
+   import until discovery. `discover_tools` raises `MCPUnavailableError` for a required
+   service; `discover_optional_tools` logs and returns `None`. Both use the measured
+   `async with MCPAdapter(...): await adapter.list_tools()` lifecycle.
+
+**The completion review found five bugs before commit:**
+
+- `get_pending_interrupt` omitted `agent_id`. The server therefore resolved the default
+  graph and returned 404 for a thread owned by v2's other agent. It now always sends the
+  client-selected agent and refuses to guess when none is selected.
+- a failed pending-interrupt lookup was still cached in `approval_checked_threads`, so a
+  transient API failure suppressed restoration for the rest of that Streamlit session.
+  Only a successful lookup, including a successful empty result, is cached now.
+- a failed clarification resume restored the interrupt but left `clarify_answer:*` set,
+  permanently disabling the question card. Both approval and clarification submission
+  keys are cleared when resume fails.
+- artifact reconciliation chose either stored ids or live ids. If both existed, a
+  live-only file disappeared; it now keeps the stored order and appends the live-only
+  ids.
+- every complete `ChatMessage`, including a tool payload, set the assistant-completion
+  flag. With tool-payload streaming enabled, a tool result arriving first suppressed all
+  later answer tokens from the live placeholder. Only a complete AI message sets it now.
+
+The clean-room command above was corrected after the first run exposed the host's Python
+3.9 rather than a wheel defect. Re-running with the project's Python 3.11.13 proved the
+intended metadata boundary: Streamlit is present only under the `[ui]` extra, while the
+base client and lazy MCP wrapper import without it.
 
 ---
 
@@ -1173,7 +1245,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
-| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3 and CP4 complete through core commit `5df150a`; CP5 is next |
+| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3, CP4 and CP5 complete through core commit `23de400`; CP6 is next |
 | **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |
