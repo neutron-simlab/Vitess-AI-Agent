@@ -77,7 +77,7 @@ in predictable ways, and each red is one search-and-replace.
 Add the dependency first:
 
 ```toml
-dependencies = ["juena-core[ui,mcp]"]
+dependencies = ["juena-core[ui,mcp,sandbox]"]
 
 [tool.uv.sources]
 juena-core = { path = "../juena-core" }
@@ -91,7 +91,7 @@ as their modules are re-pointed, remove `langchain-mcp-adapters` when Context7 m
 the same care as test-node changes. Upgrading first and calling the result a baseline
 would make the baseline measure a different application.
 
-**The lock pins the dependency set; it does not pin core's source** — a path dependency installs whatever is in the sibling directory, and cannot be hash-checked. Core's revision is pinned by discipline instead: a clean core tree, and its commit SHA recorded in the build record (D7, 01/CP6). juena-chatbot's
+**The lock pins the dependency set; it does not pin core's source** — a path dependency installs whatever is in the sibling directory, and cannot be hash-checked. Core's revision is pinned by discipline instead: a clean core tree, and its commit SHA recorded in the build record (D7, 01/CP7). juena-chatbot's
 existing unpinned `juena-rag @ git+…` is the counter-example: acceptable with one
 consumer, and a way to break the other application silently with two. Run
 `uv sync --frozen` so the lock is enforced rather than refreshed.
@@ -111,9 +111,52 @@ juena_core.configure(CoreSettings(
 ))
 ```
 
-**Do not move `Config` into core.** Its `validate_required()` knows about SAML, the
-sandbox and production HTTPS, none of which is core's business. This is the decision
-from 00: *an application extends core configuration by not extending it.*
+**Do not move `Config` into core.** Its `validate_required()` knows about SAML,
+production HTTPS, and whether this particular deployment should enable its optional
+sandbox. Core supplies a settings object but never reads that environment. This is the
+decision from 00: *an application extends core configuration by not extending it.*
+
+### The sandbox re-point is explicit
+
+CP7 changed the boundary after the original test split was written. Delete the generic
+Python implementation from `src/juena/sandbox/` and re-point its consumers to
+`juena_core.sandbox`. Keep only `software.py` and
+`repository-requirements.txt` in the application package; keep the sandbox Dockerfile,
+systemd unit, Compose mounts, launcher commands and runbooks in juena-chatbot.
+
+Immediately after configuring base core, construct the optional settings from the
+application's existing `Config` values:
+
+```python
+from juena_core.sandbox.config import SandboxRuntimeSettings, configure_sandbox
+
+configure_sandbox(SandboxRuntimeSettings(
+    enabled=Config.SANDBOX_ENABLED,
+    identity_secret=Config.SANDBOX_IDENTITY_SECRET,
+    workspace_root=Config.SANDBOX_WORKSPACE_ROOT,
+    concurrency=Config.SANDBOX_CONCURRENCY,
+    execution_timeout_seconds=Config.SANDBOX_EXECUTION_TIMEOUT_SECONDS,
+    max_output_bytes=Config.SANDBOX_MAX_OUTPUT_BYTES,
+))
+```
+
+The service registers `register_sandbox_interrupt()`, passes
+`SandboxResumeInput`, `ThreadWorkspace(stage=stage_runtime_inputs,
+delete=delete_runtime_workspace)`, the current sandbox `StreamPolicy`, and
+`sandbox_lifespan` to `create_app()`. The software specialist imports
+`build_sandbox_backend`, `SandboxExecutionMiddleware`, `sandbox_interrupt_on` and
+`sandbox_enabled` from core. Preserve the all-or-nothing middleware/approval pair.
+
+Change the host worker entrypoint to:
+
+```bash
+uv run --extra sandbox python -m juena_core.sandbox.worker
+```
+
+Do not move the Podman socket into the application container. The worker remains a
+non-root host process; it and the API share only Postgres and the configured workspace
+root. Confirm the API-side settings and the worker environment agree on concurrency,
+CPU/memory, workspace quota and TTL.
 
 ### Two things that are new code, not a re-point
 
@@ -143,45 +186,47 @@ live rows.
 **A test that exercises a core module moves to juena-core. A test that exercises the
 wiring stays here.**
 
-The 46 modules, mapped by what they import:
+The 46 modules, mapped by what they import after CP7's boundary amendment:
 
-### Moves to juena-core — 12
+### Moves to juena-core — 22
 
 `test_agent_backends` · `test_agent_input_handler` · `test_ask_user` ·
 `test_chat_storage` · `test_client_setup` · `test_code_chat_inputs` ·
 `test_llm_models` · `test_loop_guard` · `test_math_rendering` ·
-`test_runtime_model_middleware` · `test_server_utils` · `test_streaming_handlers`
+`test_runtime_model_middleware` · `test_server_utils` · `test_streaming_handlers` ·
+`test_specialist_outcome` · `test_artifact_message_middleware` ·
+`test_sandbox_artifacts` · `test_sandbox_backend` · `test_sandbox_approvals` ·
+`test_sandbox_executor` · `test_sandbox_middleware` ·
+`test_sandbox_pipeline_integration` · `test_sandbox_worker` ·
+`test_sandbox_workspace`
 
-### Stays — 28
+### Stays — 22
 
 `test_agent_prompts` · `test_agent_resources` · `test_api_endpoints_files` ·
 `test_bootstrap` · `test_chat_interface` · `test_config_paths` · `test_context7_tools` ·
 `test_findings_lifecycle` · `test_juena_agent_runtime` · `test_main` ·
 `test_postgres_integration` · `test_rag_index` · `test_repo_config` ·
 `test_repo_manager` · `test_repo_search_tools` · `test_research` · `test_saml_auth` ·
-`test_sandbox_approvals` · `test_sandbox_executor` · `test_sandbox_middleware` ·
-`test_sandbox_pipeline_integration` · `test_sandbox_worker` · `test_sandbox_workspace` ·
 `test_sidebar` · `test_specialists` · `test_starters` · `test_supervisor_routing` ·
 `test_tavily_tools`
 
-### Splits — 6
+### Splits — 2
 
 | Module | Core half | App half |
 |---|---|---|
 | `test_agent_client` | `BaseAgentClient` transport, SSE parsing, core routes | `get_current_user` (`/auth/me`), `list_research` (`/research`) |
-| `test_specialist_outcome` | report composition, `execution_events` parsing | the sandbox-written evidence |
-| `test_artifact_message_middleware` | artifact attachment | sandbox artifact production |
-| `test_sandbox_artifacts` | `ArtifactStore` budgets, PNG validation, audit | Podman workspace paths |
-| `test_sandbox_backend` | backend protocol conformance | Podman execution |
 | `test_ui_components` | message, token and artifact rendering | logo and header |
 
 `test_agent_client` moved from the "moves whole" column once the client itself split
-(00, decision 10). **12 move, 28 stay, 6 split.**
+(00, decision 10). The four former sandbox-related splits now move whole because both
+their generic contracts and optional implementation are core-owned. **22 move, 22 stay,
+2 split.** `test_sandbox_config` and `test_simple_chat_example` are deliberate additions
+in core rather than baseline nodes that moved.
 
-**`test_postgres_integration.py` does not split.** It imports from
-`juena.server.{api,auth,chat,database}`, `juena.research`, `juena.sandbox` and
-`juena.agents.findings` all at once — which is exactly what makes it worth keeping
-whole. It is the only test that exercises the wiring against a real database.
+**`test_postgres_integration.py` does not split.** After the re-point it imports core
+server/sandbox modules beside `juena.research`, application identity and application
+configuration — which is exactly what makes it worth keeping whole. It is the only test
+that exercises that wiring against a real database.
 
 ### The reconciliation, which is the instrument
 
@@ -338,6 +383,8 @@ debugged.
    crossed the boundary that should not have.
 8. The parent-context Docker build succeeds, and its build record names the clean core
    SHA and image digest.
+9. Compose gives no API/UI container a Podman socket; the host worker alone can reach
+   rootless Podman, and its limits match `SandboxRuntimeSettings`.
 
 ---
 
@@ -352,7 +399,9 @@ debugged.
 | **Two SQLAlchemy `Base` objects.** If the app defines its own `DeclarativeBase` instead of importing core's, `create_all` builds core's tables from one metadata and the app's from another, and the `user_id` foreign keys fail at create time with an unresolved-table error | the `set(Base.metadata.tables)` test from 01/CP4 |
 | A renamed literal (`juena_repeated_tool_call`, `juena_display_text`) breaks existing threads invisibly | step 4's reopen-an-old-thread check |
 | Middleware order changes during the re-point | the class-name-order test from 01/CP2 |
-| The chatbot is built from an uncommitted or unrecorded core revision | require a clean core tree and record its commit SHA plus the resulting image digest (01/CP6) |
+| The API container receives the Podman socket | inspect resolved Compose mounts; only the non-root host worker may connect to Podman |
+| API approval/admission limits differ from worker enforcement | compare `SandboxRuntimeSettings` with the worker environment in the configuration test and running-system preflight |
+| The chatbot is built from an uncommitted or unrecorded core revision | require a clean core tree and record its commit SHA plus the resulting image digest (01/CP7) |
 
 ## If the boundary turns out to be wrong
 
@@ -369,6 +418,6 @@ inherits it.
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
 | **Unblocks** | 03 |
-| **Decided** | the test split (12 / 28 / 6); `Config` stays in the app; the node-id diff is the instrument; prompts must not change; `JuenaAgentClient` subclasses core; `agent_id` is backfilled to `'juena'` |
+| **Decided** | the test split (22 / 22 / 2); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the node-id diff is the instrument; prompts must not change; `JuenaAgentClient` subclasses core; `agent_id` is backfilled to `'juena'` |
 | **Open** | nothing — this plan answers questions rather than asking them |
-| **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — node ids replace pass counts, installed-core check added, client subclass and `agent_id` backfill added |
+| **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md), then amended by 01/CP7 — node ids replace pass counts, installed-core check added, client subclass and `agent_id` backfill added, sandbox cutover made explicit |

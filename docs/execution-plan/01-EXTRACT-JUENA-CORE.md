@@ -1,7 +1,8 @@
 # Plan 01 — Extracting juena-core
 
-> **Goal:** a `juena_core` package that imports, has its own tests, and knows nothing
-> about JüNA or VITESS.
+> **Goal:** a `juena_core` package that imports, has its own tests, and imports no
+> JüNA or VITESS application code. The optional sandbox preserves a few legacy external
+> identifiers solely so existing workers can be cut over safely.
 >
 > **This plan does not edit `src/juena/`.** That is plan 02.
 >
@@ -58,12 +59,14 @@ dependencies = [
 [project.optional-dependencies]
 ui  = ["streamlit>=1.53.0"]
 mcp = ["langchain[mcp]>=1.4,<2"]   # built-in; the standalone adapter is retired
+sandbox = ["podman>=5.8,<6", "requests>=2.32,<3"]
 ```
 
 `>=3.11` because core must run on the lower of the two applications' floors.
 
-Everything not listed above is an optional extra. A colleague installing `juena-core` to
-build a third agent must not acquire `pysaml2`, `podman`, `chromadb` or `streamlit`.
+Everything not listed above is an optional extra. A colleague installing base
+`juena-core` to build a third agent must not acquire `pysaml2`, `podman`, `chromadb` or
+`streamlit`.
 
 ### The dependency policy
 
@@ -127,7 +130,7 @@ No remote (D7). The sibling path dependency resolves to `../juena-core`, so the 
 name matters and is not negotiable without editing both applications.
 
 **Done when**, from inside the newly created repository, `git log --oneline` shows one
-commit and `git status --short` is empty — the clean-tree condition 01/CP6 requires
+commit and `git status --short` is empty — the clean-tree condition the final handoff requires
 before any accepted build.
 
 ---
@@ -912,11 +915,15 @@ above:**
 | `JuenaAgentResources` may add `aclose()` — **nothing breaks if it does not** | `shutdown_agents` no longer reaches for `context7_runtime.client`. Per README finding 12 that close is *already* a silent no-op, since the client exposes neither `close` nor `aclose`, so this changes no behaviour today. It matters the day a resources object holds something that genuinely needs closing |
 | `service.py` passes `closing_note=` with juena's **exact** current sentence | plan 02 requires no prompt text to change, and this string is prompt text |
 | `service.py` passes `StreamPolicy(custom_event_types={"sandbox_status"}, silent_tools={"execute"})` | without it the sandbox status events stop reaching the UI and `execute` stdout starts reaching the transcript |
-| `service.py` passes `extra_limits={"network": "none", "cpu": "2 vCPU", "memory": "4 GB"}` to its approval event builder | the card loses its limits block otherwise |
-| the approval kind is registered with **both** an event and a resume builder | `sandbox/approvals.py`'s `_execute_resume` becomes that resume builder; `interrupt_kind`, `get_pending_interrupt` and `get_first_pending_interrupt` are core's now |
+| application config constructs `SandboxRuntimeSettings` with the same CPU/memory limits as the worker | core's optional approval builder uses these values for the card; the worker remains their enforcement owner |
+| `register_sandbox_interrupt()` is called before serving | the optional core package owns both the event and resume builder; an unregistered approval cannot render or resume |
 | `ThreadWorkspace(stage=stage_runtime_inputs, delete=delete_runtime_workspace)` | otherwise nothing copies `/inputs` into the sandbox mount |
 | `sandbox_files` call sites become `workspace_files` | a mechanical rename |
-| `ResumeInput` union is composed in juena-chatbot and passed as `resume_input=` | core defines `ResumeBase` and the clarification arm only |
+| core's `SandboxResumeInput` is passed as `resume_input=` | it composes the optional approval arm with core's clarification arm only for sandbox-enabled applications |
+
+> **Amended by CP7.** The CP4 seams remain correct, but their reusable sandbox-side
+> implementations now live in `juena_core.sandbox`; plan 02 configures and imports them
+> rather than recreating them in juena-chatbot.
 
 **What this checkpoint did *not* do:**
 
@@ -1138,11 +1145,21 @@ plan, after that consumer exists and its tests pass.
 - plans 02 and 03 each own their path source, application lock, parent-context Docker
   build, Dockerfile-specific ignore file and image provenance record.
 
-The consumer declaration remains:
+The consumer declarations are feature-specific. VITESS uses:
 
 ```toml
 dependencies = ["juena-core[ui,mcp]"]
+```
 
+juena-chatbot keeps its current execution capability through core:
+
+```toml
+dependencies = ["juena-core[ui,mcp,sandbox]"]
+```
+
+Both use the same sibling source:
+
+```toml
 [tool.uv.sources]
 juena-core = { path = "../juena-core" }
 ```
@@ -1188,6 +1205,112 @@ Plan 02 must finish or commit them before taking its baseline, exactly as its st
 
 ---
 
+## Checkpoint 7 — optional sandbox execution
+
+**Boundary amendment:** after CP6, the user chose to make the sandbox reusable by
+juena-chatbot through core while keeping it completely inactive for VITESS. Decision 18
+in 00 replaces decision 5's package-ownership conclusion without changing its deployment
+warning.
+
+### Package and activation boundary
+
+Add a `[sandbox]` extra containing the Podman client and its HTTP dependency. Put the
+implementation under `src/juena_core/sandbox/`, but do not import it from the base
+package. Sandbox configuration is a separate immutable `SandboxRuntimeSettings` rather
+than more fields on `CoreSettings`:
+
+- importing `juena_core` must not import `podman`;
+- an unconfigured sandbox reports disabled;
+- `configure_sandbox()` is idempotent only for the same settings and rejects invalid
+  limits or an enabled identity secret shorter than 32 characters;
+- only `configure_sandbox(... enabled=True)` imports the optional ORM model, attaching
+  `sandbox_jobs` to core's shared `Base.metadata` before `create_app()` runs
+  `create_all`;
+- VITESS does not install `[sandbox]`, call `configure_sandbox`, create the table, run a
+  worker, mount a workspace or receive a Podman socket.
+
+### What moves
+
+Move and adapt the generic implementation, not the chatbot's environment reader:
+
+| Core module | Contract |
+|---|---|
+| `config.py`, `models.py` | explicit opt-in and optional `sandbox_jobs` registration |
+| `jobs.py` | Postgres admission, worker liveness, claiming and durable results |
+| `workspace.py` | tenant ownership, path confinement, quotas, input staging and output scans |
+| `executor.py`, `worker.py` | rootless-Podman execution in fixed host-side slots |
+| `backend.py`, `runtime.py` | Deep Agents backend, trusted runtime identity and lifecycle wiring |
+| `approvals.py`, `policy.py` | execute-only human approval and resume validation |
+| `evidence.py`, `middleware.py` | generic `execution_events`, graph-run scoping and artifact audit |
+
+Use core's existing `ArtifactStore`, `ArtifactRef`, `ExecutionEvidence`, runtime-context
+reader, interrupt registry, `ThreadWorkspace` and `StreamPolicy`; do not create sandbox
+copies of those contracts. `SandboxExecutionMiddleware` and
+`sandbox_interrupt_on()` are an all-or-nothing pair when supplied to
+`build_specialist_middleware()`.
+
+Preserve the existing table/index names, HMAC identity construction, advisory-lock IDs,
+`io.juena.sandbox.*` Podman labels and `juena-<job-id>` container names. They are external
+compatibility identifiers, not application imports. Renaming them during the extraction
+would strand active rows or make the cleanup pass miss containers created before the
+cutover.
+
+### What remains application-owned
+
+Do not move `sandbox/software.py`, `sandbox/repository-requirements.txt`, the sandbox
+Dockerfile, systemd unit, worker environment file, Compose mounts, launcher commands or
+production runbook. They decide which scientific packages are installed and how this
+host is secured. Plan 02 repoints their Python entrypoints and imports but retains those
+assets in juena-chatbot.
+
+The API and worker share Postgres and exactly one workspace root. The application
+process must never receive the Podman socket; only the non-root host worker does.
+`SandboxWorkerSettings` continues to read the worker environment once at process start,
+while the application constructs `SandboxRuntimeSettings`. Repeated limits must match,
+because the API uses them for admission and the approval card while the worker enforces
+them.
+
+### Permanent checks
+
+Copy and adapt the sandbox workspace, executor, worker, backend, middleware, approval
+and opt-in pipeline tests into core. Add tests that prove base import does not load
+Podman, the optional table is absent before enablement, invalid/changed settings fail,
+configured quotas appear in errors, execution evidence carries `graph_run_id`, and the
+approval registry cannot be polluted across tests. The five real Podman/Postgres worker
+pipeline cases remain opt-in because they require the host boundary; report them as
+skipped, never as unit-tested proof of deployment hardening.
+
+**Done when:**
+
+```bash
+uv lock --check
+uv sync --frozen --extra ui --extra sandbox --group dev
+docker compose -f tests/compose.postgres.yml up -d --wait
+uv run --frozen --extra ui --extra sandbox --group dev pytest -q
+./scripts/check-imports.sh
+docker compose -f tests/compose.postgres.yml down --volumes
+```
+
+Also run a clean subprocess importing only `juena_core` and assert that `podman` is not
+in `sys.modules`. The complete core suite must still see exactly the three base tables
+unless a test explicitly calls `configure_sandbox(enabled=True)`.
+
+### What actually landed
+
+Completed 2026-09-15. `juena_core.sandbox` contains the optional queue, workspace,
+worker, backend, approval, evidence and lifecycle implementation described above. The
+base import and metadata remain untouched until opt-in, and the existing external
+identifiers are preserved. A practical setup and security boundary are documented in
+core's README; the simple-chat example intentionally remains sandbox-free.
+
+The frozen-lock suite passes with **380 tests**, with **5 opt-in host-Podman pipeline
+tests skipped** and 2 upstream deprecation/beta warnings. The import-direction, lazy
+base/sandbox import, lock, frozen-sync and wheel-content checks all pass. The replacement
+clean core handoff commit is **`cc45ec5`** (`feat: add demo and optional sandbox
+runtime`).
+
+---
+
 ## Verification
 
 Run after **every** checkpoint, not just at the end:
@@ -1211,10 +1334,12 @@ someone checks out the repository on a fresh machine.
 | A core module grows an import-time `settings()` call, reintroducing the problem | the same test, run after every checkpoint |
 | `repo_root()` gets ported and silently resolves to `site-packages` | it is not in the disposition table; CP1 says explicitly not to port it |
 | The middleware order changes during the move and nothing notices | CP2's class-name-order test, made permanent |
-| A `[ui]`-only import leaks into the base package | CP5's clean-room wheel test — **the developer venv already has Streamlit and will mask this** |
+| A `[ui]`- or `[sandbox]`-only import leaks into the base package | CP5's clean-room wheel test plus CP7's subprocess import check — **the developer venv already has both extras and will mask this** |
 | A `BaseAgentClient` method has no matching route in an application | the reverse-direction route test (CP0) |
 | An accepted image cannot be traced to the local core source that built it | CP6's consumer build gates require a clean core commit SHA beside the resulting image digest |
 | `local_principal` ships without its loopback refusal | the refusal and its test land in CP3, together |
+| VITESS unexpectedly creates `sandbox_jobs` or imports Podman | CP7's before/after metadata test and base-import subprocess test |
+| The application container gets the Podman socket | CP7 makes the host worker the only socket consumer; plan 02 verifies Compose keeps it that way |
 
 ## Status
 
@@ -1222,7 +1347,7 @@ someone checks out the repository on a fresh machine.
 |---|---|
 | **Depends on** | 00 |
 | **Unblocks** | 02 |
-| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3, CP4, CP5 and CP6 complete; clean core handoff commit `23de400` |
-| **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]` and `[mcp]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; discovered tools are stateless after discovery, subject to CP0b verification |
+| **Executed** | CP0a, CP0b, CP0, CP1, CP2, CP3, CP4, CP5, CP6 and CP7 complete; clean replacement handoff commit `cc45ec5` |
+| **Decided** | the package layout; `>=3.11`; recent bounded LangChain-family versions validated in CP0b; `CoreSettings` + `configure()`; extras are `[ui]`, `[mcp]` and opt-in `[sandbox]`; `BaseAgentClient` rather than the whole client; `Chat.agent_id`; `local_principal` with a publication guard; `MCPAdapter` imports contained in `juena_core.mcp`; sandbox settings/model/worker are inert unless explicitly enabled |
 | **Open** | nothing blocking. Publishing core to a package index, and adding a remote at all, are deferred with the rest of production |
-| **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal` |
+| **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md), then amended by CP7 — AST import test, client split, corrected MCP lifecycle, clean-room wheel test, `agent_id`, `local_principal`, optional sandbox extraction |

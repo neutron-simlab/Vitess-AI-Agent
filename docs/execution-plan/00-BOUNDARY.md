@@ -66,8 +66,8 @@ These have no application-specific content.
 | `agents/findings.py` | `agents/findings.py` | The `/findings/` contract. Its docstring names four callers, two of which stay in the app; update the docstring |
 | `agents/delegation.py` | `agents/delegation.py` | `SpecialistDelegate`, `with_delegation_boundary`, `crossing_files`. Verbatim |
 | `agents/backends.py` | `agents/backends.py` | `JUENA_MEMORY_SYSTEM_PROMPT` → `MEMORY_SYSTEM_PROMPT`, and becomes an argument to `build_supervisor_middleware` with the current text as its default. `MemoryMiddleware`, not the backend, consumes it. It is not JüNA-specific prose — it is a prompt-injection guard |
-| `agents/specialist_runtime.py` | `agents/specialist_runtime.py` | Minus two sandbox imports — see the `sandbox/` split |
-| `agents/specialist_outcome.py` | `agents/specialist_outcome.py` | Minus two sandbox imports — see the `sandbox/` split |
+| `agents/specialist_runtime.py` | `agents/specialist_runtime.py` | Execution stays a generic splice point; the optional implementation is in `juena_core.sandbox` — see decision 18 |
+| `agents/specialist_outcome.py` | `agents/specialist_outcome.py` | Reads generic `execution_events`; both MCP and the optional sandbox may write them |
 | `clients/client.py` | **split** — see decision 10 | It calls `/auth/me` (`:148`) and `/research` (`:512`), which core does not own |
 | `core/llms_providers.py` | `llms_providers.py` | Already reads configuration through the lazy `get_config()` seam in `core/paths.py`, which tests already patch. Half the work is done |
 | `core/log.py` | `log.py` | With the import-time `Config` import removed — see 01/CP1 |
@@ -75,10 +75,20 @@ These have no application-specific content.
 | `server/agent/registry.py` | `server/agent/registry.py` | Keeps `register_agent_factory(set_as_default=)`, but the shared registry starts with `DEFAULT_AGENT = None`, not the application literal `"juena"`. An application must register its default before serving |
 | `server/agent/input_handler.py` | same | Including `raise ValueError("A trusted authenticated user_id is required")` — the identity requirement is already enforced here and stays |
 | `server/agent/runtime_model_middleware.py` | same | `RuntimeModelContext` carries `provider`, `model`, `thread_id`, `user_id`. This is half the identity seam |
-| `server/streaming/` | same | All three modules, minus one sandbox import in `processor.py` |
+| `server/streaming/` | same | All three modules. `StreamPolicy` lets an application opt into `sandbox_status` without a sandbox import |
 | `server/chat/` | same | All six modules. **Do not rename `DISPLAY_TEXT_KEY`** — see below |
 | `server/database/connection.py`, `checkpointer.py`, `store.py` | same | |
-| `server/api/endpoints.py` | **does not move** — see decision 10 | It imports sandbox, approval and artifact behaviour. Core exports the helpers; the app assembles its own router |
+| `server/api/endpoints.py` | `server/api/endpoints.py` | Amended by CP4: application resume, workspace and stream behavior are parameters, so the shared route contract moves whole |
+
+### Moves as an optional feature
+
+These modules move into `juena_core.sandbox` under the `[sandbox]` extra. They are not
+imported by `juena_core` and their SQLAlchemy model is registered only when an
+application explicitly enables the feature.
+
+`approvals.py` · `backend.py` · `constants.py` · `evidence.py` · `executor.py` ·
+`jobs.py` · `middleware.py` · `models.py` · `policy.py` · `runtime.py` · `worker.py` ·
+`workspace.py`
 
 ### Two literals that must not be renamed
 
@@ -95,15 +105,16 @@ Change the comments to say why the name looks wrong. Keep the strings.
 ### Stays in juena-chatbot
 
 `agents/juena_agent.py` · `agents/specialists/**` · `indexing/**` · `tools/**` ·
-`sandbox/**` (minus three lifts) · `research/**` · `server/auth/saml.py` ·
+`sandbox/software.py` · `sandbox/repository-requirements.txt` · `research/**` ·
 `server/auth/endpoints.py` (minus the dev provider) · `server/research/endpoints.py` ·
-`app/sidebar.py` · `app/starters.py` · `app/streamlit_app.py` · `./juena`
+`app/sidebar.py` · `app/starters.py` · `app/streamlit_app.py` · the sandbox image,
+Compose/systemd/launcher wiring and production policy · `./juena`
 
 ---
 
 ## The hard cases, decided
 
-Seventeen decisions. Each names the alternative that was rejected, so the reasoning
+Eighteen decisions. Each names the alternative that was rejected, so the reasoning
 survives.
 
 ### 1. `core/config.py` — how an application extends core configuration
@@ -231,9 +242,14 @@ abstract it.**
 The rule this creates: **`juena-core` must not depend on `juena-rag`.** Enforced by the
 same check as the import-direction rule.
 
-### 5. `sandbox/` — stays, with three lifts
+### 5. `sandbox/` — original boundary, superseded by decision 18
 
 **Decision: `sandbox/` stays in juena-chatbot. Three things come out of it first.**
+
+> **Superseded after CP6 by decision 18.** The reasoning here explains why VITESS must
+> not acquire sandbox runtime or deployment behavior, but it does not require the
+> reusable implementation to remain duplicated inside juena-chatbot. The generic
+> implementation now moves as an optional, independently configured core feature.
 
 It is about 3,000 lines of Podman, a host worker with a systemd unit, a `sandbox_jobs`
 table with two partial unique indexes, and a `FOR UPDATE SKIP LOCKED` queue. v2 wants
@@ -773,6 +789,41 @@ check confirms the API and MCP ports are unreachable from the host.
 `users` row at startup. `Chat.user_id` is a foreign key to `users.id`; a principal that
 only *claims* a UUID produces a foreign-key violation on the first conversation.
 
+### 18. Sandbox implementation — optional core feature, application-owned deployment
+
+**Decision: the reusable execution machinery moves to `juena_core.sandbox`, behind a
+`[sandbox]` extra and a separate `SandboxRuntimeSettings`. VITESS neither installs nor
+configures it.**
+
+The original decision 5 correctly rejected making Podman part of every core consumer,
+but it conflated package ownership with activation. Optional packaging gives
+juena-chatbot one implementation to consume later without changing VITESS at all:
+
+- importing `juena_core` does not import the Podman client;
+- the `sandbox_jobs` model joins core metadata only after
+  `configure_sandbox(... enabled=True)` and therefore is absent from VITESS;
+- no sandbox field is added to `CoreSettings`; applications that opt in construct the
+  separate immutable settings object from their own environment policy;
+- the API and host worker share only Postgres and the workspace root. Only the worker
+  receives the rootless Podman socket;
+- table/index names, HMAC workspace identities, advisory-lock identifiers, Podman
+  labels and managed-container names stay unchanged so the chatbot cutover is compatible
+  with existing rows and cleanup behavior.
+
+Core owns the generic queue, workspace confinement, Podman executor, worker, Deep Agents
+backend, execution middleware/evidence, approval/resume contract and server wiring
+helpers. juena-chatbot still owns `sandbox/software.py`, its repository-software
+manifest, sandbox image, systemd/Compose/launcher integration, environment parsing and
+production validation. Those assets state which scientific software is installed and
+how this deployment is operated; a library cannot choose either honestly.
+
+The security invariant is operational as well as structural: generated commands require
+the paired human-in-the-loop policy, containers have no network, a read-only root,
+dropped capabilities, resource limits and tenant-confined mounts, and the application
+container never receives the Podman socket. A later deployment must validate rootless
+Podman and its chosen OCI runtime on its actual Linux host; unit tests cannot certify
+that host boundary.
+
 ---
 
 ## Verification
@@ -780,18 +831,19 @@ only *claims* a UUID produces a foreign-key violation on the first conversation.
 This plan produces no code, so it is verified by review rather than by a command.
 It is done when:
 
-1. Someone other than the author has read the disposition table and the seventeen
+1. Someone other than the author has read the disposition table and the eighteen
    decisions and disagreed with none of them, or the disagreements are written into this
    file. *(Done once — see [REVIEW.md](REVIEW.md); its findings are incorporated.)*
-2. Every module in `src/juena/` appears exactly once — in *Moves whole*, in *Stays*, or
-   in one of the seventeen decisions. The check:
+2. Every module in `src/juena/` appears exactly once — in *Moves whole*, in *Moves as an
+   optional feature*, in *Stays*, or in one of the eighteen decisions. The check:
    `find src/juena -name '*.py' | wc -l` against the count of entries here.
 3. The two literals that must not be renamed are understood by whoever executes 01/CP2
    and 01/CP4.
 4. **Every cross-process interaction has a declared producer, consumer and persistence
-   owner.** There are three: uploads (app writes, MCP reads, volume owns), execution
+   owner.** There are four: uploads (app writes, MCP reads, volume owns), VITESS execution
    results (MCP produces, app consumes, Postgres owns), artifacts (MCP produces files,
-   app registers, volume plus `ArtifactStore` own). If a fourth appears during
+   app registers, volume plus `ArtifactStore` own), and optional sandbox jobs (API
+   produces, host worker consumes, Postgres plus the workspace root own). If a fifth appears during
    implementation, it comes back here before it is built.
 
 ## Status
@@ -800,6 +852,6 @@ It is done when:
 |---|---|
 | **Depends on** | nothing |
 | **Unblocks** | 01, 02, 03 |
-| **Decided** | the disposition table; seventeen decisions; the three rules; the local single-user target |
+| **Decided** | the disposition table; eighteen decisions; the three rules; the local single-user target; sandbox execution is opt-in core while its deployment remains application-owned |
 | **Open** | whether v2's sidebar ever converges on juena's (would promote `sidebar.py` into `juena_core.ui`); whether a run manifest on the volume is needed alongside the returned metadata (decision 12) |
-| **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — decisions 10–13 added, the `ResumeInput` union corrected, the launcher's host-process section removed, identity narrowed to a local principal |
+| **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md), then amended by 01/CP7 — decisions 10–13 added, the `ResumeInput` union corrected, identity narrowed to a local principal, and optional sandbox ownership settled in decision 18 |
