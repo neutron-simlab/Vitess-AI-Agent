@@ -64,3 +64,7 @@ Thumbs.db
 
 # Vitess (built from source in Dockerfile; no submodule)
 vitess/
+
+docs/*
+!docs/execution-plan/
+!docs/execution-plan/**
