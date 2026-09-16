@@ -484,7 +484,76 @@ is the bug being removed.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+Completed 2026-09-16 in `Vitess-AI-Agent-v2` commit `06ea450`.
+
+```text
+uv run python -c "import vitess_ai.modules.catalog, sys; ..."   False False
+uv run pytest tests/test_catalog.py -q                          13 passed
+complete CP0+CP1+CP2 suite                                      44 passed
+```
+
+- `vitess_ai/modules/catalog.py` imports pydantic and nothing else. `agent_class`,
+  `tool_factory` and `validation_tool_patterns` are gone. Neither fallback table was
+  ported: a fresh repository deletes them by not copying them, and the module
+  docstring names both so the reason they existed is not rediscovered later.
+- Six frozen `ModuleSpec` rows carrying `name`, `display_name`, `description`,
+  `order`, `cli_executable` and `accepts_upload`, with four readers over them —
+  `module_spec(name)`, `execution_order()`, `cli_executables()` and
+  `upload_modules()`. `module_spec` raises a `KeyError` naming the known modules; a
+  builder that asks for a row that is not there has a broken install, which is
+  exactly what the old fallback tables turned into a silent degradation.
+- Executables are basenames: `read_in`, `guide_parallel`, `writeout`, `monitor1D`,
+  `monitor2D`. A test asserts no catalog value contains `/` or `$`, and it names the
+  five rows expected to have one rather than asserting it of every row — a blanket
+  assertion fails on `instrument` and gets weakened to nothing within a day.
+- The three `path_only` rows are gone. Three rows accept an upload — `readin`,
+  `guide`, `instrument` — and `UploadSchema` has no field that could hold a filename.
+
+#### Two decisions the checkpoint left open
+
+**`instrument` gets `order=2`, and the other rows shift up.** The old table gave it
+the same `order` as `guide`, so the sidebar's shape was decided by a name tiebreak
+rather than by anyone. It now sits next to the module it feeds — it supplies
+read-in's `sInstrInfIn` (`--I`) — and the remaining rows run 3 to 6. Nothing in the
+pipeline moves: `--N1`..`--N5` come from the position in the list handed to
+`generate_cli_command`, not from this field, and `execution_order()` skips rows with
+no executable. A test asserts the orders are unique and that `execution_order()` is
+still `readin, guide, writeout, monitor1d, monitor2d`.
+
+**Both models set `extra="forbid"`.** Pydantic ignores unknown fields by default, so
+re-adding `default_filename=` to a row would have been silently dropped — and the
+test asserting its absence would have passed while the author believed the opposite.
+Forbidding extras makes that a construction error instead. This was found by trying
+the break rather than by reading the model.
+
+#### The deletions were checked, not assumed
+
+`test_the_schema_still_owns_each_deleted_filename` asserts that each filename the
+deleted rows carried is still declared by its parameter model with its own flag and
+default: `WriteoutParameters.sOutFileName` (`-A`, `output.dat`),
+`Monitor1DParameters.fMonitorFilename` (`-O`, `monitor1D.dat`) and
+`Monitor2DParameters.fMonitorFilename` (`-O`, `monitor2D.dat`). Deleting the rows
+moved ownership; it did not drop the values. The drift the checkpoint predicted is
+confirmed in the source it was predicted from: the old sidebar said `output.out`
+where the schema said `output.dat`.
+
+`test_the_catalog_mapping_is_what_the_command_generator_wants` feeds
+`cli_executables()` into the real `generate_cli_command` against real executable
+files. CP1 deliberately takes its mapping as an argument and stays free of
+configuration, which means nothing otherwise checks that the catalog can supply what
+it wants — and that gap is how two mappings drifted apart the first time.
+
+#### Every guarantee was broken on purpose first
+
+| Break | Caught by |
+|---|---|
+| `cli_executable="$V/read_in"` | the basename test, and the generator integration |
+| `writeout` regains an upload row with `default_filename` | the three-upload-rows test, and the no-filename test |
+| `import langchain` at the top of the catalog | the subprocess import test |
+| `instrument` given `guide`'s order | the unique-order test |
+
+The import test runs in a subprocess. Asking `sys.modules` inside a pytest session
+that has already imported half the framework would prove nothing.
 
 ---
 
@@ -1352,6 +1421,7 @@ cheapest time to find that out is the day v2 first runs.
 |---|---|
 | **Depends on** | 02, verified |
 | **Unblocks** | — |
+| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 44 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas. CP3 is next |
 | **Decided** | schemas ported verbatim and kept out of core; `generate_cli_command` becomes a pure function in `cli/command.py`, building **argument vectors** rather than shell text; catalog becomes pure data carrying `cli_executable` and `accepts_upload` independently; **MCP is an internal Compose service sharing a volume**; simulator rebuilt with **no legacy fallback**; two registered agents rather than one supervisor; **PNG artifacts canonical**; Chroma stays; fixed local principal; **per-module upload slots kept, the three `path_only` rows deleted, sidebar becomes a manifest, `ask_user` is the second way in** |
 | **Open** | whether `research/` should come into core after all, once a sweep is lost to a closed browser (CP5); whether a run manifest on the volume is needed alongside the returned metadata (CP3a); whether content classification of uploads is worth adding — *reopen when files start arriving from other people, or in bulk* (CP6) |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — Compose topology replaces the host process, CP3a added for the evidence bridge, argument vectors replace shell text, recursive flag test, `simulator_legacy` dropped, real order test, `agent_id`, binary uploads separated |
