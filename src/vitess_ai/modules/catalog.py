@@ -18,9 +18,9 @@ dragged in the whole agent framework to get it. The fallbacks were the escape.
 
 So: **this module imports pydantic and nothing else**, and a test asserts that
 importing it pulls in neither ``langchain`` nor ``deepagents``. ``agent_class``,
-``tool_factory`` and ``validation_tool_patterns`` are gone; the five module
-specialists are built by five explicit builders, listed one line each, with
-JüNA's rule unchanged.
+``tool_factory`` and ``validation_tool_patterns`` are gone. The five module
+specialists will be built by five explicit builders in the simulator checkpoint,
+listed one line each, with JüNA's rule unchanged.
 """
 
 from __future__ import annotations

@@ -10,6 +10,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "plotly",
+    "pydantic>=2,<3",
     "vitess-rag",
 ]
 
@@ -28,4 +29,3 @@ vitess-rag = { path = "rag/vitess-rag" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

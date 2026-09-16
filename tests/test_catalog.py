@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 import subprocess
 import sys
+from importlib.metadata import requires
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from vitess_ai.cli.command import generate_cli_command
 from vitess_ai.modules.catalog import (
     MODULES,
+    ModuleSpec,
     UploadSchema,
     cli_executables,
     execution_order,
@@ -27,6 +32,32 @@ from vitess_ai.schema import (
 
 EXECUTES = ("readin", "guide", "writeout", "monitor1d", "monitor2d")
 UPLOADS = ("readin", "instrument", "guide")
+CATALOG = ("readin", "instrument", "guide", "writeout", "monitor1d", "monitor2d")
+
+
+def test_pydantic_is_a_direct_runtime_dependency() -> None:
+    """The catalog imports Pydantic, so the package must declare it itself."""
+    dependencies = requires("vitess-ai") or ()
+    dependency_names = {
+        re.split(r"[<>=!~;\s\[]", requirement, maxsplit=1)[0].lower()
+        for requirement in dependencies
+    }
+
+    assert "pydantic" in dependency_names
+
+
+def test_catalog_source_imports_only_typing_and_pydantic() -> None:
+    """Do not let a project or agent-framework import recreate the old cycle."""
+    source = Path(__file__).parents[1] / "src/vitess_ai/modules/catalog.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    imports = {
+        node.module if isinstance(node, ast.ImportFrom) else alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in (node.names if isinstance(node, ast.Import) else [None])
+    }
+
+    assert imports == {"__future__", "typing", "pydantic"}
 
 
 def test_importing_the_catalog_does_not_import_the_agent_framework() -> None:
@@ -52,6 +83,63 @@ def test_importing_the_catalog_does_not_import_the_agent_framework() -> None:
     )
 
     assert result.stdout.split() == ["False", "False"]
+
+
+def test_catalog_contains_exactly_the_six_known_modules() -> None:
+    """An inert seventh row must not disappear between the capability filters."""
+    assert tuple(spec.name for spec in MODULES) == CATALOG
+
+
+def test_catalog_models_expose_only_the_decided_data_fields() -> None:
+    assert tuple(ModuleSpec.model_fields) == (
+        "name",
+        "display_name",
+        "description",
+        "order",
+        "cli_executable",
+        "accepts_upload",
+    )
+    assert tuple(UploadSchema.model_fields) == (
+        "mode",
+        "label",
+        "help",
+        "extensions",
+        "max_files",
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "values"),
+    [
+        (
+            ModuleSpec,
+            {
+                "name": "readin",
+                "display_name": "Read-in Parameters",
+                "description": "Configure neutron input parameters",
+                "order": 1,
+                "cli_executable": "read_in",
+                "agent_class": object,
+            },
+        ),
+        (
+            UploadSchema,
+            {
+                "mode": "file_single",
+                "label": "Output file",
+                "help": "Not an upload",
+                "extensions": ("dat",),
+                "max_files": 1,
+                "default_filename": "output.out",
+            },
+        ),
+    ],
+)
+def test_catalog_models_reject_removed_fields(
+    model: type[ModuleSpec] | type[UploadSchema], values: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        model(**values)
 
 
 def test_executables_are_basenames_not_paths() -> None:
@@ -182,5 +270,5 @@ def test_the_catalog_mapping_is_what_the_command_generator_wants(
 
 def test_rows_are_frozen() -> None:
     """A data table that a caller can edit at runtime is not a source of truth."""
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError, match="Instance is frozen"):
         module_spec("readin").order = 99
