@@ -857,6 +857,213 @@ enforces it.
 
 ---
 
+## What actually landed — steps 3.5 to 6
+
+**Completed 2026-09-16 on branch `juena-core-cutover-runtime`**, taken off the
+reviewed step-3 commits so that branch stayed still during its review. Core is on
+a branch of the same name.
+
+```text
+juena-core          tests/                   497 passed, 5 skipped
+juena-chatbot       ./juena test             230 passed
+juena-chatbot       ./juena test-integration  16 passed     (baseline: 16)
+./juena check-imports                        import direction ok
+02-compare-prompts.py ee9248d..HEAD          9 Markdown files, 6 @tool docstrings unchanged
+build context transferred                    2.79 MB  (unfiltered parent: ~9 GB)
+four step-4 conversations                    all four behave, one after a fix
+pre-cutover threads reopened                 10 threads, 61 artifacts, 0 failures
+```
+
+**Step 4 found a defect that made the sandbox unreachable.** It is written up
+first because it is the reason this plan exists.
+
+### The defect: approving a command guaranteed it would not run
+
+Every sandbox `execute` failed with
+`RuntimeError: Sandbox execution requires a graph run_id`, retried three times
+by `ToolRetryMiddleware` and surfaced to the model as a tool failure. The model
+then proposed a slightly different command, which raised a fresh approval card,
+which failed the same way. Four approvals produced four failures and no plot,
+and the run ended with the agent explaining that it could only write the script.
+Nothing in the transcript said the sandbox was broken.
+
+**Where it came from.** 01/CP7 gave `ExecutionEvidence` a required
+`graph_run_id` and added `_graph_run_id(runtime)` to obtain it, reading
+`runtime.execution_info.run_id` and falling back to `runtime.config["run_id"]`.
+Neither exists where that code runs:
+
+- LangGraph's `Runtime` **has no `config`** at all — its own docstring says so;
+- `ExecutionInfo.run_id` is filled from the config of *the graph that is
+  running*. A subgraph does not inherit its parent's, so inside one it is
+  `None`.
+
+`execute` is bound on a specialist, and a specialist is a subgraph. So the id
+was absent on every call the tool has ever served. Measured rather than
+reasoned: a probe built from a real `create_agent` graph reports
+`execution_info.run_id` as the config's value at top level and `None` one level
+down.
+
+**Why the suite was green.** `tests/test_sandbox_middleware.py` built its
+runtime by hand as `SimpleNamespace(context=…, config={"run_id": "run-1"})` — an
+object with a `config` attribute, which the real `Runtime` does not have, and a
+`run_id` the real one does not carry. The stand-in was more generous than the
+producer, so the tests passed against a condition that never occurs.
+
+**The fix, in core.** The invocation id now travels in the runtime *context*,
+which is passed into subgraphs unchanged, instead of the config, which
+deliberately is not. `RuntimeModelContext` gains `run_id`;
+`AgentInputHandler.build_run_context` sets it to the same value it puts in the
+config; both `_graph_run_id` helpers read the context first and keep the old two
+sources for a caller that invokes an agent directly. juena-chatbot's background
+research runner, which builds its own context and never had a config `run_id`
+at all, now passes `research:{job_id}`.
+
+This is not a boundary correction and `00-BOUNDARY.md` needs no amendment. The
+module is in the right repository; the id it needed was being read from the
+wrong place.
+
+**What now guards it.** Two tests in
+`juena-core/tests/test_sandbox_middleware.py`. The first builds a real
+`create_agent` graph with the real middleware and invokes it with a context
+carrying the id and a config without one — the subgraph's exact condition — and
+asserts the command reaches the tool. The second asserts the id written into the
+evidence is the context's. Removing the context lookup makes both fail with the
+production `RuntimeError`, which is how they were checked.
+
+**One thing found and not fixed.** `ExecutionEvidenceMiddleware` is defined in
+core and installed by nobody, so the root-level `<verified_by_server>` block for
+undelegated execution is never produced. juena-chatbot always delegates, so
+nothing is missing there; v2 should decide whether it wants that block before
+03/CP4 relies on it.
+
+### Step 3.5 — the parent-context build
+
+The build context moved from this repository to its parent, so the Dockerfile
+can `COPY juena-core/`. Three consequences, each in the files:
+
+1. every `COPY` source is prefixed with a repository name;
+2. core lands at `/juena-core`, because uv resolves `../juena-core` from the
+   project directory `/app`;
+3. `.dockerignore` is no longer consulted by any build. Docker looks for an
+   ignore file named after the Dockerfile and falls back only to one at the
+   context root, which is the parent and has none.
+
+`Dockerfile.dockerignore` therefore excludes `*` and re-admits only
+`juena-chatbot` and `juena-core`. The parent holds roughly nine gigabytes across
+a dozen unrelated repositories, several carrying real credentials in their own
+`.env`. It was verified by building a throwaway image that copied the whole
+context and listed it, not by reading the rules: 2.79 MB, no `.env`, no `.git`,
+no `.venv`, and all three prompt files present. An ignore rule that fails to
+match looks exactly like one that works.
+
+`deploy/BUILD-RECORD.md` is new and holds one entry per accepted image: core
+SHA and clean tree, this repository's SHA, the `uv.lock` digest, the pinned
+juena-rag revision and the image ID. No credentials are used by the build —
+core is copied from the context and juena-rag is cloned anonymously over public
+HTTPS.
+
+**The step as written has no suite run, and that cost something.**
+`tests/test_agent_resources.py` guards that the prompt Markdown reaches the
+image, and it asserted `COPY src/ ./src/` and three `!src/**/*.md` exceptions in
+`.dockerignore` — all three now false. It was caught on the next step's test run
+rather than by the step that broke it. The guard now asserts the mechanism that
+is actually in force, including that the new ignore file excludes no Markdown
+at all: the old file kept the prompts through four exceptions to a blanket
+`*.md` exclusion, so a fifth prompt in a new place would have been dropped
+silently.
+
+### Step 4 — the four conversations
+
+Driven through `app.client_setup.initialize_client`, the same factory the
+Streamlit page calls, so the server, the SSE vocabulary, the interrupt registry
+and the artifact store are exercised exactly as the page exercises them. **What
+this does not cover is the rendering**: that the card *appears*, and that the
+PNG appears *in the chat*, was read off the stream rather than off a browser.
+The renderers themselves are covered by core's UI tests.
+
+1. **Delegation and the verified report.** The supervisor delegated to
+   `software-specialist` and the result carried both blocks with
+   `STATUS: VERIFIED`; the message the page would show is the supervisor's
+   prose, not the specialist's working notes. Two earlier attempts returned
+   `STATUS: UNVERIFIED` because the specialist looped on an identical
+   `read_file` until the loop guard ended its run, and the machinery did the
+   right thing with that: no structured report, so `NO_REPORT`, so the
+   supervisor was directed to `ask_user` rather than to invent a result. The
+   failure arm and the success arm were both observed.
+2. **Sandbox with approval.** After the fix: one approval card, one approved
+   command, exit 0, and `sine_plot.png` (74,908 bytes, 1482×880) delivered as
+   an artifact and downloaded through the API. Before the fix, four approvals
+   and nothing.
+3. **`ask_user`.** "Fit my data." raised a clarification card with four options;
+   answering it resumed **the same thread id**, and the persisted history holds
+   the original question and the answer.
+4. **Background research, collected later.** Both arms. A failed job was
+   delivered as a failure and a succeeded job delivered its verified report,
+   each on a later turn, each stamped `collected_at` by
+   `ResearchDeliveryMiddleware`. The supervisor called `list_research` and
+   `check_research` when asked whether there was news; it did not volunteer
+   this unprompted, which is prompt behaviour and the prompts are byte-identical.
+
+**Reopening pre-cutover threads.** Ten threads owned by the development user,
+dating from 2026-08-05, all reopened with every message and every id intact.
+They hold 61 artifact references and **all 61 downloaded through core's artifact
+endpoint at their recorded byte size** — the strongest evidence available that
+the lifted `ArtifactStore` reads pre-cutover data. In the checkpoint blobs the
+loop-guard literal `juena_repeated_tool_call` appears 13 times, unchanged.
+`juena_display_text` appears nowhere in the live database, so its preservation
+is asserted by core's tests and not by this deployment's data — worth stating
+rather than claiming a check that did not happen. `sandbox_execution_events`
+appears nowhere either, which is why 01/CP7's rename touched no live state, and
+also why juena-chatbot's old test asserting its absence had been passing
+vacuously.
+
+### Step 5 — SAML with the bypass off
+
+`AUTH_DEV_BYPASS` reaches the container through the mounted `.env`, not through
+Compose, so setting it on the launcher's command line changes nothing — it has
+to be changed in the file. With it off:
+
+- `/auth/dev-login` answers **404**, the production refusal working;
+- `/auth/me` and `/chats` answer **401** through core's identity dependency;
+- `/auth/login` answers **303** to `ifflogin.fz-juelich.de/saml/sso/redirect`
+  with a signed `SAMLRequest`, which decodes to a complete `AuthnRequest`
+  naming the SP as issuer, persistent `NameIDPolicy` and the right ACS URL;
+  the request id is recorded in `saml_login_requests` for the ACS handler to
+  correlate against;
+- `./juena sp-metadata` produces a 4,007-byte `EntityDescriptor` with the SP
+  certificate, one `AssertionConsumerService` and two `SingleLogoutService`
+  endpoints.
+
+**The one thing not done is the one the step names**: a human typing credentials
+at the institute IdP. Everything up to the redirect is proved; the assertion
+coming back is not. The `.env` was restored byte-identically afterwards.
+
+### Step 6 — locking the direction
+
+`cmd_check_imports` is in `./juena` and `cmd_test` calls it first, so the rule
+runs on every unit-suite invocation rather than only on `test-all`. It warns and
+passes when juena-core is not checked out beside the repository, because a
+contributor without core should not be blocked from running tests by a check
+that cannot run. Verified by adding `import juena` to
+`juena_core/src/juena_core/log.py`: `./juena test` exits 1, names the file and
+line, and pytest never starts.
+
+### Commits
+
+| Repository | Commit | |
+|---|---|---|
+| juena-core | `4eca16e` | the review's Streamlit development dependency |
+| juena-core | `a64c978` | the subagent execution-evidence fix and its two tests |
+| juena-chatbot | `ed4a307` | relock after core's development group changed |
+| juena-chatbot | `2a9c1d7` | parent-context build |
+| juena-chatbot | `6ef1a8b` | first build record |
+| juena-chatbot | `6e536af` | invocation id for background research |
+| juena-chatbot | `387d7be` | the packaging guard, rewritten for the new build |
+| juena-chatbot | `0767d39` | `check-imports` in `./juena`, called from `cmd_test` |
+| juena-chatbot | `43d4123` | build record for the proved image |
+
+---
+
 ## Verification
 
 1. **The collected node ids diff clean** against the step-1 baseline, with every moved,
@@ -918,7 +1125,7 @@ inherits it.
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
 | **Unblocks** | 03 |
-| **Executed** | steps 1, 2 and 3 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a`+`21210ac`+`aa23497` against core `78fc3dd`+`347d5a5` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and three defects fixed in core. Step 3: core `b9e2304`+`4eca16e`, chatbot `8a8f448`+`ed4a307`; 13 superseded modules were deleted, 9 moved whole, 1 moved with its other identity already superseded, and 3 split. The reconciliation passes at 746 unique identities, **zero cross-repository duplicates**, 18 deliberate additions and 17 deliberate removals. Step 3.5 is next, and builds the cutover image before step 4's runtime proof |
+| **Executed** | steps 1, 2 and 3 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a`+`21210ac`+`aa23497` against core `78fc3dd`+`347d5a5` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and three defects fixed in core. Step 3: core `b9e2304`+`4eca16e`, chatbot `8a8f448`+`ed4a307`; 13 superseded modules were deleted, 9 moved whole, 1 moved with its other identity already superseded, and 3 split. The reconciliation passes at 746 unique identities, **zero cross-repository duplicates**, 18 deliberate additions and 17 deliberate removals. Steps 3.5, 4, 5 and 6 complete on branch `juena-core-cutover-runtime`, core at `a64c978`: the parent-context build ships a 2.79 MB context and its image is recorded in `deploy/BUILD-RECORD.md`; all four conversations behave and ten pre-cutover threads reopen with 61 artifacts intact; the SAML path produces a signed AuthnRequest and SP metadata with the bypass off; `./juena test` now runs the import check first. **Step 4 found and fixed a defect that made the sandbox unreachable** -- every approved `execute` raised `Sandbox execution requires a graph run_id`, because 01/CP7 read that id from a place that does not exist inside a subagent, which is the only place the tool is bound |
 | **Decided** | the test split (22 / 20 / 4); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the two-baseline identity diff is the instrument; prompts must not change; `AgentClient` subclasses core's `BaseAgentClient`; `agent_id` is backfilled to `'juena'` |
-| **Open** | nothing — this plan answers questions rather than asking them |
-| **Revised** | 2026-09-16 after the Step 3 review — the reconciliation counts identities with `comm` (18 added / 17 removed), replacing the earlier incorrect 21/20 tally; the executed allocation is stated consistently as 13 superseded / 9 moved / 1 moved-and-partly-superseded / 3 split; and core's development group installs Streamlit so the frozen test command works in an isolated environment. The four implementation reclassifications remain: `test_ui_components` moves whole, `test_api_endpoints_files` is a move plus a delete, `test_findings_lifecycle` loses four application identities rather than one, and `test_agent_client` splits 5/2. Earlier Step 2 and Step 1 reviews, baseline corrections and 01/CP7 amendments remain in force |
+| **Open** | one thing the plan cannot close: a **real SAML login** still needs a person to enter institute credentials. Everything up to the redirect is proved. Separately, `ExecutionEvidenceMiddleware` is defined in core and installed by nobody, so an undelegated run produces no `<verified_by_server>` block; harmless here, a decision for 03/CP4 |
+| **Revised** | 2026-09-16 after steps 3.5--6 — step 3.5 gains a suite run in practice, because the build change broke `test_agent_resources.py` and the step as written never runs the tests; step 5 records that `AUTH_DEV_BYPASS` reaches the container through the mounted `.env` rather than Compose, so setting it on the launcher's command line does nothing; step 6's check warns rather than fails when juena-core is not checked out beside the repository. Earlier, 2026-09-16 after the Step 3 review — the reconciliation counts identities with `comm` (18 added / 17 removed), replacing the earlier incorrect 21/20 tally; the executed allocation is stated consistently as 13 superseded / 9 moved / 1 moved-and-partly-superseded / 3 split; and core's development group installs Streamlit so the frozen test command works in an isolated environment. The four implementation reclassifications remain: `test_ui_components` moves whole, `test_api_endpoints_files` is a move plus a delete, `test_findings_lifecycle` loses four application identities rather than one, and `test_agent_client` splits 5/2. Earlier Step 2 and Step 1 reviews, baseline corrections and 01/CP7 amendments remain in force |
