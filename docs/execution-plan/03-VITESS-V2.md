@@ -30,8 +30,10 @@ requires-python = ">=3.11, <4.0"
 dependencies = [
   "juena-core[ui,mcp]",        # path source below; see 01/CP6 on what the lock does not pin
   "fastmcp>=4,<5",              # current stable major used by langchain.mcp; CP0b locks the validated release
+  "httpx>=0.28,<1",             # imported directly by the MCP health probe
   "matplotlib", "numpy", "plotly",
   "pydantic>=2,<3",             # imported directly by the VITESS parameter and catalog models
+  "starlette>=1,<2",            # imported directly by the FastMCP health response
   "vitess-rag",            # path dependency, the submodule
 ]
 [tool.uv.sources]
@@ -735,13 +737,13 @@ which is the only place that matters — and the host cannot reach the MCP port 
 
 ### What actually landed
 
-Completed 2026-09-16 in `Vitess-AI-Agent-v2` commit `4e21722`, against
-`juena-core` at `a64c978` with a clean tree.
+Completed 2026-09-16 in `Vitess-AI-Agent-v2` commit `4e21722` and reviewed in
+`cd7ffe6`, against `juena-core` at `a64c978` with a clean tree.
 
 ```text
-uv run pytest -q                                 104 passed   (CP0-CP2: 50)
+uv run pytest -q                                 121 passed   (CP0-CP2: 50)
 uv sync --frozen                                 ok
-docker compose build                             context 2.28 MB, one image
+docker compose build vitess-mcp                  context 1.31 MB, one image
 docker compose up -d                             three services, mcp healthy
   exec vitess-app curl http://vitess-mcp:9005/health   200, both checks ok
   exec vitess-app discover_vitess_tools()              the four tool names
@@ -749,9 +751,51 @@ docker compose up -d                             three services, mcp healthy
 VITESS_MODULES_PATH=/nope                        503, naming all five executables
 ```
 
-Image `sha256:9d75f6dd1d35c3ed4fe7566ecd5f913d6edab2ff0cc4a956245f48bde581d03f`,
-1.09 GB, and `docker inspect` reports **the same image id for both containers** --
-which is the one-image decision, checked rather than assumed.
+Reviewed image
+`sha256:ecb7a0a6b8bb668ee03454402513cf8d1cb4c8f1d231076ff5a7fc053b6ce8b5`,
+1,089,455,521 bytes, and `docker inspect` reports **the same image id for both
+containers** -- which is the one-image decision, checked rather than assumed.
+Both containers also carry the image label
+`de.fz-juelich.vitess.source-revision=6bd0e0066c4667444368dd2492f77821ff8a5609`.
+
+#### Post-completion review
+
+The review found and fixed defects that the original green suite did not cover:
+
+- The four async FastMCP handlers called blocking simulation, inspection and
+  plotting functions on the event-loop thread. A long VITESS run would therefore
+  stop health and every other MCP request. They now use `asyncio.to_thread`; a
+  regression holds the pipeline worker and proves the event loop remains live.
+- Canonical UUIDs did not make the volume boundary safe: an existing `outputs`
+  symlink could redirect a plot read and PNG write outside `/data/projects`. The
+  exploit was reproduced before the fix. Every thread, upload, output, run and
+  file boundary is now resolved beneath its trusted root, with symlinks refused.
+  Reusing a run UUID is also refused instead of mixing stale files into new
+  evidence, and inspection ignores directories that are not canonical run IDs.
+- Tool discovery checked only for missing names, so an unexpected fifth tool
+  would have been handed to the application. Discovery is now an exact four-name
+  allowlist and fails construction on either missing or unexpected tools.
+- Concurrent health requests shared one probe filename; the probe is now unique
+  and automatically removed. TCP ports above 65535 and non-finite timeouts are
+  rejected at startup. XYZ monitor input now rejects duplicate coordinates that
+  could previously hide a missing grid cell while preserving the expected row
+  count.
+- The original image combined a VITESS 3.7 amd64 tarball with a moving VITESS 3.8
+  `develop` build on other architectures. Every architecture now compiles the
+  same exact revision shown in the image label, and uv is pinned at 0.12.15 rather
+  than copied from `latest`. `starlette` is declared directly because the server
+  imports its request and response types directly.
+- Live logs exposed FastMCP contacting PyPI at startup only to advertise updates.
+  `FASTMCP_CHECK_FOR_UPDATES=off` removes that external startup dependency; the
+  recreated MCP container reached healthy without the request or update banner.
+
+The original symlink exploit created a PNG outside the project volume; the same
+probe now raises `ToolError: Outputs directory must not be a symbolic link`. The
+reviewed stack was recreated without dropping its named volumes, remained healthy
+from `vitess-app`, discovered exactly four tools, kept port 9005 unreachable from
+the host, and returned the five executable names for a deliberately broken module
+root. The final full suite is 121 passed with only the already-recorded
+`LangChainBetaWarning`.
 
 #### The topology, as built
 
@@ -767,15 +811,16 @@ record as the digest that was tested. `vitess-app` names the tag and waits on
 `depends_on`; a plain `docker compose up -d` with no image present was run to
 confirm the image is built once, before either container is created.
 
-The Dockerfile builds VITESS in a first stage -- the prebuilt tarball on amd64,
-compiled from source elsewhere, which on this arm64 laptop produced 99 native
-modules -- and copies only `MODULES` into the application image. It builds from
-the **parent context** for the same reason juena-chatbot does: `juena-core` is a
-sibling path dependency. `Dockerfile.dockerignore` is therefore the only filter
-in effect, deny-by-default, and it was checked by measurement: **2.28 MB
+The Dockerfile builds VITESS revision
+`6bd0e0066c4667444368dd2492f77821ff8a5609` from source in a first stage on every
+architecture -- which on this arm64 laptop produced 99 native modules -- and
+copies only `MODULES` into the application image. It builds from the **parent
+context** for the same reason juena-chatbot does: `juena-core` is a sibling path
+dependency. `Dockerfile.dockerignore` is therefore the only filter in effect,
+deny-by-default, and it was checked by measurement after review: **1.31 MB
 transferred** out of a parent holding roughly nine gigabytes, several unrelated
-repositories with real credentials in their own `.env`, and the
-first-generation `Vitess-AI-Agent` checkout.
+repositories with real credentials in their own `.env`, and the first-generation
+`Vitess-AI-Agent` checkout.
 
 Both containers run as an unprivileged user created in the image, which owns
 `/data/projects`; Docker copies that ownership into a fresh named volume, so a
@@ -1625,7 +1670,7 @@ cheapest time to find that out is the day v2 first runs.
 |---|---|
 | **Depends on** | 02, verified |
 | **Unblocks** | — |
-| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 `4e21722`: the FastMCP server as an internal Compose service with an explicit `/health` route, four tools, one image run by two services sharing `/data/projects`, and a new monitor-file reader covering all five layouts `Monitor2DParameters.format` can ask for — proved by a real five-module VITESS pipeline run over MCP from the application container. Suite at 104 passed. CP3a is next |
+| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 `4e21722`, reviewed in `cd7ffe6`: the FastMCP server as an internal Compose service with an explicit `/health` route, four exactly allowlisted tools, one pinned image run by two services sharing `/data/projects`, and a new monitor-file reader covering all five layouts `Monitor2DParameters.format` can ask for — proved by a real five-module VITESS pipeline run over MCP from the application container; the review added event-loop isolation, volume-boundary enforcement, unique-run evidence, concurrent health safety and reproducible VITESS/uv pins. Suite at 121 passed. CP3a is next |
 | **Decided** | schemas ported verbatim and kept out of core; `generate_cli_command` becomes a pure function in `cli/command.py`, building **argument vectors** rather than shell text; catalog becomes pure data carrying `cli_executable` and `accepts_upload` independently; **MCP is an internal Compose service sharing a volume**; simulator rebuilt with **no legacy fallback**; two registered agents rather than one supervisor; **PNG artifacts canonical**; Chroma stays; fixed local principal; **per-module upload slots kept, the three `path_only` rows deleted, sidebar becomes a manifest, `ask_user` is the second way in** |
 | **Open** | whether `research/` should come into core after all, once a sweep is lost to a closed browser (CP5); whether a run manifest on the volume is needed alongside the returned metadata (CP3a); whether content classification of uploads is worth adding — *reopen when files start arriving from other people, or in bulk* (CP6) |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — Compose topology replaces the host process, CP3a added for the evidence bridge, argument vectors replace shell text, recursive flag test, `simulator_legacy` dropped, real order test, `agent_id`, binary uploads separated |
