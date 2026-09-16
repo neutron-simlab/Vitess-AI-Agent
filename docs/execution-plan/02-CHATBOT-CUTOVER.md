@@ -50,18 +50,56 @@ cd juena-chatbot
 git status --short          # must be clean
 ./juena test-all
 
-# and the thing counts cannot give you -- see step 3 for `normalise`:
-normalise() { grep '::' | sed 's|^.*/||' | sort; }
-uv run --extra dev pytest --collect-only -q tests/ | normalise > /tmp/baseline-nodeids.txt
-wc -l /tmp/baseline-nodeids.txt
+# and the thing counts cannot give you -- see step 3 for `collect`:
+collect() { PYTHONPATH="$(dirname "$1")" uv run --extra dev pytest --collect-only -q \
+    -p "$(basename "${1%.py}")" tests/ 2>&1 | grep '^NODEID	' | sed 's/^NODEID	//'; }
+collect .../02-collect-nodeids.py | sort > 02-baseline-nodeids.txt
+wc -l 02-baseline-nodeids.txt
 ```
 
 **Record the collected node ids, not just the totals.** A pass count is a single number,
 and one test removed plus one test added leaves it unchanged. The node id list makes a
-swap visible as a diff. Keep `/tmp/baseline-nodeids.txt` somewhere durable — step 3
-compares against it.
+swap visible as a diff. Keep the list somewhere durable — step 3 compares against it.
+
+> **The original `grep '::' | sed …` recipe is not sound for this suite, and was replaced
+> after being measured.** Several parametrised ids in `test_agent_prompts.py` and
+> `test_specialists.py` embed prompt text containing real newlines, so pytest prints one
+> node id across several lines: fragments carrying a `::` are counted as extra tests and
+> fragments without one disappear. It reported **465** matching lines against **457**
+> collected tests, and arrived at the right grand total only by cancelling its own two
+> errors. [`02-collect-nodeids.py`](02-collect-nodeids.py) reads `item.nodeid` from pytest,
+> so the line count *is* the collection count.
+>
+> It also **digests any parameter that is long or multi-line** (4 of the 473 ids). This
+> list is versioned in *this* repository while the tests live in juena-chatbot's, and two
+> of those ids carry a specialist prompt verbatim; committing them would copy juena's
+> prompt text into a second repository's history, where nothing removes it. A digest is
+> stable across the move and still shows a changed parameter as a diff.
 
 If the tree is not clean, stop and find out why before touching anything.
+
+### What actually landed
+
+**Step 1 completed 2026-09-16 at juena-chatbot commit `ee9248d`** (`update:juena-rag-cutover`
+— the juena-rag work named above is finished and committed, so the tree is clean and the
+baseline is reproducible, unlike 01/CP0's dirty-checkout observation).
+
+```text
+git status --short          (empty)
+./juena test                452 passed, 5 skipped
+./juena test-integration    16 passed
+collected node ids          473 across 46 test modules
+```
+
+457 + 16 = 473, so the collected list and the two runs agree exactly. The list is
+[`02-baseline-nodeids.txt`](02-baseline-nodeids.txt), versioned beside this plan rather
+than left in `/tmp`, because step 3 diffs against it a week later. Normalising it to
+compare-on-name (`sed 's|^.*/||' | sort -u`) still yields 473 lines, so no two tests in
+the two repositories can collide on name alone.
+
+The cutover branch is `juena-core-cutover`, taken from `juena-rag-cutover`. Core is at
+`d086c01` (`docs: add MIT license`), one documentation commit after the `cc45ec5` handoff
+recorded in 01/CP7; its tree is clean.
 
 ---
 
@@ -239,19 +277,24 @@ repositories keeps its name and changes its path, so **compare on the part after
 is useless.
 
 ```bash
-# strip pytest's trailing summary lines, keep only real node ids, drop the file path
-normalise() { grep '::' | sed 's|^.*/||' | sort; }
+# one line per collected test, whatever a parametrised id contains -- see step 1
+collect() {  # $1 = repo, $2 = extra uv args
+    ( cd "$1" && PYTHONPATH="$PLUGIN_DIR" uv run $2 pytest --collect-only -q \
+        -p 02-collect-nodeids tests/ 2>&1 | grep '^NODEID	' | sed 's/^NODEID	//' )
+}
+collect juena-core    "--frozen --group dev"     > /tmp/after-core.txt
+collect juena-chatbot "--extra dev"              > /tmp/after-app.txt
 
-( cd juena-core    && uv run pytest --collect-only -q tests/ ) | normalise > /tmp/after-core.txt
-( cd juena-chatbot && uv run --extra dev pytest --collect-only -q tests/ ) | normalise > /tmp/after-app.txt
-cat /tmp/after-core.txt /tmp/after-app.txt | sort > /tmp/after-nodeids.txt
+name_only() { sed 's|^.*/||' | sort; }
+cat /tmp/after-core.txt /tmp/after-app.txt | name_only > /tmp/after-nodeids.txt
+name_only < 02-baseline-nodeids.txt               > /tmp/baseline-names.txt
 
-diff /tmp/baseline-nodeids.txt /tmp/after-nodeids.txt
+diff /tmp/baseline-names.txt /tmp/after-nodeids.txt
 ```
 
-`grep '::'` drops the `N tests collected in 1.23s` footer, which would otherwise appear
-as a spurious difference every run. Apply the **same** `normalise` when recording the
-baseline in step 1.
+Reading `item.nodeid` from pytest also drops the `N tests collected in 1.23s` footer,
+which would otherwise appear as a spurious difference every run. Use the **same**
+collector on both repositories and on the step-1 baseline.
 
 Every line in that diff is explained in writing, as one of: **moved** (same test, new
 file path), **added** (deliberately, named), or **removed** (deliberately, with the
@@ -418,6 +461,7 @@ inherits it.
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
 | **Unblocks** | 03 |
+| **Executed** | step 1 complete — clean baseline at chatbot `ee9248d`, 473 node ids recorded, branch `juena-core-cutover` opened against core `d086c01`. Step 2 is next |
 | **Decided** | the test split (22 / 22 / 2); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the node-id diff is the instrument; prompts must not change; `JuenaAgentClient` subclasses core; `agent_id` is backfilled to `'juena'` |
 | **Open** | nothing — this plan answers questions rather than asking them |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md), then amended by 01/CP7 — node ids replace pass counts, installed-core check added, client subclass and `agent_id` backfill added, sandbox cutover made explicit |
