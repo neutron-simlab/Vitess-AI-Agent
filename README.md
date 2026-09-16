@@ -32,8 +32,9 @@ docker compose up -d
 docker compose exec vitess-app curl -fsS http://vitess-mcp:9005/health
 ```
 
-The first build compiles VITESS from source on arm64 (a few minutes) and
-downloads the prebuilt release on amd64.
+The first build compiles the same pinned VITESS source revision on every
+architecture (a few minutes). This keeps the binaries aligned with the monitor
+formats exercised by the test fixtures.
 
 `GET /health` on the MCP service answers 200 only when the five VITESS
 executables resolve and the project volume is writable, and Compose holds the

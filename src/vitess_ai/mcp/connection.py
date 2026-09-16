@@ -24,11 +24,13 @@ applications.
 from __future__ import annotations
 
 import os
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 import httpx
 from juena_core.mcp import MCPUnavailableError, discover_tools
-from langchain_core.tools import BaseTool
+
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
 
 __all__ = [
     "DEFAULT_BASE_URL",
@@ -93,9 +95,16 @@ async def discover_vitess_tools(target: object | None = None) -> list[BaseTool]:
     """Discover the server's tools, raising if any of the four is missing."""
     tools = await discover_tools(target if target is not None else mcp_url(), label="VITESS")
     discovered = {tool.name for tool in tools}
-    missing = sorted(set(TOOL_NAMES) - discovered)
-    if missing:
+    expected = set(TOOL_NAMES)
+    missing = sorted(expected - discovered)
+    unexpected = sorted(discovered - expected)
+    if missing or unexpected:
+        differences = []
+        if missing:
+            differences.append(f"missing tool(s): {', '.join(missing)}")
+        if unexpected:
+            differences.append(f"unexpected tool(s): {', '.join(unexpected)}")
         raise MCPUnavailableError(
-            f"VITESS MCP server is missing tool(s): {', '.join(missing)}"
+            "VITESS MCP server tool set mismatch: " + "; ".join(differences)
         )
     return tools

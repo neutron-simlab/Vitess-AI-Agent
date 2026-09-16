@@ -78,6 +78,9 @@ services:
       - VITESS_MCP_HOST=0.0.0.0
       - VITESS_MCP_PORT=9005
       - VITESS_SIMULATION_TIMEOUT_SECONDS=${VITESS_SIMULATION_TIMEOUT_SECONDS:-3600}
+      # The service is pinned and must not contact PyPI at startup merely to
+      # advertise a newer FastMCP release in its banner.
+      - FASTMCP_CHECK_FOR_UPDATES=off
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - vitess-projects:/data/projects

@@ -200,6 +200,22 @@ def test_an_xyz_file_missing_cells_is_named_rather_than_drawn_with_holes(
         read_monitor_file(truncated)
 
 
+def test_duplicate_xyz_coordinates_cannot_hide_a_missing_cell(tmp_path: Path) -> None:
+    """The row count alone is insufficient when one cell is repeated."""
+    broken = tmp_path / "monitor2D.dat"
+    lines = MONITOR_2D[VtFormat2D.XYZ].read_text(encoding="utf-8").splitlines()
+    data_rows = [
+        index
+        for index, line in enumerate(lines)
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    lines[data_rows[-1]] = lines[data_rows[0]]
+    broken.write_text("\n".join(lines), encoding="utf-8")
+
+    with pytest.raises(MonitorFileError, match="duplicate x/y coordinates"):
+        read_monitor_file(broken)
+
+
 def test_a_2d_file_in_neither_layout_is_named(tmp_path: Path) -> None:
     odd = tmp_path / "monitor2D.dat"
     odd.write_text(

@@ -12,6 +12,7 @@ would share them.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,7 +58,7 @@ class ServerSettings:
                 env.get("VITESS_MODULES_PATH") or DEFAULT_MODULES_PATH
             ).expanduser(),
             host=env.get("VITESS_MCP_HOST") or "0.0.0.0",
-            port=_positive_int(env, "VITESS_MCP_PORT", DEFAULT_PORT),
+            port=_port(env, "VITESS_MCP_PORT", DEFAULT_PORT),
             timeout_seconds=_positive_float(
                 env, "VITESS_SIMULATION_TIMEOUT_SECONDS", 3600.0
             ),
@@ -77,6 +78,13 @@ def _positive_int(environment: Mapping[str, str], name: str, default: int) -> in
     return value
 
 
+def _port(environment: Mapping[str, str], name: str, default: int) -> int:
+    value = _positive_int(environment, name, default)
+    if value > 65535:
+        raise ValueError(f"{name} must be at most 65535, got {value}")
+    return value
+
+
 def _positive_float(environment: Mapping[str, str], name: str, default: float) -> float:
     raw = environment.get(name)
     if not raw:
@@ -85,6 +93,6 @@ def _positive_float(environment: Mapping[str, str], name: str, default: float) -
         value = float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number, got {raw!r}") from exc
-    if value <= 0:
-        raise ValueError(f"{name} must be positive, got {value}")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive number, got {value}")
     return value

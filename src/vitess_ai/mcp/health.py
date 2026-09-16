@@ -14,6 +14,7 @@ cannot work.
 from __future__ import annotations
 
 import os
+import tempfile
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -23,10 +24,6 @@ from vitess_ai.mcp.settings import ServerSettings
 from vitess_ai.modules.catalog import cli_executables
 
 __all__ = ["HealthCheck", "HealthReport", "check_health"]
-
-#: Written and removed by the volume check. Named for what it is, so that a file
-#: left behind by a killed process is recognisable rather than mysterious.
-PROBE_FILENAME = ".health-probe"
 
 
 class HealthCheck(BaseModel):
@@ -68,11 +65,15 @@ def _check_modules(settings: ServerSettings) -> HealthCheck:
 
 
 def _check_project_volume(settings: ServerSettings) -> HealthCheck:
-    probe = settings.project_root / PROBE_FILENAME
     try:
         settings.project_root.mkdir(parents=True, exist_ok=True)
-        probe.write_text(str(os.getpid()), encoding="utf-8")
-        probe.unlink()
+        # A unique, automatically removed probe makes concurrent Docker and
+        # application health checks independent. The previous fixed filename
+        # let one request unlink another request's probe and report a healthy
+        # volume as unavailable.
+        with tempfile.TemporaryFile(dir=settings.project_root) as probe:
+            probe.write(str(os.getpid()).encode("ascii"))
+            probe.flush()
     except OSError as exc:
         return HealthCheck(
             name="project_volume",

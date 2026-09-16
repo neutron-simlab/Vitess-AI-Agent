@@ -157,6 +157,12 @@ def _read_2d_xyz(
 ) -> dict[str, np.ndarray]:
     """One row per cell; pivoted here so callers see a grid either way."""
     table = np.array([values for _, values in rows], dtype=float)
+    coordinates = table[:, :2]
+    unique_coordinates = np.unique(coordinates, axis=0)
+    if unique_coordinates.shape[0] != table.shape[0]:
+        raise MonitorFileError(
+            f"{source}: duplicate x/y coordinates leave at least one grid cell missing"
+        )
     x = np.unique(table[:, 0])
     y = np.unique(table[:, 1])
     if x.size * y.size != table.shape[0]:

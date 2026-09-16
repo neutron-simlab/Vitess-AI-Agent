@@ -71,6 +71,24 @@ def test_a_server_that_lost_a_tool_fails_loudly() -> None:
         asyncio.run(discover_vitess_tools(partial))
 
 
+def test_a_server_with_an_unexpected_tool_fails_before_it_is_bound() -> None:
+    """Discovery is an exact allowlist, not only a missing-capability check."""
+    expanded = FastMCP("Expanded")
+
+    def make_tool(name: str):
+        async def tool() -> str:
+            return "ok"
+
+        tool.__name__ = name
+        return tool
+
+    for name in (*TOOL_NAMES, "unexpected_shell"):
+        expanded.tool(make_tool(name))
+
+    with pytest.raises(MCPUnavailableError, match="unexpected tool.*unexpected_shell"):
+        asyncio.run(discover_vitess_tools(expanded))
+
+
 def test_both_routes_are_derived_from_one_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     """So the health check and the MCP endpoint cannot point at different servers."""
     monkeypatch.setenv("VITESS_MCP_BASE_URL", "http://elsewhere:9999/")

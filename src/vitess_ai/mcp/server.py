@@ -26,6 +26,7 @@ that did not run must never read as one that ran and produced nothing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -86,14 +87,33 @@ def _require_uuid(value: str, field_name: str) -> str:
         raise ToolError(str(exc)) from exc
 
 
+def _resolve_beneath(root: Path, candidate: Path, *, label: str) -> Path:
+    """Resolve ``candidate`` and require it to remain below ``root``.
+
+    The identifiers joined into these paths are canonical UUIDs, but an
+    existing directory in the shared volume can still be a symbolic link. A
+    lexical ``root / uuid`` check does not protect a later read through that
+    link, so every directory boundary is resolved before use.
+    """
+    trusted_root = root.resolve()
+    if candidate.is_symlink():
+        raise ToolError(f"{label} must not be a symbolic link")
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(trusted_root)
+    except ValueError as exc:
+        raise ToolError(f"{label} escapes its trusted root") from exc
+    return resolved
+
+
 def _thread_root(settings: ServerSettings, thread_id: str) -> tuple[str, Path]:
     canonical = _require_uuid(thread_id, "thread_id")
     project_root = settings.project_root.expanduser().resolve()
-    thread_root = (project_root / canonical).resolve()
-    try:
-        thread_root.relative_to(project_root)
-    except ValueError as exc:  # pragma: no cover - a canonical UUID has no "/"
-        raise ToolError("Resolved thread directory escapes the project root") from exc
+    thread_root = _resolve_beneath(
+        project_root,
+        project_root / canonical,
+        label="Thread directory",
+    )
     return canonical, thread_root
 
 
@@ -102,14 +122,35 @@ def _run_directory(
 ) -> tuple[str, str, Path]:
     canonical_thread, thread_root = _thread_root(settings, thread_id)
     canonical_run = _require_uuid(simulation_run_id, "simulation_run_id")
-    return canonical_thread, canonical_run, thread_root / "outputs" / canonical_run
+    outputs_root = _resolve_beneath(
+        thread_root,
+        thread_root / "outputs",
+        label="Outputs directory",
+    )
+    run_directory = _resolve_beneath(
+        thread_root,
+        outputs_root / canonical_run,
+        label="Simulation run directory",
+    )
+    return canonical_thread, canonical_run, run_directory
 
 
 def _run_file(run_directory: Path, filename: str) -> Path:
     """Resolve a file the caller named, refusing anything outside the run."""
-    if not filename or Path(filename).name != filename:
+    if (
+        not filename
+        or filename in {".", ".."}
+        or "\0" in filename
+        or "/" in filename
+        or "\\" in filename
+        or Path(filename).name != filename
+    ):
         raise ToolError(f"Not a plain file name: {filename!r}")
-    return run_directory / filename
+    return _resolve_beneath(
+        run_directory,
+        run_directory / filename,
+        label="Run file",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +167,7 @@ def _file_kind(relative: Path) -> FileKind:
 
 
 def _describe_files(base: Path, directory: Path) -> tuple[UploadedFile, ...]:
+    directory = _resolve_beneath(base, directory, label="Listed directory")
     if not directory.is_dir():
         return ()
     described: list[UploadedFile] = []
@@ -238,7 +280,15 @@ def run_pipeline(
         # simulation could quietly run without its guide.
         return _refused(canonical_thread, canonical_run, generated["message"])
 
-    run_directory.mkdir(parents=True, exist_ok=True)
+    try:
+        run_directory.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise ToolError(
+            f"Simulation run {canonical_run} already exists; run identifiers "
+            "must be unique so new evidence cannot be mixed with old files."
+        ) from exc
+    except OSError as exc:
+        raise ToolError(f"Cannot create simulation run directory: {exc}") from exc
     outcome = execute_pipeline(
         generated["argument_vectors"],
         generated["modules_included"],
@@ -287,7 +337,11 @@ def inspect_thread(settings: ServerSettings, *, thread_id: str) -> ThreadInspect
             message="Nothing has been staged or produced for this conversation yet.",
         )
 
-    uploads_root = thread_root / "uploads"
+    uploads_root = _resolve_beneath(
+        thread_root,
+        thread_root / "uploads",
+        label="Uploads directory",
+    )
     uploads = tuple(
         ModuleUploads(
             module=spec.name,
@@ -296,16 +350,27 @@ def inspect_thread(settings: ServerSettings, *, thread_id: str) -> ThreadInspect
         for spec in upload_modules()
     )
 
-    outputs_root = thread_root / "outputs"
+    outputs_root = _resolve_beneath(
+        thread_root,
+        thread_root / "outputs",
+        label="Outputs directory",
+    )
     runs: list[RunFolder] = []
     if outputs_root.is_dir():
         # One directory per simulation run. Loose files directly under
         # outputs/ are a first-generation layout that this server never writes.
         for directory in sorted(outputs_root.iterdir()):
             if directory.is_dir() and not directory.is_symlink():
+                try:
+                    canonical_run = canonical_uuid(
+                        directory.name, "simulation_run_id"
+                    )
+                except ValueError:
+                    logger.warning("Ignoring non-run output directory %s", directory)
+                    continue
                 runs.append(
                     RunFolder(
-                        simulation_run_id=directory.name,
+                        simulation_run_id=canonical_run,
                         files=_describe_files(thread_root, directory),
                     )
                 )
@@ -384,7 +449,8 @@ async def run_simulation(
             ``cli_parameters`` list.
         execution_order: The modules to run, in pipeline order.
     """
-    return run_pipeline(
+    return await asyncio.to_thread(
+        run_pipeline,
         SETTINGS,
         thread_id=thread_id,
         simulation_run_id=simulation_run_id,
@@ -396,7 +462,7 @@ async def run_simulation(
 @mcp.tool
 async def inspect_thread_folders(thread_id: str) -> ThreadInspection:
     """List the files staged for a conversation and the runs it has produced."""
-    return inspect_thread(SETTINGS, thread_id=thread_id)
+    return await asyncio.to_thread(inspect_thread, SETTINGS, thread_id=thread_id)
 
 
 @mcp.tool
@@ -404,7 +470,8 @@ async def generate_monitor1d_plot(
     thread_id: str, simulation_run_id: str, filename: str | None = None
 ) -> PlotResult:
     """Render the 1D monitor data of one simulation run as a PNG."""
-    return render_plot(
+    return await asyncio.to_thread(
+        render_plot,
         SETTINGS,
         kind="monitor1d",
         thread_id=thread_id,
@@ -418,7 +485,8 @@ async def generate_monitor2d_plot(
     thread_id: str, simulation_run_id: str, filename: str | None = None
 ) -> PlotResult:
     """Render the 2D monitor data of one simulation run as a PNG."""
-    return render_plot(
+    return await asyncio.to_thread(
+        render_plot,
         SETTINGS,
         kind="monitor2d",
         thread_id=thread_id,

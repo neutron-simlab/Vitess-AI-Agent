@@ -13,11 +13,13 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 from fastmcp.exceptions import ToolError
 
+import vitess_ai.mcp.server as server_module
 from vitess_ai.mcp.connection import TOOL_NAMES
 from vitess_ai.mcp.server import (
     inspect_thread,
@@ -187,6 +189,27 @@ def test_a_module_missing_from_the_parameters_runs_nothing(tmp_path: Path) -> No
     assert not _run_directory(settings).exists()
 
 
+def test_an_existing_run_directory_is_never_mixed_into_new_evidence(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    run_directory = _run_directory(settings)
+    run_directory.mkdir(parents=True)
+    stale = run_directory / "stale.dat"
+    stale.write_text("old run", encoding="utf-8")
+
+    with pytest.raises(ToolError, match="already exists"):
+        run_pipeline(
+            settings,
+            thread_id=THREAD_ID,
+            simulation_run_id=RUN_ID,
+            module_results=_parameters(),
+            execution_order=list(execution_order()),
+        )
+
+    assert stale.read_text(encoding="utf-8") == "old run"
+
+
 def test_a_validation_error_payload_is_refused_before_anything_starts(
     tmp_path: Path,
 ) -> None:
@@ -263,6 +286,19 @@ def test_inspection_lists_one_entry_per_simulation_run(tmp_path: Path) -> None:
     ]
 
 
+def test_inspection_ignores_directories_that_are_not_simulation_run_ids(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    ignored = settings.project_root / THREAD_ID / "outputs" / "old-layout"
+    ignored.mkdir(parents=True)
+    (ignored / "monitor1D.dat").write_text("not a run", encoding="utf-8")
+
+    inspection = inspect_thread(settings, thread_id=THREAD_ID)
+
+    assert inspection.runs == ()
+
+
 def test_a_plot_is_rendered_from_the_filename_the_schema_owns(tmp_path: Path) -> None:
     """No filename argument, so the default is the one being exercised."""
     settings = _settings(tmp_path)
@@ -305,6 +341,26 @@ def test_a_plot_filename_that_is_a_path_is_refused(tmp_path: Path) -> None:
         )
 
 
+def test_a_symlinked_outputs_directory_cannot_escape_the_project_volume(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    thread_root = settings.project_root / THREAD_ID
+    thread_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    run_directory = outside / RUN_ID
+    run_directory.mkdir(parents=True)
+    shutil.copy(DATA / "monitor1D.dat", run_directory / "monitor1D.dat")
+    (thread_root / "outputs").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ToolError, match="Outputs directory must not be a symbolic link"):
+        render_plot(
+            settings, kind="monitor1d", thread_id=THREAD_ID, simulation_run_id=RUN_ID
+        )
+
+    assert not (run_directory / "monitor1D.png").exists()
+
+
 def test_asking_the_1d_tool_for_a_2d_file_is_refused(tmp_path: Path) -> None:
     """The file says which monitor wrote it, and a mismatch is a wrong answer."""
     settings = _settings(tmp_path)
@@ -334,3 +390,33 @@ def test_the_result_is_json_serialisable_because_it_crosses_a_container_boundary
     payload = json.loads(result.model_dump_json())
     assert payload["simulation_run_id"] == RUN_ID
     assert len(payload["modules"]) == len(execution_order())
+
+
+def test_run_simulation_does_not_block_the_mcp_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Health and other requests must continue during an hour-long pipeline."""
+    release = threading.Event()
+    marker = object()
+
+    def blocking_pipeline(*args: object, **kwargs: object) -> object:
+        release.wait(timeout=1)
+        return marker
+
+    monkeypatch.setattr(server_module, "run_pipeline", blocking_pipeline)
+
+    async def exercise() -> object:
+        task = asyncio.create_task(
+            server_module.run_simulation(
+                THREAD_ID,
+                RUN_ID,
+                _parameters(),
+                list(execution_order()),
+            )
+        )
+        await asyncio.sleep(0)
+        assert not task.done(), "the blocking pipeline ran on the event-loop thread"
+        release.set()
+        return await task
+
+    assert asyncio.run(exercise()) is marker

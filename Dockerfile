@@ -13,53 +13,45 @@
 # consulted if it had one.
 
 # -----------------------------------------------------------------------------
-# Stage 1: VITESS itself. Prebuilt on amd64, compiled from source elsewhere.
+# Stage 1: VITESS itself. Every architecture builds the same pinned revision.
 # -----------------------------------------------------------------------------
+ARG VITESS_COMMIT=6bd0e0066c4667444368dd2492f77821ff8a5609
+ARG UV_VERSION=0.12.15
+
 FROM ubuntu:22.04 AS vitess-build
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG TARGETARCH
 ARG VITESS_REPO=https://iffgit.fz-juelich.de/vitess/vitess.git
-ARG VITESS_REF=develop
-ARG VITESS_TARBALL_URL=https://iffgit.fz-juelich.de/vitess/vitess/-/jobs/1074589/artifacts/raw/Downloads/Vitess3.7-Ubuntu-x86_64.tar.gz
+ARG VITESS_COMMIT
 
 RUN set -eux; \
-    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
     apt-get update; \
-    if [ "${arch}" = "amd64" ]; then \
-      apt-get install -y --no-install-recommends curl ca-certificates; \
-    else \
-      apt-get install -y --no-install-recommends \
-        curl make gcc g++ libxpm-dev libpng-dev libgd-dev zlib1g-dev git \
-        unzip cmake libxml2-dev python3 ca-certificates; \
-    fi; \
+    apt-get install -y --no-install-recommends \
+      make gcc g++ libxpm-dev libpng-dev libgd-dev zlib1g-dev git \
+      unzip cmake libxml2-dev python3 ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
-    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    if [ "${arch}" = "amd64" ] && [ -n "${VITESS_TARBALL_URL}" ]; then \
-      echo "Using prebuilt VITESS for ${arch}"; \
-      mkdir -p /vitess-src/MODULES; \
-      curl -fsSL "${VITESS_TARBALL_URL}" -o /tmp/vitess.tar.gz; \
-      mkdir -p /tmp/vitess; \
-      tar -xzf /tmp/vitess.tar.gz -C /tmp/vitess; \
-      modules_dir="$(find /tmp/vitess -type d -name MODULES | head -n 1)"; \
-      test -n "${modules_dir}"; \
-      cp -a "${modules_dir}/." /vitess-src/MODULES/; \
-    else \
-      echo "Compiling VITESS from source for ${arch}"; \
-      git clone --depth 1 --branch "${VITESS_REF}" "${VITESS_REPO}" /vitess-src; \
-      cd /vitess-src/SRC; \
-      mkdir -p ../MODULES; \
-      make all LTO=1; \
-      make install; \
-    fi
+    git init /vitess-src; \
+    git -C /vitess-src remote add origin "${VITESS_REPO}"; \
+    git -C /vitess-src fetch --depth 1 origin "${VITESS_COMMIT}"; \
+    git -C /vitess-src checkout --detach FETCH_HEAD; \
+    test "$(git -C /vitess-src rev-parse HEAD)" = "${VITESS_COMMIT}"; \
+    cd /vitess-src/SRC; \
+    mkdir -p ../MODULES; \
+    make all LTO=1; \
+    make install
+
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-build
 
 # -----------------------------------------------------------------------------
 # Stage 2: the application image
 # -----------------------------------------------------------------------------
 FROM python:3.11-slim
+
+ARG VITESS_COMMIT
+LABEL de.fz-juelich.vitess.source-revision="${VITESS_COMMIT}"
 
 # curl is the health check; libstdc++ and libgcc are what the monitor binaries
 # link against (`ldd monitor2D`), and nothing else in MODULES needs more than
@@ -68,7 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl bash libstdc++6 libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=uv-build /uv /usr/local/bin/uv
 
 COPY --from=vitess-build /vitess-src/MODULES /vitess/MODULES
 

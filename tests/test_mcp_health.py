@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -90,3 +91,28 @@ def test_the_health_check_leaves_no_probe_file_behind(tmp_path: Path) -> None:
     check_health(_settings(projects, tmp_path / "modules"))
 
     assert list(projects.iterdir()) == []
+
+
+def test_concurrent_health_checks_do_not_share_a_probe_filename(tmp_path: Path) -> None:
+    _install_modules(tmp_path / "modules")
+    projects = tmp_path / "projects"
+    settings = _settings(projects, tmp_path / "modules")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        reports = list(executor.map(lambda _: check_health(settings), range(32)))
+
+    assert {report.status for report in reports} == {"healthy"}
+    assert list(projects.iterdir()) == []
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-1"])
+def test_timeout_must_be_finite_and_positive(value: str) -> None:
+    with pytest.raises(ValueError, match="finite positive"):
+        ServerSettings.from_environment(
+            {"VITESS_SIMULATION_TIMEOUT_SECONDS": value}
+        )
+
+
+def test_port_must_fit_the_tcp_port_range() -> None:
+    with pytest.raises(ValueError, match="at most 65535"):
+        ServerSettings.from_environment({"VITESS_MCP_PORT": "65536"})

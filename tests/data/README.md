@@ -3,8 +3,8 @@
 ## The monitor files
 
 Written by VITESS 3.8's own `monitor1D` and `monitor2D` binaries, compiled from
-`iffgit.fz-juelich.de/vitess/vitess.git@develop` by this repository's
-`Dockerfile`. They are not hand-written, and that is the point: the
+`iffgit.fz-juelich.de/vitess/vitess.git@6bd0e0066c4667444368dd2492f77821ff8a5609`
+by this repository's `Dockerfile`. They are not hand-written, and that is the point: the
 first-generation reader was written against a remembered format and got every
 layout wrong, and a fixture written to match a reader can never show that.
 
@@ -28,7 +28,7 @@ VITESS source tree), with the bin counts reduced so the files stay small --
 22 bins for 1D and 12 x 12 for 2D, instead of 110 and 100 x 100.
 
 ```sh
-V=/vitess/MODULES; S=_Linux_aarch64; P=/tmp/run; L=$P/log-
+V=/vitess/MODULES; S=_Linux_$(uname -m); P=/tmp/run; L=$P/log-
 cp SrcConst.mod constant.dat $P/        # from VITESS tests/module_tests/Monitors
 cd $P
 export GSL_RNG_SEED=1 GSL_RNG_TYPE=ran3

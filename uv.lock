@@ -5263,6 +5263,7 @@ dependencies = [
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "plotly" },
     { name = "pydantic" },
+    { name = "starlette" },
     { name = "vitess-rag" },
 ]
 
@@ -5280,6 +5281,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "plotly" },
     { name = "pydantic", specifier = ">=2,<3" },
+    { name = "starlette", specifier = ">=1,<2" },
     { name = "vitess-rag", directory = "rag/vitess-rag" },
 ]
 
