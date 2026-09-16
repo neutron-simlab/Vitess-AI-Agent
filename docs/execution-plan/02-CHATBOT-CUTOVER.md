@@ -784,7 +784,10 @@ Only after step 3's suites and identity reconciliation pass:
    parent, the repository `.dockerignore` is not consulted. Exclude sibling `.git/`,
    `.venv/`, caches, databases, models and unrelated repositories, while explicitly
    retaining only `juena-chatbot/` and `juena-core/` inputs needed by the build;
-5. run `docker compose build` with no Git/core credentials, then record the core SHA,
+5. run `./juena test` immediately after changing the build inputs. The packaging
+   contracts are part of this step: a build-context change can invalidate them before
+   any container is started;
+6. run `docker compose build` with no Git/core credentials, then record the core SHA,
    resolved dependency set and image digest in the application's build record.
 
 The Dockerfile performs the copy. Do not add a launcher command that vendors core
@@ -857,11 +860,13 @@ enforces it.
 
 ---
 
-## What actually landed — steps 3.5 to 6
+## Execution record — steps 3.5 to 6
 
-**Completed 2026-09-16 on branch `juena-core-cutover-runtime`**, taken off the
+**Executed 2026-09-16 on branch `juena-core-cutover-runtime`**, taken off the
 reviewed step-3 commits so that branch stayed still during its review. Core is on
-a branch of the same name.
+a branch of the same name. Step 3.5 and Step 6 are complete. Step 4's client/API
+paths passed, but its browser-rendering acceptance remains open. Step 5 reached
+the real IdP but remains open until an assertion returns through the ACS endpoint.
 
 ```text
 juena-core          tests/                   497 passed, 5 skipped
@@ -870,8 +875,10 @@ juena-chatbot       ./juena test-integration  16 passed     (baseline: 16)
 ./juena check-imports                        import direction ok
 02-compare-prompts.py ee9248d..HEAD          9 Markdown files, 6 @tool docstrings unchanged
 build context transferred                    2.79 MB  (unfiltered parent: ~9 GB)
-four step-4 conversations                    all four behave, one after a fix
-pre-cutover threads reopened                 10 threads, 61 artifacts, 0 failures
+four step-4 client/API conversations         all four behave, one after a fix
+pre-cutover data reopened                    10 threads, 61 artifacts, 0 failures
+browser rendering acceptance                 not run
+real SAML login through ACS                  not run
 ```
 
 **Step 4 found a defect that made the sandbox unreachable.** It is written up
@@ -962,7 +969,7 @@ juena-rag revision and the image ID. No credentials are used by the build —
 core is copied from the context and juena-rag is cloned anonymously over public
 HTTPS.
 
-**The step as written has no suite run, and that cost something.**
+**The original step had no suite run, and that cost something.**
 `tests/test_agent_resources.py` guards that the prompt Markdown reaches the
 image, and it asserted `COPY src/ ./src/` and three `!src/**/*.md` exceptions in
 `.dockerignore` — all three now false. It was caught on the next step's test run
@@ -1017,11 +1024,21 @@ appears nowhere either, which is why 01/CP7's rename touched no live state, and
 also why juena-chatbot's old test asserting its absence had been passing
 vacuously.
 
+**Gate status: client/API behavior passed; Step 4 is not complete.** The original
+acceptance text requires the browser to show the supervisor answer, approval and
+clarification cards, the PNG in the chat, and a pre-cutover thread identically
+after reload. The run above used the page's client factory but did not open the
+page, so renderer unit tests cannot substitute for those end-to-end observations.
+
 ### Step 5 — SAML with the bypass off
 
-`AUTH_DEV_BYPASS` reaches the container through the mounted `.env`, not through
-Compose, so setting it on the launcher's command line changes nothing — it has
-to be changed in the file. With it off:
+At the time of the first proof, `AUTH_DEV_BYPASS` reached the container only
+through the mounted `.env`, so the documented inline override changed nothing
+and the file had to be edited temporarily. The review corrected the Compose
+contract: the base service now forwards
+`AUTH_DEV_BYPASS=${AUTH_DEV_BYPASS:-false}`. An explicit shell value therefore
+wins over `.env`, while the application still defaults closed. With the bypass
+off:
 
 - `/auth/dev-login` answers **404**, the production refusal working;
 - `/auth/me` and `/chats` answer **401** through core's identity dependency;
@@ -1038,15 +1055,59 @@ to be changed in the file. With it off:
 at the institute IdP. Everything up to the redirect is proved; the assertion
 coming back is not. The `.env` was restored byte-identically afterwards.
 
+**Gate status: Step 5 is not complete.** Metadata and the outbound signed request
+are necessary diagnostics, but they do not prove attribute mapping, request
+correlation, session creation or the authenticated redirect after `/auth/acs`.
+
 ### Step 6 — locking the direction
 
 `cmd_check_imports` is in `./juena` and `cmd_test` calls it first, so the rule
-runs on every unit-suite invocation rather than only on `test-all`. It warns and
-passes when juena-core is not checked out beside the repository, because a
-contributor without core should not be blocked from running tests by a check
-that cannot run. Verified by adding `import juena` to
+runs on every unit-suite invocation rather than only on `test-all`. The review
+made a missing core checkout fail closed: otherwise the command named “lock the
+direction” could report a green unit gate without checking the direction at all,
+contrary to the step's original command. `JUENA_CORE_REPO` remains the supported
+override for a non-sibling checkout. Verified by adding `import juena` to
 `juena_core/src/juena_core/log.py`: `./juena test` exits 1, names the file and
 line, and pytest never starts.
+
+### Critical review follow-up
+
+The review fixed three acceptance-contract defects in juena-chatbot `27e5016`:
+
+1. Compose now forwards `AUTH_DEV_BYPASS`, so the Step-5 inline command really
+   overrides the mounted `.env`; resolved Compose configuration was checked with
+   both `false` and `true`.
+2. `./juena test` now fails when the core checkout cannot be inspected instead
+   of printing a warning and continuing. A launcher regression proves pytest is
+   never started in that condition.
+3. `deploy/BUILD-RECORD.md` no longer says application source was identical
+   between the two images. `src/juena/research/runner.py` did change and is copied
+   into the image; the record now names both shipped fixes.
+
+The two review regressions and the two Step-4 run-id regressions were reconciled
+against the original baseline rather than appended outside Step 3's instrument:
+
+```text
+juena-core collected identities                 502
+juena-chatbot collected identities              248
+post-cutover unique identities                  750
+duplicate identities across both repositories    0
+added identities                                 22  (18 at Step 3 + 4 later)
+removed identities                               17  (unchanged)
+```
+
+The four later additions are
+`test_execute_still_runs_where_the_tool_is_actually_bound`,
+`test_evidence_is_scoped_by_the_invocation_id_the_context_carries`,
+`test_compose_forwards_the_auth_bypass_override_to_the_container`, and
+`test_unit_gate_fails_closed_when_core_cannot_be_checked`.
+
+Current review verification is 232 passing chatbot unit tests, 465 passing and
+5 skipped core tests with the four Postgres modules excluded, and the prompt and
+import-direction checks green. The chatbot integration run was 15 passed and
+1 skipped because the real sandbox worker was running and held the worker lock;
+the environment was deliberately not stopped to turn that operational skip into
+a pass. The clean-worker 16-pass result remains the accepted runtime record above.
 
 ### Commits
 
@@ -1061,6 +1122,7 @@ line, and pytest never starts.
 | juena-chatbot | `387d7be` | the packaging guard, rewritten for the new build |
 | juena-chatbot | `0767d39` | `check-imports` in `./juena`, called from `cmd_test` |
 | juena-chatbot | `43d4123` | build record for the proved image |
+| juena-chatbot | `27e5016` | review corrections for SAML override, import gate and build record |
 
 ---
 
@@ -1124,8 +1186,8 @@ inherits it.
 | | |
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
-| **Unblocks** | 03 |
-| **Executed** | steps 1, 2 and 3 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a`+`21210ac`+`aa23497` against core `78fc3dd`+`347d5a5` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and three defects fixed in core. Step 3: core `b9e2304`+`4eca16e`, chatbot `8a8f448`+`ed4a307`; 13 superseded modules were deleted, 9 moved whole, 1 moved with its other identity already superseded, and 3 split. The reconciliation passes at 746 unique identities, **zero cross-repository duplicates**, 18 deliberate additions and 17 deliberate removals. Steps 3.5, 4, 5 and 6 complete on branch `juena-core-cutover-runtime`, core at `a64c978`: the parent-context build ships a 2.79 MB context and its image is recorded in `deploy/BUILD-RECORD.md`; all four conversations behave and ten pre-cutover threads reopen with 61 artifacts intact; the SAML path produces a signed AuthnRequest and SP metadata with the bypass off; `./juena test` now runs the import check first. **Step 4 found and fixed a defect that made the sandbox unreachable** -- every approved `execute` raised `Sandbox execution requires a graph run_id`, because 01/CP7 read that id from a place that does not exist inside a subagent, which is the only place the tool is bound |
+| **Unblocks** | 03 after the two remaining acceptance gates below pass |
+| **Executed** | Steps 1, 2, 3, 3.5 and 6 are complete; their commit, test-identity and build records are above. On branch `juena-core-cutover-runtime`, core `a64c978`, all four Step-4 client/API paths work and ten pre-cutover threads reopen through the API with 61 artifacts intact. Step 4 also found and fixed the subagent run-id defect that made every approved sandbox command fail. With the bypass off, Step 5 produces SP metadata and a signed AuthnRequest to the real IdP. Neither result closes the remaining browser and ACS gates. |
 | **Decided** | the test split (22 / 20 / 4); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the two-baseline identity diff is the instrument; prompts must not change; `AgentClient` subclasses core's `BaseAgentClient`; `agent_id` is backfilled to `'juena'` |
-| **Open** | one thing the plan cannot close: a **real SAML login** still needs a person to enter institute credentials. Everything up to the redirect is proved. Separately, `ExecutionEvidenceMiddleware` is defined in core and installed by nobody, so an undelegated run produces no `<verified_by_server>` block; harmless here, a decision for 03/CP4 |
-| **Revised** | 2026-09-16 after steps 3.5--6 — step 3.5 gains a suite run in practice, because the build change broke `test_agent_resources.py` and the step as written never runs the tests; step 5 records that `AUTH_DEV_BYPASS` reaches the container through the mounted `.env` rather than Compose, so setting it on the launcher's command line does nothing; step 6's check warns rather than fails when juena-core is not checked out beside the repository. Earlier, 2026-09-16 after the Step 3 review — the reconciliation counts identities with `comm` (18 added / 17 removed), replacing the earlier incorrect 21/20 tally; the executed allocation is stated consistently as 13 superseded / 9 moved / 1 moved-and-partly-superseded / 3 split; and core's development group installs Streamlit so the frozen test command works in an isolated environment. The four implementation reclassifications remain: `test_ui_components` moves whole, `test_api_endpoints_files` is a move plus a delete, `test_findings_lifecycle` loses four application identities rather than one, and `test_agent_client` splits 5/2. Earlier Step 2 and Step 1 reviews, baseline corrections and 01/CP7 amendments remain in force |
+| **Open** | Step 4 still needs the browser observations its acceptance text names: rendered supervisor answer, approval and clarification cards, PNG in chat, and identical rendering of a reloaded pre-cutover thread. Step 5 still needs a **real SAML login** with institute credentials and a successful ACS/session round trip; everything up to the redirect is proved. Separately, `ExecutionEvidenceMiddleware` is defined in core and installed by nobody, so an undelegated run produces no `<verified_by_server>` block; harmless here, a decision for 03/CP4. |
+| **Revised** | 2026-09-16 review of Steps 3.5--6 — corrected the false completion claim for Steps 4 and 5; added the missing Step-3.5 suite gate; made the documented inline `AUTH_DEV_BYPASS=false` command reach the container; and made Step 6 fail closed when core cannot be inspected. Earlier execution, Step-3, Step-2 and Step-1 review records remain in force. |
