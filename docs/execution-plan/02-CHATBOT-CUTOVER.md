@@ -250,6 +250,125 @@ ALTER TABLE chats ALTER COLUMN agent_id SET NOT NULL;
 (`JUENA_AGENT_ID`). Take a dump first — this is the one step in the plan that touches
 live rows.
 
+### What actually landed
+
+**Step 2 completed 2026-09-16 in juena-chatbot commit `b5cd33a`**
+(`refactor: consume juena-core instead of carrying the infrastructure`), against core
+`78fc3dd`. 119 files, +1,693 / −10,342: 44 application modules deleted, their imports
+re-pointed, and five pieces of genuinely new code written.
+
+```text
+./juena test-integration            16 passed   (baseline: 16)
+./juena test (test placement aside) 339 passed, 5 skipped, 18 failed
+prompt files                        byte-identical
+core suite after the amendment      381 passed, 5 skipped
+./scripts/check-imports.sh          import direction ok
+chats.agent_id backfill             209 rows, all 'juena', column NOT NULL
+```
+
+**Every one of those 18 failures, and the 7 modules excluded from that run, is a test
+whose *placement* step 3 decides** — files that move to core whole, or split. Not one is
+an application defect: `test_agent_backends`, `test_code_chat_inputs`,
+`test_sandbox_middleware`, `test_specialist_outcome`, `test_streaming_handlers`,
+`test_artifact_message_middleware`, `test_sandbox_{approvals,artifacts,backend,executor}`
+already exist in core under the same names, adapted; `test_agent_client`,
+`test_chat_interface`, `test_ui_components` and `test_api_endpoints_files` split.
+
+#### The dependency set
+
+`deepagents 0.6.12 → 0.7.14`, `langchain 1.3.14 → 1.4.0`, `langgraph 1.2.10 → 1.2.11`,
+`starlette 0.50.0 → 1.6.0`, `streamlit 1.61.1 → 1.64.0`, `langchain-mcp-adapters`
+**removed**. `langgraph-checkpoint-postgres`, `psycopg` and `sqlalchemy` were explicitly
+upgraded to core's validated versions; the first `uv lock` had silently kept the
+application's older exact pins, which would have shipped a set core never tested.
+SQLAlchemy resolves to **2.0.54** here against core's locked 2.0.53 — a patch inside
+core's declared bound, recorded rather than pinned down.
+
+Direct dependencies now declare only what this application imports itself, without
+bounds: core pins the set they belong to, and a second bound could only duplicate or
+contradict it — `deepagents==0.6.12` against core's `>=0.7.13,<0.8` being exactly that.
+
+#### Five things that were new code, not a re-point
+
+| What | Why |
+|---|---|
+| `juena.clients.client.AgentClient(BaseAgentClient)` | `/auth/me` and `/research` are this application's routes (decision 10) |
+| `juena.server.auth.principal` | the one place that turns a `SamlIdentity` into core's `Principal`; core's `upsert_principal` takes fields, never an assertion |
+| `juena.server.service` | ~120 lines of `create_app(...)` arguments: the resume union, the `ThreadWorkspace`, the `StreamPolicy`, the manifest's closing paragraph, and three extra lifespans |
+| `juena.server.database.models` | only `SamlLoginRequest` and `ResearchJob` remain; `Base`, `User`, `AuthSession`, `Chat` are core's, `sandbox_jobs` is core's optional model |
+| `app/client_setup.py` | rebuilt thin. Core's `initialize_client` builds a `BaseAgentClient`, which no application that subclasses can use — see *findings* below |
+
+`juena.tools.context7` was rewritten onto `juena_core.mcp`: FastMCP's
+`{"mcpServers": {...}}` config with the transport inferred, and no client to hold. That
+is what made removing `langchain-mcp-adapters` possible rather than merely tidy.
+
+#### Findings — things this step surfaced that no test in core could
+
+**1. `create_app` closed agents before an application's own lifespans unwound.** A
+boundary defect, fixed in core (`78fc3dd`) rather than shimmed. juena-chatbot ran
+`research_runner.shutdown()` — which waits for specialists running detached from any
+request — and only then closed its agents. Entering the extra lifespans inside the `try`
+whose `finally` called `shutdown_agents()` inverted that. The permanent regression in
+core's `test_server_contracts.py` was checked by reverting the fix and watching it fail.
+
+**2. Patching `global_config` no longer reaches core, and the Postgres suite was about
+to run against the development database again** — the exact regression `40c846b` fixed.
+`connection.py` opens its pool against `settings().DATABASE_URL`, and core does not read
+`global_config` by design. Sixteen hand-written patches became one autouse fixture that
+sets *both* and asserts the result, because the failure is silent: the tests still pass,
+against the wrong database, destroying rows someone was using.
+
+**3. Deep Agents 0.7 overwrites an existing path where 0.6.12 refused it.**
+`StateBackend.write` used to return "... because it already exists" and send the model to
+`edit_file`; it now calls `update_file_data`. `/findings/<slug>.md` is written across
+turns, so the AGENT.md sentence telling the model to extend an existing file is now the
+only thing preventing a report being replaced — load-bearing where it was a courtesy.
+`test_agent_prompts` pins the new upstream contract and that sentence. **No prompt file
+changed.**
+
+**4. Core's settings are configured only when `juena.core.config` is imported.** Before
+the cutover, `juena.core.log` imported `Config` at module scope and `get_logger` was
+imported nearly everywhere, so importing almost anything read `.env`. Core deliberately
+does not, so configuration became an explicit act. All four entry points already perform
+it — `main.py`, `juena.server.service`, `app/streamlit_app.py` — and `tests/conftest.py`
+is the fourth, now saying so. `python -m juena_core.sandbox.worker` needs no core
+settings at all: it reads `SandboxWorkerSettings.from_env()` and nothing else.
+
+**5. `uv sync --frozen` silently keeps a stale copy of core.** A path dependency is
+installed as a *copy*, and the version does not change when its source does, so nothing
+reinstalls. `juena_core.__file__` still resolves inside the virtual environment, so the
+check in step 3 passes while the bytes are old. **After changing core, sync with
+`--reinstall-package juena-core`** and verify a symbol you just changed.
+
+**6. `initialize_client` in core cannot be used by an application that subclasses
+`BaseAgentClient`** — which, by decision 10, is every application that serves a route of
+its own. It hardcodes the class. Left as core's for VITESS, with a four-line wrapper
+here; if v2 ever subclasses, the fix is a `client_class` parameter, not a second copy.
+
+#### Reclassifications for step 3, found by executing step 2
+
+- **`test_api_endpoints_files` splits**, rather than staying. Both its tests reach into
+  core's router: `_authorize_thread` is now a closure inside `build_api_router`, and
+  `router` is a factory. Core already covers thread deletion against a real database;
+  the recency half has no equivalent there yet.
+- **`test_postgres_integration` keeps everything except one assertion.** The
+  `_authorize_thread` recency check cannot be called from outside core any more. It is
+  marked in place with a comment naming where it goes.
+- `test_chat_storage` and `test_sidebar` now import `AgentClient` from this application
+  while testing core's `ChatStorage`; step 3 decides which side each belongs on.
+
+#### Operational half
+
+`./juena`, the systemd unit and `deploy/SANDBOX.md` now start
+`python -m juena_core.sandbox.worker`. Nothing else about the worker moved: it is still
+a non-root host process, it still reads its own environment, and no container gained a
+Podman socket.
+
+The `chats.agent_id` backfill ran once against the development database, after
+`pg_dump` (39 MB, kept in the ignored `.sandbox/backups/`): 209 rows, all `'juena'`,
+column now `NOT NULL`.
+
+
 ---
 
 ## Step 3 — split the tests, then reconcile
@@ -528,7 +647,7 @@ inherits it.
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
 | **Unblocks** | 03 |
-| **Executed** | step 1 complete — clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), with a 745-identity union and 113 expected pre-cutover overlaps recorded. Branch `juena-core-cutover` is open. Step 2 is next |
+| **Executed** | steps 1 and 2 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a` against core `78fc3dd` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and one boundary defect fixed in core. Step 3 is next |
 | **Decided** | the test split (22 / 21 / 3); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the two-baseline identity diff is the instrument; prompts must not change; `JuenaAgentClient` subclasses core; `agent_id` is backfilled to `'juena'` |
 | **Open** | nothing — this plan answers questions rather than asking them |
 | **Revised** | 2026-09-16 after the step-1 review — collector commands now preserve collection failures and do not dirty the plan tree; both repository baselines are recorded; reconciliation compares the 745-identity pre-cutover union and rejects duplicates; the test split is corrected to 22 / 21 / 3; stale local-only and dirty-tree statements are corrected. Earlier review and 01/CP7 amendments remain in force |
