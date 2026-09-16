@@ -23,6 +23,16 @@ stays on the Compose network.
 Application code never runs a VITESS binary directly. Every execution goes
 through the MCP service.
 
+The four tools advertised by that service are also never bound directly to a
+model: their schemas contain the conversation id, the simulation id and
+validated module state. `vitess_ai.tools.build_vitess_tools()` wraps them in
+application façades whose model-visible schemas contain only a human run name
+or plot filename. The façades read identity and state through `ToolRuntime`,
+validate MCP `structuredContent`, verify every claimed file against the app's
+own shared-volume mount, and register deliverable files with `ArtifactStore`.
+`vitess_supervisor_middleware()` then attaches those files and the
+server-authored `<verified_by_server>` block to the root answer.
+
 ## Running it
 
 ```sh
