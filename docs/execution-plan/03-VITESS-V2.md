@@ -735,7 +735,186 @@ which is the only place that matters — and the host cannot reach the MCP port 
 
 ### What actually landed
 
-*(Fill in after the work.)*
+Completed 2026-09-16 in `Vitess-AI-Agent-v2` commit `4e21722`, against
+`juena-core` at `a64c978` with a clean tree.
+
+```text
+uv run pytest -q                                 104 passed   (CP0-CP2: 50)
+uv sync --frozen                                 ok
+docker compose build                             context 2.28 MB, one image
+docker compose up -d                             three services, mcp healthy
+  exec vitess-app curl http://vitess-mcp:9005/health   200, both checks ok
+  exec vitess-app discover_vitess_tools()              the four tool names
+  curl http://127.0.0.1:9005/health                    connection refused
+VITESS_MODULES_PATH=/nope                        503, naming all five executables
+```
+
+Image `sha256:9d75f6dd1d35c3ed4fe7566ecd5f913d6edab2ff0cc4a956245f48bde581d03f`,
+1.09 GB, and `docker inspect` reports **the same image id for both containers** --
+which is the one-image decision, checked rather than assumed.
+
+#### The topology, as built
+
+`docker-compose.yml` brings up `postgres`, `vitess-mcp` and `vitess-app` on one
+network with `vitess-projects` mounted at `/data/projects` in both application
+services. Only `127.0.0.1:9601` is published. `vitess-mcp` publishes no port at
+all, and the negative check above confirms the host has no route to it.
+
+**Only `vitess-mcp` carries the `build:` section.** Declaring it on both, which
+is how this was first written, built the same Dockerfile twice and produced two
+image ids for what the plan calls one image -- so there was nothing single to
+record as the digest that was tested. `vitess-app` names the tag and waits on
+`depends_on`; a plain `docker compose up -d` with no image present was run to
+confirm the image is built once, before either container is created.
+
+The Dockerfile builds VITESS in a first stage -- the prebuilt tarball on amd64,
+compiled from source elsewhere, which on this arm64 laptop produced 99 native
+modules -- and copies only `MODULES` into the application image. It builds from
+the **parent context** for the same reason juena-chatbot does: `juena-core` is a
+sibling path dependency. `Dockerfile.dockerignore` is therefore the only filter
+in effect, deny-by-default, and it was checked by measurement: **2.28 MB
+transferred** out of a parent holding roughly nine gigabytes, several unrelated
+repositories with real credentials in their own `.env`, and the
+first-generation `Vitess-AI-Agent` checkout.
+
+Both containers run as an unprivileged user created in the image, which owns
+`/data/projects`; Docker copies that ownership into a fresh named volume, so a
+non-root container can write to it without a startup `chown`.
+
+The drift the checkpoint named -- `READIN_MCP_PATH` and friends, ports 9001-9004,
+and the README paragraph repeating the claim -- is gone by not being copied. The
+legacy checkout still holds it and is deliberately not retrofitted (CP6).
+
+#### `vitess-app` runs `sleep infinity`, on purpose
+
+There is no application yet: CP4 builds the agent and CP6 the entrypoint. The
+container is the real image on the real network with the real volume, which is
+what makes the checks above mean anything -- the plan's "from inside the app
+container, which is the only place that matters". The command is one line to
+replace and says so in a comment naming CP6.
+
+#### Two decisions inside the server
+
+**Raised or returned, and the split is deliberate.** A malformed *argument* --
+an identifier that is not a canonical UUID, a filename that is a path -- raises
+`ToolError`. Every argument reaches these tools from trusted application code,
+never from a model, so a bad one is a bug and bugs should be loud. An
+*execution* -- a module that failed, a pipeline that timed out, parameters that
+were refused -- returns a `SimulationResult` with `success=False` and whatever
+evidence exists. A simulation that did not run must never read as one that ran
+and produced nothing, and that is a shape, not a message.
+
+**A produced file is `plot`, `log` or `data`.** 03/CP3a's sketch shows
+`"kind": "monitor_data"`; this returns the three above, decided by extension and
+the one known log name. Which file holds monitor data is known from the
+parameters that asked for it -- `-O` names it -- so classifying by filename
+would be guessing at something already known, and the guess would be wrong the
+moment a user names their output something else.
+
+#### The monitor file format is five formats, and the old reader knew none of them
+
+`generate_monitor1d_plot` and `generate_monitor2d_plot` need to read what the
+monitors write. Reading VITESS 3.8's actual output, rather than the
+first-generation `plots/vitess_plot.py`, turned up three things:
+
+1. **`Monitor2DParameters.format` (`-F`) has five writable values and defaults
+   to `matrix`.** `matrix`, `matrix_compact` and `matrix_integer` write a row of
+   x bin centres and then one row per y bin, carrying **intensity only**;
+   `xyz` and `xyz_compact` write one row per cell, five columns, keeping the
+   error and the trajectory count. A reader written for one layout fails on the
+   other -- and the schema's *default* is the one the reader had not been
+   written for. This was found by generating a file in each format with the real
+   binary, not by reading the code.
+2. **`matrix_integer` holds counts, not a rate**, over the source's measurement
+   time, while VITESS writes the same `n/s` in the title either way. The reader
+   returns what the file holds; a test asserts the one constant ratio between
+   that layout and the rate layouts, so the difference is recorded rather than
+   discovered later by someone comparing two plots.
+3. **The old reader was off by one in both layouts.** In 1D it started at the
+   second data row (a second copy of it started at the third), so the first bin
+   of every 1D monitor -- a real measurement -- was missing from the plot. In 2D
+   it took the *first row of data* as the x axis, which is the second row of a
+   matrix file, and it could not read an xyz file at all.
+
+So `plots/` is new code, not a port: `monitor_file.py` reads any of the five
+layouts into bin centres and a grid, and `render.py` draws a PNG through
+matplotlib's object interface with an explicit Agg canvas -- no `pyplot`, whose
+global figure registry leaks between requests in a long-running server. PNG
+rather than Plotly JSON because the application registers it with the artifact
+store that already delivers images into the chat (03/CP3a).
+
+**The fixtures are files VITESS wrote.** `tests/data/` holds one 1D file and one
+per 2D format, produced by `monitor1D` and `monitor2D` from VITESS's own module
+test inputs; `tests/data/README.md` carries the exact command. Four of the five
+2D files are the same measurement written four ways, and a test asserts they
+read back to the same grid -- four files that disagree would mean the reader has
+one of the layouts wrong. A hand-written fixture could not have shown any of
+this, because a hand-written fixture is written to match the reader.
+
+#### A real five-module pipeline ran, which the checkpoint did not ask for
+
+From inside `vitess-app`, over MCP, against the real binaries:
+
+```text
+readin     exit=0  /vitess/MODULES/read_in_Linux_aarch64
+guide      exit=0  /vitess/MODULES/guide_parallel_Linux_aarch64
+writeout   exit=0  /vitess/MODULES/writeout_Linux_aarch64
+monitor1d  exit=0  /vitess/MODULES/monitor1D_Linux_aarch64
+monitor2d  exit=0  /vitess/MODULES/monitor2D_Linux_aarch64
+files: geometry.inf, guide_shape_out.dat, instrument.inf, monitor1D.dat,
+       monitor2D.dat, output.dat, result.txt
+generate_monitor1d_plot -> monitor1D.png   (a wavelength spectrum, 3-6 A, with errors)
+generate_monitor2d_plot -> monitor2D.png   (the guide exit, 3 x 3 cm)
+```
+
+The input was a trajectory file from VITESS's own guide test, copied into
+`/data/projects/<thread>/uploads/readin/` **through the application container**
+and read by the MCP container -- so the shared volume is proved from both ends,
+and `inspect_thread_folders` listed it at its real byte size before the run.
+The parameters are hand-copied from two VITESS module tests, not generated from
+the schema; producing them from the models is CP4's work. `executable` reports
+the resolved path, which is the architecture-suffixed file behind the short
+symlink -- the evidence names the file that actually ran.
+
+One thing that cost an hour and is worth writing down: **`--Fno_file` marks the
+last module of a pipeline.** On any earlier module it stops trajectories
+reaching the next one, and the run then completes with every exit code zero and
+every monitor empty. It is in `tests/data/README.md` too.
+
+#### What this checkpoint does not contain
+
+- **The façade.** The raw tools take `thread_id`, `simulation_run_id` and
+  `module_results`, and a test asserts they do -- which is exactly why they are
+  never bound to a model. `vitess_ai.run` and the façade tools are 03/CP3a.
+- **`ExecutionEvidenceMiddleware` and the `execution_events` channel.** Also
+  CP3a. The server returns the evidence; nothing yet turns it into a
+  `<verified_by_server>` block.
+- **`./vitess`, the entrypoint and the build record.** CP6, per its own list.
+  `docker compose` is used directly until then.
+
+#### Every guarantee was broken on purpose first
+
+| Break | Caught by |
+|---|---|
+| `import langchain` at the top of the server | the subprocess import test |
+| a refusal reports `success=True` | the missing-module and validation-error tests |
+| the validation-error guard removed | the validation-error test |
+| produced files reported as absolute paths | the relative-path test |
+| a plot filename may be a path again | the traversal test |
+| the 1D reader drops the first bin, as the old one did | the every-bin test |
+| 1D intensity and error read from the wrong columns | the column-order test |
+| a 1D row of the wrong width is skipped | the wrong-width and every-bin tests |
+| the matrix reader takes its first data row as an axis | the cross-layout and beam tests |
+| the xyz grid is transposed | the cross-layout test |
+| an incomplete xyz file is drawn with holes | the incomplete-file test |
+| the matrix layouts invent zeros for the error they omit | the no-error test |
+| only the xyz layout is recognised | the cross-layout and integer-layout tests |
+| health stops checking the executables | the missing-executable tests |
+| the health probe accepts any status code | the unhealthy-server test |
+| discovery tolerates a missing tool | the missing-tool test |
+
+Sixteen breaks, sixteen caught. Two of them are the first-generation reader's
+actual bugs, reintroduced to check that the tests would have caught them.
 
 ---
 
@@ -1446,7 +1625,7 @@ cheapest time to find that out is the day v2 first runs.
 |---|---|
 | **Depends on** | 02, verified |
 | **Unblocks** | — |
-| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 is next |
+| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 `4e21722`: the FastMCP server as an internal Compose service with an explicit `/health` route, four tools, one image run by two services sharing `/data/projects`, and a new monitor-file reader covering all five layouts `Monitor2DParameters.format` can ask for — proved by a real five-module VITESS pipeline run over MCP from the application container. Suite at 104 passed. CP3a is next |
 | **Decided** | schemas ported verbatim and kept out of core; `generate_cli_command` becomes a pure function in `cli/command.py`, building **argument vectors** rather than shell text; catalog becomes pure data carrying `cli_executable` and `accepts_upload` independently; **MCP is an internal Compose service sharing a volume**; simulator rebuilt with **no legacy fallback**; two registered agents rather than one supervisor; **PNG artifacts canonical**; Chroma stays; fixed local principal; **per-module upload slots kept, the three `path_only` rows deleted, sidebar becomes a manifest, `ask_user` is the second way in** |
 | **Open** | whether `research/` should come into core after all, once a sweep is lost to a closed browser (CP5); whether a run manifest on the volume is needed alongside the returned metadata (CP3a); whether content classification of uploads is worth adding — *reopen when files start arriving from other people, or in bulk* (CP6) |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — Compose topology replaces the host process, CP3a added for the evidence bridge, argument vectors replace shell text, recursive flag test, `simulator_legacy` dropped, real order test, `agent_id`, binary uploads separated |
