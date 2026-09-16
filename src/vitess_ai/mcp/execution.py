@@ -10,6 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Sequence
 
+__all__ = ["RESULT_FILENAME", "execute_pipeline", "postprocess_logs"]
+
+#: What the concatenated VITESS logs are called, inside the run directory.
+#: Named once here because the server reports files by name and would
+#: otherwise carry its own copy of the string.
+RESULT_FILENAME = "result.txt"
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -58,7 +65,7 @@ def postprocess_logs(run_directory: str | Path, log_prefix: str | Path) -> Path:
         for path in run_root.glob(f"{prefix.name}??")
         if path.is_file() and path.resolve().parent == run_root
     )
-    result_file = run_root / "result.txt"
+    result_file = run_root / RESULT_FILENAME
     result_file.unlink(missing_ok=True)
     with result_file.open("wb") as result_stream:
         for log_file in log_files:

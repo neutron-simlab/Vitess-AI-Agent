@@ -13,7 +13,13 @@ from uuid import UUID
 COMMON_ARGUMENTS = ("--Z1", "--U1.0e-25", "--G1", "--T0", "--B10000")
 
 
-def _canonical_uuid(value: str, field_name: str) -> str:
+def canonical_uuid(value: str, field_name: str) -> str:
+    """Return the value if it is a canonical UUID, else raise ``ValueError``.
+
+    Public because the MCP server validates the same two identifiers before
+    joining either into a path (03/CP3), and a second copy of "is this a
+    UUID" is a second chance to disagree.
+    """
     try:
         parsed = UUID(value)
     except (AttributeError, TypeError, ValueError) as exc:
@@ -24,7 +30,14 @@ def _canonical_uuid(value: str, field_name: str) -> str:
     return canonical
 
 
-def _resolve_executable(modules_path: Path, basename: str) -> Path:
+def resolve_executable(modules_path: Path, basename: str) -> Path:
+    """Resolve a catalog basename inside the trusted modules root, or raise.
+
+    Public because the MCP server's health route needs exactly this check
+    (03/CP3): a second copy of "is this executable really inside $V" is how
+    the first-generation agent ended up with two executable mappings that
+    disagreed.
+    """
     if (
         not basename
         or basename in {".", ".."}
@@ -127,8 +140,8 @@ def generate_cli_command(
     deliberately rejected because they cannot be split without reintroducing shell
     parsing and quoting ambiguities.
     """
-    canonical_thread_id = _canonical_uuid(thread_id, "thread_id")
-    canonical_run_id = _canonical_uuid(simulation_run_id, "simulation_run_id")
+    canonical_thread_id = canonical_uuid(thread_id, "thread_id")
+    canonical_run_id = canonical_uuid(simulation_run_id, "simulation_run_id")
     project_root = Path(project_path).expanduser().resolve()
     run_directory = (
         project_root / canonical_thread_id / "outputs" / canonical_run_id
@@ -184,7 +197,7 @@ def generate_cli_command(
                 project_root=project_root,
                 run_directory=run_directory,
             )
-            executable = _resolve_executable(
+            executable = resolve_executable(
                 modules_root, module_executables[module]
             )
         except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError) as exc:

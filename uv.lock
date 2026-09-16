@@ -5256,6 +5256,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
+    { name = "httpx" },
     { name = "juena-core", extra = ["mcp", "ui"] },
     { name = "matplotlib" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -5273,6 +5274,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=4,<5" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "juena-core", extras = ["ui", "mcp"], directory = "../juena-core" },
     { name = "matplotlib" },
     { name = "numpy" },

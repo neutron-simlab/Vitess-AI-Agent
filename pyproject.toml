@@ -7,6 +7,9 @@ requires-python = ">=3.11, <4.0"
 dependencies = [
     "juena-core[ui,mcp]",
     "fastmcp>=4,<5",
+    # Imported directly: the application probes the MCP server's health route
+    # before it builds an agent against it (src/vitess_ai/mcp/connection.py).
+    "httpx>=0.28,<1",
     "matplotlib",
     "numpy",
     "plotly",
