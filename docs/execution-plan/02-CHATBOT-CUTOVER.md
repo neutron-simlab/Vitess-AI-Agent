@@ -208,6 +208,10 @@ configure_sandbox(SandboxRuntimeSettings(
     concurrency=Config.SANDBOX_CONCURRENCY,
     execution_timeout_seconds=Config.SANDBOX_EXECUTION_TIMEOUT_SECONDS,
     max_output_bytes=Config.SANDBOX_MAX_OUTPUT_BYTES,
+    workspace_limit_bytes=Config.SANDBOX_WORKSPACE_LIMIT_BYTES,
+    idle_ttl_seconds=Config.SANDBOX_IDLE_TTL_SECONDS,
+    cpu_limit=Config.SANDBOX_CPU_LIMIT,
+    memory_limit=Config.SANDBOX_MEMORY_LIMIT,
 ))
 ```
 
@@ -221,8 +225,12 @@ delete=delete_runtime_workspace)`, the current sandbox `StreamPolicy`, and
 Change the host worker entrypoint to:
 
 ```bash
-uv run --extra sandbox python -m juena_core.sandbox.worker
+uv run python -m juena_core.sandbox.worker
 ```
+
+`sandbox` is a `juena-core` dependency extra selected in `pyproject.toml`, not an
+extra declared by the `juena` project. Passing `--extra sandbox` to `uv run` would
+ask uv for an application extra that does not exist.
 
 Do not move the Podman socket into the application container. The worker remains a
 non-root host process; it and the API share only Postgres and the configured workspace
@@ -231,7 +239,7 @@ CPU/memory, workspace quota and TTL.
 
 ### Two things that are new code, not a re-point
 
-**`JuenaAgentClient` subclasses `BaseAgentClient`** (00, decision 10). Core does not get
+**`AgentClient` subclasses `BaseAgentClient`** (00, decision 10). Core does not get
 `get_current_user` or `list_research`, because `/auth/me` and `/research` are
 juena-chatbot's routes. The subclass adds both, and `client_setup.py` builds it instead
 of the core class. `test_agent_client` splits along the same line.
@@ -252,29 +260,27 @@ live rows.
 
 ### What actually landed
 
-**Step 2 completed 2026-09-16 in juena-chatbot commits `b5cd33a` and `21210ac`**, against
-core `78fc3dd` and `347d5a5`. 119 files, +1,693 / −10,342: 44 application modules
-deleted, their imports re-pointed, and five pieces of genuinely new code written. The
-second commit on each side is the review's, and findings 3, 6 and 7 below record what it
-changed.
+**Step 2 completed 2026-09-16 in juena-chatbot commits `b5cd33a`, `21210ac` and
+`aa23497`**, against core `78fc3dd` and `347d5a5`. 122 files, +1,816 / −10,347:
+44 application modules deleted, their imports re-pointed, and five pieces of genuinely
+new code written. The latter commits are review corrections; findings 3, 6 and 7 below
+record their substantive changes.
 
 ```text
 ./juena test-integration            16 passed   (baseline: 16)
-./juena test (test placement aside) 340 passed, 5 skipped, 18 failed
+reduced pre-step-3 unit selection   340 passed, 5 skipped, 18 failed
 prompt files                        byte-identical
 core suite                          384 passed, 5 skipped
 ./scripts/check-imports.sh          import direction ok
 chats.agent_id backfill             209 rows, all 'juena', column NOT NULL
-docker compose build                fails -- see finding 8; step 4 waits on step 6
+docker compose build                fails -- see finding 8; step 3.5 precedes step 4
 ```
 
-**Every one of those 18 failures, and the 7 modules excluded from that run, is a test
-whose *placement* step 3 decides** — files that move to core whole, or split. Not one is
-an application defect: `test_agent_backends`, `test_code_chat_inputs`,
-`test_sandbox_middleware`, `test_specialist_outcome`, `test_streaming_handlers`,
-`test_artifact_message_middleware`, `test_sandbox_{approvals,artifacts,backend,executor}`
-already exist in core under the same names, adapted; `test_agent_client`,
-`test_chat_interface`, `test_ui_components` and `test_api_endpoints_files` split.
+That unit number is an explicitly reduced diagnostic run, not `./juena test`: the full
+command stops during collection while files that still import removed source-only names
+remain in the application. Step 3 owns those moves and the identity reconciliation; the
+Step 2 acceptance evidence is the green Postgres wiring suite plus the focused tests for
+each changed seam.
 
 #### The dependency set
 
@@ -286,9 +292,10 @@ application's older exact pins, which would have shipped a set core never tested
 SQLAlchemy resolves to **2.0.54** here against core's locked 2.0.53 — a patch inside
 core's declared bound, recorded rather than pinned down.
 
-Direct dependencies now declare only what this application imports itself, without
-bounds: core pins the set they belong to, and a second bound could only duplicate or
-contradict it — `deepagents==0.6.12` against core's `>=0.7.13,<0.8` being exactly that.
+Direct dependencies now declare only what this application imports itself. Core carries
+the validated bounds for the shared framework family, while this application's
+`uv.lock` pins the complete resolved set. Duplicating those framework bounds here could
+contradict core — `deepagents==0.6.12` against core's `>=0.7.13,<0.8` was exactly that.
 
 #### Five things that were new code, not a re-point
 
@@ -298,7 +305,7 @@ contradict it — `deepagents==0.6.12` against core's `>=0.7.13,<0.8` being exac
 | `juena.server.auth.principal` | the one place that turns a `SamlIdentity` into core's `Principal`; core's `upsert_principal` takes fields, never an assertion |
 | `juena.server.service` | ~120 lines of `create_app(...)` arguments: the resume union, the `ThreadWorkspace`, the `StreamPolicy`, the manifest's closing paragraph, and three extra lifespans |
 | `juena.server.database.models` | only `SamlLoginRequest` and `ResearchJob` remain; `Base`, `User`, `AuthSession`, `Chat` are core's, `sandbox_jobs` is core's optional model |
-| `app/client_setup.py` | rebuilt thin. Core's `initialize_client` builds a `BaseAgentClient`, which no application that subclasses can use — see *findings* below |
+| `app/client_setup.py` | rebuilt thin: supplies `AgentClient`, `JUENA_AGENT_ID` and the application timeout to core's subclass-aware factory |
 
 `juena.tools.context7` was rewritten onto `juena_core.mcp`: FastMCP's
 `{"mcpServers": {...}}` config with the transport inferred, and no client to hold. That
@@ -371,24 +378,28 @@ configures **1 / 2g** rather than asserting the defaults it was handed — the o
 passed whether the card read configuration or hardcoded it — and
 `test_sandbox_api_uses_the_worker_limit_environment` reads them back through a real
 subprocess. `./juena up` then runs `verify_sandbox_limits_agree`, comparing what the API
-container holds against what the worker was started with, and refuses to continue on a
-difference or an unreadable value.
+container holds against a non-secret snapshot written when the current worker process
+started, and refuses to continue on a difference or an unreadable value. The review's
+first version compared against the current shell instead, which said nothing about an
+already-running worker, and omitted concurrency; the final check covers concurrency,
+CPU, memory, workspace quota and TTL.
 
-**8. The application image cannot be built until step 6 moves the build context.**
+**8. The application image cannot be built with the old build context.**
 Measured, not predicted: `docker compose build` fails with
 `Distribution not found at: file:///juena-core`. `context: .` cannot see the sibling
 directory that `[tool.uv.sources]` points at, and the running container is still a
-pre-cutover image. **Step 4 is therefore blocked on step 6's Docker change**, which the
-plan orders the other way round. Nothing else about step 4 has been attempted, and no
-running-system claim in this record rests on a container.
+pre-cutover image. The old ordering put the parent-context build in step 6, after the
+step-4 runtime proof that requires that image. The review moved the build into step 3.5.
+Nothing else about step 4 has been attempted, and no running-system claim in this record
+rests on the pre-cutover container.
 
 #### Reclassifications for step 3, found by executing step 2
 
-- **`test_api_endpoints_files` splits**, rather than staying. Both its tests reach into
-  core's router: `_authorize_thread` is now a closure inside `build_api_router`, and
-  `router` is a factory. Core already covers thread deletion against a real database.
-- **`test_postgres_integration` keeps everything except one assertion.** The
-  `_authorize_thread` recency check cannot be called from outside core any more.
+- **`test_api_endpoints_files` moves to core**, rather than staying. Both tests reach
+  into core's router: `_authorize_thread` is now a closure inside `build_api_router`,
+  and `router` is a factory. Preserve both identities at the route boundary.
+- **`test_postgres_integration` stays whole.** Its former private-helper recency
+  assertion cannot stay there; the destination regression is named below.
 
   > **Corrected in review.** The comment left in its place said core asserts recency
   > "in `test_server_routes_postgres.py`", and it did not: the assertion was removed
@@ -398,6 +409,12 @@ running-system claim in this record rests on a container.
   > was verified by deleting `chat.updated_at = utc_now()` and watching it fail. A
   > "moved to core" note in a diff is worth nothing until the destination is named and
   > run.
+- **`test_client_setup` stays.** Its assertion is application policy: combine
+  `Config.TIMEOUT_SECONDS`, `JUENA_AGENT_ID` and JüNA's `AgentClient` subclass through
+  core's generic factory.
+- **`test_chat_interface` splits.** Generic SSE folding, status dispatch and interrupt
+  cards are core's; sandbox wording, starter topics, upload validation and page
+  composition remain JüNA's.
 - `test_chat_storage` and `test_sidebar` now import `AgentClient` from this application
   while testing core's `ChatStorage`; step 3 decides which side each belongs on.
 
@@ -424,8 +441,8 @@ The 46 modules, mapped by what they import after CP7's boundary amendment:
 
 ### Moves to juena-core — 22
 
-`test_agent_backends` · `test_agent_input_handler` · `test_ask_user` ·
-`test_chat_storage` · `test_client_setup` · `test_code_chat_inputs` ·
+`test_agent_backends` · `test_agent_input_handler` · `test_api_endpoints_files` ·
+`test_ask_user` · `test_chat_storage` · `test_code_chat_inputs` ·
 `test_llm_models` · `test_loop_guard` · `test_math_rendering` ·
 `test_runtime_model_middleware` · `test_server_utils` · `test_streaming_handlers` ·
 `test_specialist_outcome` · `test_artifact_message_middleware` ·
@@ -434,20 +451,21 @@ The 46 modules, mapped by what they import after CP7's boundary amendment:
 `test_sandbox_pipeline_integration` · `test_sandbox_worker` ·
 `test_sandbox_workspace`
 
-### Stays — 21
+### Stays — 20
 
-`test_agent_prompts` · `test_agent_resources` · `test_api_endpoints_files` ·
-`test_bootstrap` · `test_chat_interface` · `test_config_paths` · `test_context7_tools` ·
+`test_agent_prompts` · `test_agent_resources` · `test_bootstrap` ·
+`test_client_setup` · `test_config_paths` · `test_context7_tools` ·
 `test_juena_agent_runtime` · `test_main` · `test_postgres_integration` ·
 `test_rag_index` · `test_repo_config` · `test_repo_manager` ·
 `test_repo_search_tools` · `test_research` · `test_saml_auth` · `test_sidebar` ·
 `test_specialists` · `test_starters` · `test_supervisor_routing` · `test_tavily_tools`
 
-### Splits — 3
+### Splits — 4
 
 | Module | Core half | App half |
 |---|---|---|
 | `test_agent_client` | `BaseAgentClient` transport, SSE parsing, core routes | `get_current_user` (`/auth/me`), `list_research` (`/research`) |
+| `test_chat_interface` | SSE chunk folding, status dispatch and generic interrupt cards | sandbox wording/renderers, starters, upload validation and page composition |
 | `test_findings_lifecycle` | `test_registration_wraps_every_specialist` already exists in core's `test_findings_and_delegation.py`; delete the duplicate app copy | background-job merge, conflict and delivery lifecycle |
 | `test_ui_components` | message, token and artifact rendering | logo and header |
 
@@ -455,7 +473,9 @@ The 46 modules, mapped by what they import after CP7's boundary amendment:
 (00, decision 10). The four former sandbox-related splits now move whole because both
 their generic contracts and optional implementation are core-owned. The baseline audit
 also found one already-copied generic test inside `test_findings_lifecycle`, so that file
-now splits rather than retaining a duplicate. **22 move, 21 stay, 3 split.**
+now splits rather than retaining a duplicate. The Step 2 review corrected
+`test_client_setup` to stay, `test_api_endpoints_files` to move, and
+`test_chat_interface` to split. **22 move, 20 stay, 4 split.**
 `test_sandbox_config` and `test_simple_chat_example` are pre-existing core tests rather
 than chatbot baseline nodes that move.
 
@@ -546,7 +566,50 @@ uv run python -c "import juena_core, sys; print(juena_core.__file__)"
 ```
 
 It must resolve inside the virtual environment from the pinned revision — not to a
-working copy. Check this once here and once again after the final `uv sync`.
+working copy. Check this once here and once again after the final sync. A venv path alone
+does not prove freshness: uv installs this path dependency as a copy and may keep it
+after the sibling source changes. Reinstall and compare a module changed by the recorded
+core commit:
+
+```bash
+uv sync --frozen --extra dev --reinstall-package juena-core
+uv run python - <<'PY'
+from hashlib import sha256
+from pathlib import Path
+import juena_core.agents.backends as installed
+
+source = Path("../juena-core/src/juena_core/agents/backends.py")
+assert sha256(Path(installed.__file__).read_bytes()).digest() == sha256(source.read_bytes()).digest()
+print(installed.__file__)
+PY
+```
+
+---
+
+## Step 3.5 — build the first consumer before runtime proof
+
+Step 4 exercises the Compose application, so its image must already contain the
+cutover. A sibling path dependency cannot be copied from the old `context: .`; building
+after the runtime proof is impossible sequencing.
+
+Only after step 3's suites and identity reconciliation pass:
+
+1. commit the Step 3 changes, then verify both the chatbot and core trees are clean;
+2. record `git -C ../juena-core rev-parse HEAD` and prove
+   `uv sync --frozen --extra dev --reinstall-package juena-core`;
+3. change the Compose build to parent context (`context: ..`,
+   `dockerfile: juena-chatbot/Dockerfile`) and make every Dockerfile `COPY` source
+   relative to that context, including `juena-core/`;
+4. add `Dockerfile.dockerignore` beside the Dockerfile. Because the context is the
+   parent, the repository `.dockerignore` is not consulted. Exclude sibling `.git/`,
+   `.venv/`, caches, databases, models and unrelated repositories, while explicitly
+   retaining only `juena-chatbot/` and `juena-core/` inputs needed by the build;
+5. run `docker compose build` with no Git/core credentials, then record the core SHA,
+   resolved dependency set and image digest in the application's build record.
+
+The Dockerfile performs the copy. Do not add a launcher command that vendors core
+before the build: that copy can be skipped or stale and is invisible where build
+failures are debugged.
 
 ---
 
@@ -612,27 +675,6 @@ and call it from `cmd_test`.
 It is the rule that is cheapest to keep and most expensive to have broken. Nothing else
 enforces it.
 
-### Lock and build the first consumer
-
-Only after the cutover suite and running-system checks pass:
-
-1. verify `git -C ../juena-core status --short` is empty and record
-   `git -C ../juena-core rev-parse HEAD`;
-2. commit juena-chatbot's regenerated `uv.lock`, then prove `uv sync --frozen`;
-3. change the Compose build to parent context (`context: ..`,
-   `dockerfile: juena-chatbot/Dockerfile`) and make every Dockerfile `COPY` source
-   relative to that context, including `juena-core/`;
-4. add `Dockerfile.dockerignore` beside the Dockerfile. Because the context is the parent,
-   the repository `.dockerignore` is not consulted. Exclude sibling `.git/`, `.venv/`,
-   caches, databases, models and unrelated repositories, while explicitly retaining only
-   `juena-chatbot/` and `juena-core/` inputs needed by the build;
-5. run `docker compose build` with no Git/core credentials, then record the core SHA,
-   resolved dependency set and resulting image digest in the application's build record.
-
-The Dockerfile performs the copy. Do not add a launcher command that vendors core before
-the build: that copy can be skipped or stale and is invisible where build failures are
-debugged.
-
 ---
 
 ## Verification
@@ -691,7 +733,7 @@ inherits it.
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
 | **Unblocks** | 03 |
-| **Executed** | steps 1 and 2 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a`+`21210ac` against core `78fc3dd`+`347d5a5` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and three defects fixed in core. **Step 4 is blocked on step 6's build context** (finding 8); step 3 is next |
-| **Decided** | the test split (22 / 21 / 3); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the two-baseline identity diff is the instrument; prompts must not change; `JuenaAgentClient` subclasses core; `agent_id` is backfilled to `'juena'` |
+| **Executed** | steps 1 and 2 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a`+`21210ac`+`aa23497` against core `78fc3dd`+`347d5a5` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and three defects fixed in core. Step 3 test moves are in progress and intentionally uncommitted; step 3.5 now builds the cutover image before step 4's runtime proof |
+| **Decided** | the test split (22 / 20 / 4); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the two-baseline identity diff is the instrument; prompts must not change; `AgentClient` subclasses core's `BaseAgentClient`; `agent_id` is backfilled to `'juena'` |
 | **Open** | nothing — this plan answers questions rather than asking them |
-| **Revised** | 2026-09-16 after the step-1 review — collector commands now preserve collection failures and do not dirty the plan tree; both repository baselines are recorded; reconciliation compares the 745-identity pre-cutover union and rejects duplicates; the test split is corrected to 22 / 21 / 3; stale local-only and dirty-tree statements are corrected. Earlier review and 01/CP7 amendments remain in force |
+| **Revised** | 2026-09-16 after the step-2 review — the split is corrected to 22 / 20 / 4; the worker command, sandbox settings, client name, dependency-lock wording and diagnostic-test label now match the implementation; the running-worker limit check covers concurrency and reads a startup snapshot; the parent-context build moves before runtime proof. The step-1 collector and baseline corrections, earlier reviews and 01/CP7 amendments remain in force |
