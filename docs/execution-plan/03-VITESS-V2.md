@@ -153,7 +153,28 @@ a finding worth having on day one rather than after a wrong simulation.
 
 ### What actually landed
 
-*(Fill in after the work, including any fields the flag test caught.)*
+Completed 2026-09-16 in a fresh sibling repository,
+`Vitess-AI-Agent-v2`. The planned lowercase directory name could not coexist with the
+legacy checkout on the case-insensitive macOS volume, so the suffix preserves the old
+repository intact while retaining fresh Git history.
+
+- Added the Python 3.11 package scaffold, sibling `juena-core` path source and
+  `vitess-rag` submodule. The committed lock retains the validated framework set,
+  including FastMCP 4.0.3 rather than the newer 4.0.4 selected by an unconstrained
+  fresh resolution.
+- Copied the six schema files byte-for-byte from the legacy checkout. None of
+  `monitor_module.py`, `supervisor.py`, `server.py` or `llm_models.py` was ported.
+- Exported the five parameter models and `get_field_flag` explicitly from
+  `vitess_ai.schema`; `len(vitess_ai.schema.__all__)` is 6.
+- Added a recursive leaf walker and per-model regression counts. It found all 104
+  declared leaves (13, 15, 31, 20 and 25 respectively) and found no missing or empty
+  flags. The two unflagged `WriteoutParameters` container fields recurse into their
+  flagged nested leaves as intended.
+- `uv run pytest tests/test_schema_flags.py -q`: 6 passed.
+
+Plan 02's browser and real-IFFLogin acceptance gates remain open. CP0 was prepared at
+the user's explicit direction; this record does not reclassify Plan 03 as formally
+unblocked.
 
 ---
 
