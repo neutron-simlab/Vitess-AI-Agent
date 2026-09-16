@@ -31,6 +31,7 @@ dependencies = [
   "juena-core[ui,mcp]",        # path source below; see 01/CP6 on what the lock does not pin
   "fastmcp>=4,<5",              # current stable major used by langchain.mcp; CP0b locks the validated release
   "matplotlib", "numpy", "plotly",
+  "pydantic>=2,<3",             # imported directly by the VITESS parameter and catalog models
   "vitess-rag",            # path dependency, the submodule
 ]
 [tool.uv.sources]
@@ -484,12 +485,13 @@ is the bug being removed.
 
 ### What actually landed
 
-Completed 2026-09-16 in `Vitess-AI-Agent-v2` commit `06ea450`.
+Completed 2026-09-16 in `Vitess-AI-Agent-v2` commit `06ea450`, then hardened by
+post-completion review commit `d33925e`.
 
 ```text
 uv run python -c "import vitess_ai.modules.catalog, sys; ..."   False False
-uv run pytest tests/test_catalog.py -q                          13 passed
-complete CP0+CP1+CP2 suite                                      44 passed
+uv run pytest tests/test_catalog.py -q                          19 passed
+complete CP0+CP1+CP2 suite                                      50 passed
 ```
 
 - `vitess_ai/modules/catalog.py` imports pydantic and nothing else. `agent_class`,
@@ -554,6 +556,29 @@ it wants — and that gap is how two mappings drifted apart the first time.
 
 The import test runs in a subprocess. Asking `sys.modules` inside a pytest session
 that has already imported half the framework would prove nothing.
+
+#### Post-completion review
+
+The review found no incorrect catalog row, executable, upload assignment or ordering.
+It did find three gaps around the implemented contract and corrected them in `d33925e`:
+
+- `vitess_ai` imported Pydantic directly from both its parameter schemas and this
+  catalog, but relied on `juena-core` to install it transitively. `pydantic>=2,<3` is
+  now a direct runtime dependency; the offline lock refresh changed only the root
+  package's dependency metadata and retained the validated framework versions.
+- The first test set named the five executable rows and three upload rows, but an inert
+  seventh row could sit outside both filters without failing. The suite now pins the
+  exact six catalog names and the exact fields of both `ModuleSpec` and `UploadSchema`,
+  and explicitly proves that removed fields such as `agent_class` and
+  `default_filename` are rejected.
+- The subprocess test proved that importing the catalog did not load `langchain` or
+  `deepagents`; it did not prove the narrower source-level claim that the catalog has no
+  project or agent-framework imports. An AST-level regression now restricts the source
+  imports to `__future__`, `typing` and `pydantic`, while the subprocess test remains as
+  the runtime check.
+
+The catalog docstring also changed one sentence to future tense: the five explicit
+specialist builders are a CP4 deliverable and did not yet exist at CP2.
 
 ---
 
@@ -1421,7 +1446,7 @@ cheapest time to find that out is the day v2 first runs.
 |---|---|
 | **Depends on** | 02, verified |
 | **Unblocks** | — |
-| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 44 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas. CP3 is next |
+| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 is next |
 | **Decided** | schemas ported verbatim and kept out of core; `generate_cli_command` becomes a pure function in `cli/command.py`, building **argument vectors** rather than shell text; catalog becomes pure data carrying `cli_executable` and `accepts_upload` independently; **MCP is an internal Compose service sharing a volume**; simulator rebuilt with **no legacy fallback**; two registered agents rather than one supervisor; **PNG artifacts canonical**; Chroma stays; fixed local principal; **per-module upload slots kept, the three `path_only` rows deleted, sidebar becomes a manifest, `ask_user` is the second way in** |
 | **Open** | whether `research/` should come into core after all, once a sweep is lost to a closed browser (CP5); whether a run manifest on the volume is needed alongside the returned metadata (CP3a); whether content classification of uploads is worth adding — *reopen when files start arriving from other people, or in bulk* (CP6) |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — Compose topology replaces the host process, CP3a added for the evidence bridge, argument vectors replace shell text, recursive flag test, `simulator_legacy` dropped, real order test, `agent_id`, binary uploads separated |
