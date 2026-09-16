@@ -11,8 +11,9 @@
 ## Before you start
 
 Read `README.md` and `00-BOUNDARY.md`. Plan 01 must be finished, its verification
-passed, its tree clean, and its core commit SHA recorded. There is no tag or remote in
-this local-only phase.
+passed, its tree clean, and its core commit SHA recorded. Core now has a GitHub remote,
+but it still has no release tag: this cutover deliberately consumes the clean sibling
+checkout at the recorded SHA through a path dependency.
 
 This plan edits a **different repository** from the one these documents live in:
 `/Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base/juena-chatbot`.
@@ -40,35 +41,56 @@ after v2 depends on it is not.
 
 Plan 01 recorded this. Record it again now, on a clean tree, because a week has passed:
 
-> **The tree is not clean right now.** `env.example` and `juena` carry the juena-rag
-> cutover work. **Do not revert it** — commit or finish it first. A baseline taken over
-> uncommitted changes is not a baseline, because step 3 cannot tell a test you added last
-> week from one this refactor lost.
+> **This gate was initially blocked.** `env.example` and `juena` carried the juena-rag
+> cutover work. That work is now committed at `ee9248d`; it was not reverted or folded
+> into this cutover. A baseline taken over uncommitted changes would not be a baseline,
+> because step 3 could not tell an earlier test change from one this refactor lost.
 
 ```bash
 cd juena-chatbot
 git status --short          # must be clean
 ./juena test-all
 
-# and the thing counts cannot give you -- see step 3 for `collect`:
-collect() { PYTHONPATH="$(dirname "$1")" uv run --extra dev pytest --collect-only -q \
-    -p "$(basename "${1%.py}")" tests/ 2>&1 | grep '^NODEID	' | sed 's/^NODEID	//'; }
-collect .../02-collect-nodeids.py | sort > 02-baseline-nodeids.txt
-wc -l 02-baseline-nodeids.txt
+# The pass counts cannot show a removed test offset by an added one. Capture the
+# actual node ids with the plan's pytest plugin. Preserve pytest's exit status:
+# a failed collection must not become a successful grep/sed pipeline.
+PLAN_DIR="$(cd ../Vitess-AI-Agent/docs/execution-plan && pwd)"
+collect() { # $1 = repository; remaining arguments are uv-run options
+    repo="$1"; shift
+    if ! collected="$(
+        cd "$repo" &&
+        PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PLAN_DIR" \
+            uv run "$@" pytest --collect-only -q \
+                -p 02-collect-nodeids tests/ 2>&1
+    )"; then
+        printf '%s\n' "$collected" >&2
+        return 1
+    fi
+    printf '%s\n' "$collected" |
+        awk -F '\t' '$1 == "NODEID" {sub(/^[^\t]*\t/, ""); print}' |
+        sort
+}
+collect . --extra dev > "$PLAN_DIR/02-baseline-nodeids.txt"
+collect ../juena-core --frozen --group dev \
+    > "$PLAN_DIR/02-core-baseline-nodeids.txt"
+wc -l "$PLAN_DIR/02-baseline-nodeids.txt" \
+    "$PLAN_DIR/02-core-baseline-nodeids.txt"
 ```
 
 **Record the collected node ids, not just the totals.** A pass count is a single number,
 and one test removed plus one test added leaves it unchanged. The node id list makes a
-swap visible as a diff. Keep the list somewhere durable — step 3 compares against it.
+swap visible as a diff. Record **both repositories**: core already has tests produced by
+Plan 01, including tests copied from the chatbot, so step 3 needs the pre-cutover union
+rather than treating every pre-existing core test as a Plan 02 addition.
 
 > **The original `grep '::' | sed …` recipe is not sound for this suite, and was replaced
 > after being measured.** Several parametrised ids in `test_agent_prompts.py` and
 > `test_specialists.py` embed prompt text containing real newlines, so pytest prints one
 > node id across several lines: fragments carrying a `::` are counted as extra tests and
-> fragments without one disappear. It reported **465** matching lines against **457**
-> collected tests, and arrived at the right grand total only by cancelling its own two
-> errors. [`02-collect-nodeids.py`](02-collect-nodeids.py) reads `item.nodeid` from pytest,
-> so the line count *is* the collection count.
+> fragments without one disappear. On the 457-test unit collection it reported **457**
+> matching lines only because four real node ids disappeared while four prompt fragments
+> were falsely counted in their place. [`02-collect-nodeids.py`](02-collect-nodeids.py)
+> reads `item.nodeid` from pytest, so every output line is a real collected test.
 >
 > It also **digests any parameter that is long or multi-line** (4 of the 473 ids). This
 > list is versioned in *this* repository while the tests live in juena-chatbot's, and two
@@ -88,14 +110,25 @@ baseline is reproducible, unlike 01/CP0's dirty-checkout observation).
 git status --short          (empty)
 ./juena test                452 passed, 5 skipped
 ./juena test-integration    16 passed
-collected node ids          473 across 46 test modules
+chatbot collected node ids  473 across 46 test modules
+core collected node ids     385 across 38 test modules
+pre-cutover identity union  745 unique; 113 shared by both repositories
 ```
 
 457 + 16 = 473, so the collected list and the two runs agree exactly. The list is
 [`02-baseline-nodeids.txt`](02-baseline-nodeids.txt), versioned beside this plan rather
-than left in `/tmp`, because step 3 diffs against it a week later. Normalising it to
-compare-on-name (`sed 's|^.*/||' | sort -u`) still yields 473 lines, so no two tests in
-the two repositories can collide on name alone.
+than left in `/tmp`, because step 3 diffs against it a week later. Core's frozen list is
+[`02-core-baseline-nodeids.txt`](02-core-baseline-nodeids.txt), collected at `d086c01`.
+Normalising the chatbot list to compare-on-identity
+(`sed 's|^[^:]*::||' | sort -u`) still yields 473 lines, so the chatbot baseline contains
+no duplicate identities after the module path is removed.
+
+The two pre-cutover lists are deliberately not disjoint. Core already contains **113**
+generic test identities copied or rewritten during Plan 01; **112** belong to the 13
+modules that move whole below, and `test_registration_wraps_every_specialist` is the
+generic half of `test_findings_lifecycle`. Their union has **745** unique identities:
+473 + 385 - 113. Step 3 must collapse those duplicates, preserve that union, and then
+account for any genuinely new Plan 02 tests.
 
 The cutover branch is `juena-core-cutover`, taken from `juena-rag-cutover`. Core is at
 `d086c01` (`docs: add MIT license`), one documentation commit after the `cc45ec5` handoff
@@ -238,28 +271,30 @@ The 46 modules, mapped by what they import after CP7's boundary amendment:
 `test_sandbox_pipeline_integration` · `test_sandbox_worker` ·
 `test_sandbox_workspace`
 
-### Stays — 22
+### Stays — 21
 
 `test_agent_prompts` · `test_agent_resources` · `test_api_endpoints_files` ·
 `test_bootstrap` · `test_chat_interface` · `test_config_paths` · `test_context7_tools` ·
-`test_findings_lifecycle` · `test_juena_agent_runtime` · `test_main` ·
-`test_postgres_integration` · `test_rag_index` · `test_repo_config` ·
-`test_repo_manager` · `test_repo_search_tools` · `test_research` · `test_saml_auth` ·
-`test_sidebar` · `test_specialists` · `test_starters` · `test_supervisor_routing` ·
-`test_tavily_tools`
+`test_juena_agent_runtime` · `test_main` · `test_postgres_integration` ·
+`test_rag_index` · `test_repo_config` · `test_repo_manager` ·
+`test_repo_search_tools` · `test_research` · `test_saml_auth` · `test_sidebar` ·
+`test_specialists` · `test_starters` · `test_supervisor_routing` · `test_tavily_tools`
 
-### Splits — 2
+### Splits — 3
 
 | Module | Core half | App half |
 |---|---|---|
 | `test_agent_client` | `BaseAgentClient` transport, SSE parsing, core routes | `get_current_user` (`/auth/me`), `list_research` (`/research`) |
+| `test_findings_lifecycle` | `test_registration_wraps_every_specialist` already exists in core's `test_findings_and_delegation.py`; delete the duplicate app copy | background-job merge, conflict and delivery lifecycle |
 | `test_ui_components` | message, token and artifact rendering | logo and header |
 
 `test_agent_client` moved from the "moves whole" column once the client itself split
 (00, decision 10). The four former sandbox-related splits now move whole because both
-their generic contracts and optional implementation are core-owned. **22 move, 22 stay,
-2 split.** `test_sandbox_config` and `test_simple_chat_example` are deliberate additions
-in core rather than baseline nodes that moved.
+their generic contracts and optional implementation are core-owned. The baseline audit
+also found one already-copied generic test inside `test_findings_lifecycle`, so that file
+now splits rather than retaining a duplicate. **22 move, 21 stay, 3 split.**
+`test_sandbox_config` and `test_simple_chat_example` are pre-existing core tests rather
+than chatbot baseline nodes that move.
 
 **`test_postgres_integration.py` does not split.** After the re-point it imports core
 server/sandbox modules beside `juena.research`, application identity and application
@@ -269,36 +304,68 @@ that exercises that wiring against a real database.
 ### The reconciliation, which is the instrument
 
 Collect node ids from both repositories, normalise the paths, and **diff against the
-baseline** — do not compare totals:
+unique pre-cutover union** — do not compare totals and do not compare only against the
+chatbot list. The latter would misclassify core's 272 core-only identities as additions.
 
-Node ids look like `tests/test_loop_guard.py::test_blocks_repeat`. A test that moves
-repositories keeps its name and changes its path, so **compare on the part after
-`::`** — otherwise every moved test reads as one removal plus one addition and the diff
-is useless.
+Node ids look like `tests/test_loop_guard.py::test_blocks_repeat`. A test that moves or
+splits may change its module path while retaining the same test identity, so **compare
+on the part after the first `::`**. The chatbot list is unique on that identity; the
+cross-repository baseline has the 113 known overlaps described above. Do not use
+`sort -u` after combining the post-cutover repositories, because that would hide a test
+accidentally left in both.
 
 ```bash
-# one line per collected test, whatever a parametrised id contains -- see step 1
-collect() {  # $1 = repo, $2 = extra uv args
-    ( cd "$1" && PYTHONPATH="$PLUGIN_DIR" uv run $2 pytest --collect-only -q \
-        -p 02-collect-nodeids tests/ 2>&1 | grep '^NODEID	' | sed 's/^NODEID	//' )
+# Run from the directory that contains all three sibling repositories.
+cd /Users/az-ihsan/Documents/kerjaan-ihsan/post-doc/JueNA_knowledge_base
+PLAN_DIR="$(pwd)/Vitess-AI-Agent/docs/execution-plan"
+
+# One line per collected test, whatever a parametrised id contains. This is the
+# same failure-preserving collector used in step 1.
+collect() { # $1 = repository; remaining arguments are uv-run options
+    repo="$1"; shift
+    if ! collected="$(
+        cd "$repo" &&
+        PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PLAN_DIR" \
+            uv run "$@" pytest --collect-only -q \
+                -p 02-collect-nodeids tests/ 2>&1
+    )"; then
+        printf '%s\n' "$collected" >&2
+        return 1
+    fi
+    printf '%s\n' "$collected" |
+        awk -F '\t' '$1 == "NODEID" {sub(/^[^\t]*\t/, ""); print}' |
+        sort
 }
-collect juena-core    "--frozen --group dev"     > /tmp/after-core.txt
-collect juena-chatbot "--extra dev"              > /tmp/after-app.txt
+collect juena-core    --frozen --group dev > /tmp/after-core.txt
+collect juena-chatbot --extra dev          > /tmp/after-app.txt
 
-name_only() { sed 's|^.*/||' | sort; }
-cat /tmp/after-core.txt /tmp/after-app.txt | name_only > /tmp/after-nodeids.txt
-name_only < 02-baseline-nodeids.txt               > /tmp/baseline-names.txt
+identity_only() { sed 's|^[^:]*::||' | sort; }
+cat "$PLAN_DIR/02-baseline-nodeids.txt" \
+    "$PLAN_DIR/02-core-baseline-nodeids.txt" |
+    identity_only | uniq > /tmp/before-identities.txt
+cat /tmp/after-core.txt /tmp/after-app.txt |
+    identity_only > /tmp/after-identities-all.txt
 
-diff /tmp/baseline-names.txt /tmp/after-nodeids.txt
+# Every pre-cutover cross-repository duplicate must collapse during the cutover.
+# Do not use `sort -u` here: that would hide a test left in both repositories.
+uniq -d /tmp/after-identities-all.txt > /tmp/after-duplicates.txt
+if [ -s /tmp/after-duplicates.txt ]; then
+    printf 'duplicate post-cutover test identities:\n' >&2
+    cat /tmp/after-duplicates.txt >&2
+    exit 1
+fi
+
+uniq /tmp/after-identities-all.txt > /tmp/after-identities.txt
+diff /tmp/before-identities.txt /tmp/after-identities.txt
 ```
 
 Reading `item.nodeid` from pytest also drops the `N tests collected in 1.23s` footer,
 which would otherwise appear as a spurious difference every run. Use the **same**
 collector on both repositories and on the step-1 baseline.
 
-Every line in that diff is explained in writing, as one of: **moved** (same test, new
-file path), **added** (deliberately, named), or **removed** (deliberately, with the
-reason). Nothing else is acceptable.
+Moves disappear from the identity diff by design. Every line that remains is explained
+in writing as either **added** (deliberately, named) or **removed** (deliberately, with
+the reason), and `/tmp/after-duplicates.txt` must stay empty. Nothing else is acceptable.
 
 A test that *vanished* in the move is the failure this catches, and it is the failure
 most likely to happen: a file is moved, its imports are not updated, and pytest silently
@@ -435,7 +502,7 @@ debugged.
 
 | Risk | Guard |
 |---|---|
-| **A test disappears in the split and pytest reports green.** The likeliest failure | the node-id diff in step 3 — a count comparison would miss a removal paired with an addition |
+| **A test disappears in the split and pytest reports green.** The likeliest failure | the pre/post identity-union diff and separate duplicate check in step 3 — a count comparison would miss a removal paired with an addition |
 | The suite tests in-repo modules, not the installed core | `juena_core.__file__` resolves into the venv |
 | `agent_id` backfill forgotten; `create_all` cannot add a not-null column to a live table | step 2's `ALTER`, run once, after a dump |
 | `AUTH_DEV_BYPASS=true` hides a broken SAML path | step 5 |
@@ -461,7 +528,7 @@ inherits it.
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
 | **Unblocks** | 03 |
-| **Executed** | step 1 complete — clean baseline at chatbot `ee9248d`, 473 node ids recorded, branch `juena-core-cutover` opened against core `d086c01`. Step 2 is next |
-| **Decided** | the test split (22 / 22 / 2); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the node-id diff is the instrument; prompts must not change; `JuenaAgentClient` subclasses core; `agent_id` is backfilled to `'juena'` |
+| **Executed** | step 1 complete — clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), with a 745-identity union and 113 expected pre-cutover overlaps recorded. Branch `juena-core-cutover` is open. Step 2 is next |
+| **Decided** | the test split (22 / 21 / 3); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the two-baseline identity diff is the instrument; prompts must not change; `JuenaAgentClient` subclasses core; `agent_id` is backfilled to `'juena'` |
 | **Open** | nothing — this plan answers questions rather than asking them |
-| **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md), then amended by 01/CP7 — node ids replace pass counts, installed-core check added, client subclass and `agent_id` backfill added, sandbox cutover made explicit |
+| **Revised** | 2026-09-16 after the step-1 review — collector commands now preserve collection failures and do not dirty the plan tree; both repository baselines are recorded; reconciliation compares the 745-identity pre-cutover union and rejects duplicates; the test split is corrected to 22 / 21 / 3; stale local-only and dirty-tree statements are corrected. Earlier review and 01/CP7 amendments remain in force |

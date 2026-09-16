@@ -9,15 +9,17 @@ Two properties the plan's original
 **One line per test.** Several parametrised ids in this suite embed prompt text
 containing real newlines, so pytest prints one node id across several lines.
 Fragments carrying a ``::`` are then counted as extra tests and fragments
-without one disappear — measured at 465 matching lines against 457 collected
-tests, right in total only because the two errors cancelled.
+without one disappear. On the 457-test unit collection, four real node ids were
+lost and four prompt fragments were counted instead, so even the accidentally
+correct line total described the wrong tests.
 
-**No test payload in the output.** The baseline list is versioned beside the
-plan, which lives in a different repository from the tests. A parametrised id
-carrying a specialist prompt would copy that prompt into that repository's
-history, where nothing would ever remove it. Any parameter that is long or
-multi-line is replaced by a digest of itself, which is stable across the move
-and still makes a changed parameter visible as a diff.
+**No long or multi-line test payload in the output.** The baseline list is
+versioned beside the plan, which lives in a different repository from the
+tests. A parametrised id carrying a specialist prompt would copy that prompt
+into that repository's history, where nothing would ever remove it. Any
+parameter that is long or multi-line is replaced by a digest of itself, which
+is stable across the move and still makes a changed parameter visible as a
+diff. Short, ordinary ids stay readable.
 """
 
 from __future__ import annotations
