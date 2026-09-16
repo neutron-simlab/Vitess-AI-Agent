@@ -346,7 +346,32 @@ uv run python -c "import vitess_ai.cli.command"     # works with no fastmcp inst
 
 ### What actually landed
 
-*(Fill in after the work.)*
+Completed 2026-09-16 in `Vitess-AI-Agent-v2` commit `8cd7b8d`.
+
+- Added the configuration-free `vitess_ai.cli.command` module. Its required inputs
+  include the project root, modules root, canonical thread UUID, canonical simulation
+  UUID and executable mapping; importing it does not load FastMCP.
+- `generate_cli_command` now accepts only validated `list[str]` CLI parameters and
+  emits one exact argument vector per requested module. A missing result, missing or
+  shell-shaped parameter list, absent executable mapping, invalid basename, missing or
+  non-executable binary, path escape or empty input fails closed. Partial failures name
+  the offending module and report only vectors actually emitted.
+- Executable catalog values are basenames. Each binary is resolved beneath the trusted
+  modules root, including symlink resolution, and must be executable. Thread and run
+  identifiers are canonical UUIDs. Absolute parameter paths must remain under the
+  project root; parent traversal is rejected.
+- Ordering uses literal `--N1` through `--N5` values and a run-scoped concrete log
+  prefix; no vector in the five-module golden contains `$`. The retained
+  `cli_command` value is explicitly display-only and rendered from the vectors.
+- Added an MCP-side process runner that joins vectors with `subprocess.Popen` pipes and
+  `shell=False`. It records every exit code, fails if any stage fails, terminates every
+  surviving child on timeout and performs result-log concatenation and cleanup with
+  `pathlib`, scoped to the run directory. No script or shell text is generated.
+- Injection regressions cover spaces, semicolons, `$()` and leading dashes as one
+  argument each; `../` and absolute escapes are rejected. The inverted legacy
+  missing-module and empty-input expectations now fail closed.
+- `uv run pytest tests/test_cli_command.py -q`: 25 passed. The complete CP0+CP1 suite:
+  31 passed.
 
 ---
 
