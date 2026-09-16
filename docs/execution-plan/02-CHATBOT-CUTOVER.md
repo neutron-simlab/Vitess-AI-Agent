@@ -539,6 +539,13 @@ if [ -s /tmp/after-duplicates.txt ]; then
 fi
 
 uniq /tmp/after-identities-all.txt > /tmp/after-identities.txt
+# Count identities, not the formatting lines emitted by `diff`: a replacement
+# produces `<`, `---` and `>` lines, but it is one removal and one addition.
+comm -13 /tmp/before-identities.txt /tmp/after-identities.txt \
+    > /tmp/after-additions.txt
+comm -23 /tmp/before-identities.txt /tmp/after-identities.txt \
+    > /tmp/after-removals.txt
+wc -l /tmp/after-additions.txt /tmp/after-removals.txt
 diff /tmp/before-identities.txt /tmp/after-identities.txt
 ```
 
@@ -586,8 +593,13 @@ PY
 
 ### What actually landed
 
-**Step 3 completed 2026-09-16.** The reconciliation passed with **no duplicate
-identities** and a 41-line diff, every line of which is named below.
+**Step 3 completed 2026-09-16** in core `b9e2304` and chatbot `8a8f448`; its review
+corrections are core `4eca16e` and chatbot `ed4a307`. The reconciliation passed with
+**no duplicate identities** and 35 changed identities — 18 additions and 17 removals —
+every one of which is named below. The first execution record incorrectly reported 21
+additions and 20 removals. A fresh `comm` comparison gives 18/17; classic `diff` prints
+69 lines for the same sets — 35 identity lines plus 34 hunk markers and separators — so
+its raw output length is not an identity count.
 
 ```text
 juena-core  tests/                        500 collected  495 passed, 5 skipped
@@ -595,18 +607,21 @@ juena-chatbot ./juena test                230 collected  230 passed
 juena-chatbot ./juena test-integration     16 passed     (baseline: 16)
 post-cutover unique identities            746            (pre-cutover union: 745)
 duplicate identities across both repos       0
+added identities                             18
+removed identities                           17
 ./scripts/check-imports.sh                import direction ok
-prompt files                              byte-identical -- no .md changed in juena-chatbot
+agent prompt Markdown and @tool docstrings byte-identical to chatbot `ee9248d`
 installed juena_core                      in the venv, byte-identical to the sibling source
 ```
 
 Neither repository's `src/` changed. This step moved tests and nothing else, apart from
-one `pyproject.toml` addition recorded under *What else changed* below.
+the `pyproject.toml` test configuration and development dependency recorded under *What
+else changed* below.
 
-#### Moving meant three different things
+#### Moving meant four different things
 
 Plan 01 wrote core's tests fresh, as **contracts**; juena-chatbot's are the detailed
-**behavioural** suite for the same code. So "22 modules move" resolved into three
+**behavioural** suite for the same code. So "22 modules move" resolved into four
 different operations, and which one applied was decided by comparing identities, never
 by comparing file names:
 
@@ -614,7 +629,8 @@ by comparing file names:
 |---|---|---|
 | **Deleted as superseded** | 13 | `test_agent_backends`, `test_artifact_message_middleware`, `test_ask_user`, `test_loop_guard`, `test_specialist_outcome` and the eight `test_sandbox_*` modules. Core already held every identity, at equal or finer grain. |
 | **Moved whole** | 9 | `test_agent_input_handler`, `test_code_chat_inputs`, `test_llm_models`, `test_runtime_model_middleware`, `test_server_utils`, `test_streaming_handlers`, `test_ui_components`, plus `test_math_rendering` and `test_chat_storage`, which **replaced** plan-01 placeholders rather than joining them. |
-| **Split** | 4 | `test_agent_client`, `test_api_endpoints_files`, `test_chat_interface`, `test_findings_lifecycle`. |
+| **Moved and partly superseded** | 1 | `test_api_endpoints_files`: the deletion contract moved to core and the recency contract already existed there under the same identity. Nothing remained application-owned. |
+| **Split** | 3 | `test_agent_client`, `test_chat_interface`, `test_findings_lifecycle`. |
 
 #### Reclassifications, found by doing it
 
@@ -653,7 +669,7 @@ keywords instead of a positional decision.
 module, re-pointed at `juena_core.ui.components` and otherwise unchanged. It replaced
 two of CP5's coarser contracts, which its own docstring names.
 
-#### Additions — 21, each deliberate
+#### Additions — 18, each deliberate
 
 Two are this step's, written because the split itself removed a guarantee:
 
@@ -666,7 +682,7 @@ Nine are one parametrisation: `test_module_does_not_import_an_application[...]` 
 case per file that arrived in `juena-core/tests/`, `conftest.py` included. Covering the
 moved tests is exactly why that rule runs over `tests/` as well as `src/`.
 
-The remaining ten are **step 2's**, appearing here only because the reconciliation runs
+The remaining seven are **step 2's**, appearing here only because the reconciliation runs
 now and the baselines predate core `78fc3dd` and `347d5a5`. Each is recorded in step 2's
 findings: `test_extra_lifespans_unwind_before_the_agents_they_may_be_using` (finding 1);
 `test_findings_keep_create_and_edit_apart_whatever_deep_agents_does` and
@@ -680,7 +696,7 @@ findings: `test_extra_lifespans_unwind_before_the_agents_they_may_be_using` (fin
 `test_shutdown_agents_closes_cached_context7_clients` and
 `test_existing_path_write_behaviour_is_left_to_the_backend` leave.
 
-#### Removals — 20, each with the identity that covers the same ground
+#### Removals — 17, each with the identity that covers the same ground
 
 **Plan-01 placeholders replaced by the behavioural suite (8).** Five in
 `test_math_rendering` — `test_normalize_math_markdown_rewrites_aliases`,
@@ -695,7 +711,7 @@ built on `Mock`, replaced by
 and `test_artifact_history_fetch_uses_the_session_client`, replaced by the finer suite
 in `test_ui_components.py`.
 
-**Application copies superseded by a core identity (11).**
+**Older identities superseded by a differently named core contract (8).**
 `test_the_supervisors_private_working_memory_does_not_reach_a_specialist` and
 `test_a_state_field_nobody_allowlisted_does_not_cross_either` →
 `test_only_inputs_and_findings_cross_into_a_specialist`, which asserts both the file
@@ -708,9 +724,16 @@ carried was transplanted into core's versions, which had none.
 `write` and `pool` halves of the timeout assertion.
 `test_resume_stream_posts_exact_decision` →
 `test_resume_stream_keeps_interrupt_kind_application_defined`, extended here to assert
-that the provider and model travel with a resumed turn. Plus the two Context7
-identities, `test_existing_path_write_behaviour_is_left_to_the_backend` and
-`test_authorizing_a_message_touches_chat_recency`, all named above.
+that the provider and model travel with a resumed turn. The three old Context7 contracts
+— `test_load_optional_context7_tools_logs_warning_and_returns_none_on_failure`,
+`test_shutdown_agents_closes_cached_context7_clients` and
+`test_existing_path_write_behaviour_is_left_to_the_backend` — were replaced by the two
+stricter lifecycle contracts named under *Additions*.
+
+`test_authorizing_a_message_touches_chat_recency` and
+`test_registration_wraps_every_specialist` do not appear in this removal list: their
+application copies were deleted, but the same identities survive in core. Collapsing a
+cross-repository duplicate is deliberately invisible in a unique-set delta.
 
 **A contract that no longer exists (1).**
 `test_resume_stream_rejects_an_ambiguous_reply` asserted that the client refuses a
@@ -726,6 +749,15 @@ instead. Nothing replaces it, because nothing should.
 extraction. Core had no pytest configuration at all, so the warning that announces a
 framework call is about to stop working was scrolling past in a green run — and with two
 consumers, both would inherit the breakage from core at once.
+
+The review also adds `streamlit>=1.53.0` to core's development group. Moving the UI
+behavioural tests made Streamlit a test dependency, but the first run reused a venv that
+had previously installed the `ui` extra. In a genuinely isolated frozen environment,
+`uv run --group dev` failed at `import streamlit`; the development group now makes the
+documented test command self-contained without making Streamlit a base runtime
+dependency. Both lock files were refreshed: core records the development dependency,
+and the chatbot's lock records the updated metadata of its path dependency. No resolved
+runtime version changed.
 
 `juena-core/tests/conftest.py` gives the moved tests configured settings through a
 `configured` fixture and a `settings_factory`, rather than a sixth copy of
@@ -835,15 +867,20 @@ enforces it.
 4. All four conversations in step 4 behave as they did before the cutover.
 5. A pre-cutover thread reopens and renders identically.
 6. A real SAML login works with `AUTH_DEV_BYPASS=false`.
-7. **No prompt file changed.** `AGENT.md`, `SUPERVISOR.md` and every tool docstring are
-   byte-identical:
+7. **No model-facing prompt text changed.** The authored Markdown below
+   `src/juena/agents` and every LangChain `@tool` docstring are byte-identical to the
+   recorded pre-cutover commit:
 
    ```bash
-   git diff --stat -- '*.md' 'src/juena/**/AGENT.md' 'src/juena/**/SUPERVISOR.md'
+   uv run python ../Vitess-AI-Agent/docs/execution-plan/02-compare-prompts.py \
+       ee9248d HEAD
    ```
 
-   The model's contract is not part of this refactor. A diff there means something
-   crossed the boundary that should not have.
+   The earlier whole-`*.md` command was both over-broad and ineffective after commit:
+   it compared the clean worktree to `HEAD`, and `deploy/SANDBOX.md` legitimately changes
+   the worker module path in this cutover. The model's contract is not part of this
+   refactor. A difference reported by the focused verifier means something crossed the
+   boundary that should not have.
 8. The parent-context Docker build succeeds, and its build record names the clean core
    SHA and image digest.
 9. Compose gives no API/UI container a Podman socket; the host worker alone can reach
@@ -881,7 +918,7 @@ inherits it.
 |---|---|
 | **Depends on** | 01, verified, committed, clean, with its core SHA recorded |
 | **Unblocks** | 03 |
-| **Executed** | steps 1, 2 and 3 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a`+`21210ac`+`aa23497` against core `78fc3dd`+`347d5a5` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and three defects fixed in core. Step 3: the tests split — 13 superseded modules deleted, 9 moved whole, 4 split — with the identity reconciliation passing at 746 unique identities, **zero cross-repository duplicates**, and all 41 diff lines explained above. Step 3.5 is next, and builds the cutover image before step 4's runtime proof |
+| **Executed** | steps 1, 2 and 3 complete. Step 1: clean baselines at chatbot `ee9248d` (473 node ids) and core `d086c01` (385 node ids), a 745-identity union with 113 expected overlaps, branch `juena-core-cutover`. Step 2: chatbot `b5cd33a`+`21210ac`+`aa23497` against core `78fc3dd`+`347d5a5` — 44 modules deleted, integration suite green at its baseline 16, prompts byte-identical, `chats.agent_id` backfilled over 209 live rows, and three defects fixed in core. Step 3: core `b9e2304`+`4eca16e`, chatbot `8a8f448`+`ed4a307`; 13 superseded modules were deleted, 9 moved whole, 1 moved with its other identity already superseded, and 3 split. The reconciliation passes at 746 unique identities, **zero cross-repository duplicates**, 18 deliberate additions and 17 deliberate removals. Step 3.5 is next, and builds the cutover image before step 4's runtime proof |
 | **Decided** | the test split (22 / 20 / 4); `Config` stays in the app; generic sandbox Python moves to optional core while deployment assets stay; the two-baseline identity diff is the instrument; prompts must not change; `AgentClient` subclasses core's `BaseAgentClient`; `agent_id` is backfilled to `'juena'` |
 | **Open** | nothing — this plan answers questions rather than asking them |
-| **Revised** | 2026-09-16 after step 3 — the allocation is recorded as executed (13 deleted / 9 moved / 4 split), with four reclassifications named in step 3's record: `test_ui_components` moves whole, `test_api_endpoints_files` is a move plus a delete, `test_findings_lifecycle` loses four identities rather than one, and `test_agent_client` splits 5/2. Earlier, 2026-09-16 after the step-2 review — the split is corrected to 22 / 20 / 4; the worker command, sandbox settings, client name, dependency-lock wording and diagnostic-test label now match the implementation; the running-worker limit check covers concurrency and reads a startup snapshot; the parent-context build moves before runtime proof. The step-1 collector and baseline corrections, earlier reviews and 01/CP7 amendments remain in force |
+| **Revised** | 2026-09-16 after the Step 3 review — the reconciliation counts identities with `comm` (18 added / 17 removed), replacing the earlier incorrect 21/20 tally; the executed allocation is stated consistently as 13 superseded / 9 moved / 1 moved-and-partly-superseded / 3 split; and core's development group installs Streamlit so the frozen test command works in an isolated environment. The four implementation reclassifications remain: `test_ui_components` moves whole, `test_api_endpoints_files` is a move plus a delete, `test_findings_lifecycle` loses four application identities rather than one, and `test_agent_client` splits 5/2. Earlier Step 2 and Step 1 reviews, baseline corrections and 01/CP7 amendments remain in force |
