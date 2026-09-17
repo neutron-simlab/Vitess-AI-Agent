@@ -1,6 +1,12 @@
 from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
-from vitess_ai.schema.base import VitessParameterModel, VtMonPar, VtFiltComb, VtFormat2D
+from vitess_ai.schema.base import (
+    VitessParameterModel,
+    VtFiltComb,
+    VtFormat2D,
+    VtMonPar,
+    validate_monitor_filter_configuration,
+)
 
 
 class Monitor2DParameters(VitessParameterModel):
@@ -197,6 +203,31 @@ class Monitor2DParameters(VitessParameterModel):
     )]
 
     @model_validator(mode="after")
+    def the_monitor_measures_something(self) -> "Monitor2DParameters":
+        """Both axes, the file format and the file name are all required.
+
+        `VtMonPar.NO_PAR` (0) and `VtFormat2D.NO_2D_FORMAT` (-1) are sentinels
+        this schema invented -- neither appears in the VITESS parameter list or
+        among the documented formats ('matrix', 'xyz', 'matrix_compact',
+        'xyz_compact'). A grid with no axes, written in no format, to no file,
+        still exits 0.
+        """
+        for field_name, value in (("xParam", self.xParam), ("yParam", self.yParam)):
+            if value == VtMonPar.NO_PAR:
+                raise ValueError(
+                    f"{field_name} must name the quantity for that axis; "
+                    "NO_PAR (0) is not a VITESS parameter"
+                )
+        if self.format == VtFormat2D.NO_2D_FORMAT:
+            raise ValueError(
+                "format must be one of the VITESS 2D formats; NO_2D_FORMAT (-1) "
+                "is not one of them"
+            )
+        if not self.fMonitorFilename.strip():
+            raise ValueError("fMonitorFilename is required")
+        return self
+
+    @model_validator(mode="after")
     def ranges_are_ordered(self) -> "Monitor2DParameters":
         if self.xMin >= self.xMax:
             raise ValueError("xMin must be smaller than xMax")
@@ -209,6 +240,21 @@ class Monitor2DParameters(VitessParameterModel):
         ):
             if lower is not None and upper is not None and lower >= upper:
                 raise ValueError(f"{label} minimum must be smaller than its maximum")
+        return self
+
+    @model_validator(mode="after")
+    def filters_are_complete(self) -> "Monitor2DParameters":
+        validate_monitor_filter_configuration(
+            lambda_minimum=self.lambdaMin,
+            lambda_maximum=self.lambdaMax,
+            parameter_1=self.filterParam1,
+            minimum_1=self.filterVarMin1,
+            maximum_1=self.filterVarMax1,
+            parameter_2=self.filterParam2,
+            minimum_2=self.filterVarMin2,
+            maximum_2=self.filterVarMax2,
+            combination=self.filterComb,
+        )
         return self
 
 

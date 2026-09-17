@@ -26,7 +26,7 @@ import json
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, get_args
 
 from deepagents.middleware.subagents import CompiledSubAgent
 from langchain.agents import create_agent
@@ -66,6 +66,7 @@ __all__ = [
     "build_staged_files_tool",
     "build_validation_tool",
     "build_variants_tool",
+    "omitted_file_value",
     "validate_module_parameters",
     "plain_filename",
     "staged_upload_path",
@@ -77,23 +78,25 @@ __all__ = [
 SPECIALIST_PROVIDER = Provider.BLABLADOR.value
 SPECIALIST_MODEL = BlabladorModelName.GPT_OSS.value
 
-#: A module specialist's whole job is a conversation and one validation call.
-#: `FilesystemMiddleware` otherwise binds eight tools -- `ls`, `read_file`,
-#: `write_file`, `edit_file`, `delete`, `glob`, `grep` and **`execute`** -- and
-#: a specialist bound to ten tools it will never use spends context on them and,
-#: on a weaker model, reaches for them. `read_file` is the one the middleware
-#: requires in any allowlist, and it is the one that earns its place: the
-#: delegation boundary carries `/findings/` in, so a later module can read what
-#: an earlier one recorded.
-FILESYSTEM_TOOLS = ("read_file",)
+#: No filesystem at all. A module specialist's whole job is a conversation and
+#: one validation call, and `FilesystemMiddleware` otherwise binds eight tools
+#: -- `ls`, `read_file`, `write_file`, `edit_file`, `delete`, `glob`, `grep` and
+#: **`execute`** -- which is context spent on tools it will never use and, on a
+#: weaker model, an invitation to use them.
+#:
+#: The allowlist was `("read_file",)` for one checkpoint, on the theory that a
+#: later module could read a finding an earlier one recorded. It could not. A
+#: `/findings/` file only exists because some specialist called `write_file`,
+#: none of these five has it, and without `ls` or `glob` there is no way to
+#: discover a path to read either. **These specialists hand off through
+#: `module_results`, a typed state channel, not through files** -- so the tool
+#: was dead, and the prompt paragraph describing it was teaching the model about
+#: something that does not happen. `read_file` is mandatory in any allowlist the
+#: middleware accepts, so `None` -- mount the middleware not at all -- is the
+#: only way to bind none of them.
+FILESYSTEM_TOOLS = None
 
-FILESYSTEM_TOOL_DESCRIPTIONS = {
-    "read_file": (
-        "Read a finding an earlier module specialist recorded under `/findings/`. "
-        "There is nothing else to read; the parameters you need come from the "
-        "user, and the files the user uploaded are listed by `list_staged_files`."
-    ),
-}
+FILESYSTEM_TOOL_DESCRIPTIONS: dict[str, str] = {}
 
 
 def staged_upload_path(
@@ -133,6 +136,48 @@ def staged_upload_path(
             f"{field_name} names {resolved}, but that staged upload does not exist."
         )
     return str(resolved)
+
+
+def omitted_file_value(model: type[BaseModel], field_name: str, value: Any) -> bool:
+    """Is this value the field's own way of saying "there is no file here"?
+
+    Derived from the schema rather than from a second table of optional fields,
+    because two tables of what is optional is how the prompts and the validator
+    came to disagree in the first place. A file field says "no file" with:
+
+    * ``None``, where the annotation admits it -- ``sInstrInfIn``,
+      ``sTraceFileName``, ``sOutFileName``; or
+    * a blank string, where the field's own default is blank, which is how
+      ``GuideParameters.ShapeFileName`` documents "no shape file, omit ``-S``".
+
+    Anything else is a value, and a value gets its shape checked. Before this
+    existed the gate was ``if value:``, so a blank name was neither
+    staged-path-checked nor filename-checked -- it was simply not looked at, and
+    the configuration was recorded as valid. ``sInputFileName=[""]`` came back
+    with the weight ``-a1.0`` and no ``-A`` at all, and read_in ran with nothing
+    to read.
+
+    **The schema decides whether "no file" is allowed here; this only decides
+    whether there is a file to check.** The two must not both hold an opinion:
+    ``sOutFileName`` may be blank exactly when ``bActive`` is false, which is a
+    rule about another field and belongs in ``WriteoutParameters``, where it is.
+    A copy of it here would refuse a configuration the schema accepts.
+    """
+    field = model.model_fields[field_name]
+    admits_none = type(None) in get_args(field.annotation)
+    if value is None:
+        if not admits_none:
+            raise ValueError(f"{field_name} is required and cannot be null")
+        return True
+    if str(value).strip():
+        return False
+    default = field.get_default(call_default_factory=False)
+    if admits_none or (isinstance(default, str) and not default.strip()):
+        return True
+    raise ValueError(
+        f"{field_name} must name a file; an empty name is not how this "
+        f"parameter says there is none"
+    )
 
 
 def plain_filename(value: str, *, field_name: str) -> str:
@@ -227,18 +272,20 @@ def validate_module_parameters(
         value = getattr(validated, field_name, None)
         values = value if isinstance(value, list) else [value]
         for item in values:
-            if item:
-                staged_upload_path(
-                    str(item),
-                    field_name=field_name,
-                    project_root=project_root,
-                    thread_id=thread_id,
-                    upload_module=upload_module,
-                )
+            if omitted_file_value(model, field_name, item):
+                continue
+            staged_upload_path(
+                str(item),
+                field_name=field_name,
+                project_root=project_root,
+                thread_id=thread_id,
+                upload_module=upload_module,
+            )
     for field_name in output_filename_fields:
         value = getattr(validated, field_name, None)
-        if value:
-            plain_filename(str(value), field_name=field_name)
+        if omitted_file_value(model, field_name, value):
+            continue
+        plain_filename(str(value), field_name=field_name)
     # Built and thrown away: a configuration that cannot be expressed as VITESS
     # arguments must fail here, not at execution time with the user gone.
     parameters_to_arguments(validated)
@@ -275,9 +322,10 @@ def build_validation_tool(
         args_schema=_ValidationArguments,
         description=(
             f"Validate the complete {module} parameter object and record it for "
-            "this conversation. Call it once you have every value; a validation "
-            "error is returned to you to fix, and nothing is recorded until it "
-            "passes."
+            "this conversation. Call it only after you have displayed the complete "
+            "object and `ask_user` has returned the user's affirmative confirmation. "
+            "A validation error is returned to you to fix, and nothing is recorded "
+            "until it passes."
         ),
     )
     def validate(

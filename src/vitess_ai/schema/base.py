@@ -11,7 +11,7 @@ class VitessParameterModel(BaseModel):
     though the requested value had passed validation.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 class VtPrgFormat(IntEnum):
     VT_VITESS_FMT = 1
@@ -98,13 +98,91 @@ class VtMonPar(IntEnum):
     COLOR = 14
 
 class VtFiltComb(IntEnum):
-    """
-    Enumeration for filter combination types.
+    """How the two monitor filter parameters are combined.
+
+    ``NO_FCOMB`` is this schema's "not chosen" sentinel, and it is **not inert**.
+    Measured against VITESS 3.8 ``monitor1D`` on a 1000-trajectory beam, a run
+    carrying two complete filters keeps every neutron passing *either* of them
+    for ``-C-1``, ``-C0`` and ``-C2`` alike; only ``-C1`` keeps those passing
+    both. So a configuration that leaves this at ``NO_FCOMB`` with both filters
+    set has silently chosen OR, which is the one case the monitor validator
+    refuses. With one filter or none, the flag changes nothing at all.
     """
     NO_FCOMB = -1
     OR_OR_OR = 0
     AND_AND_AND = 1
     AND_OR_AND = 2
+
+
+def validate_monitor_filter_configuration(
+    *,
+    lambda_minimum: float | None,
+    lambda_maximum: float | None,
+    parameter_1: VtMonPar,
+    minimum_1: float | None,
+    maximum_1: float | None,
+    parameter_2: VtMonPar,
+    minimum_2: float | None,
+    maximum_2: float | None,
+    combination: VtFiltComb,
+) -> None:
+    """Refuse a monitor filter VITESS would quietly read as a different filter.
+
+    Each filter is three independent CLI flags -- the parameter and its two
+    bounds -- and a bound VITESS is not given is 0 rather than "no bound". It
+    never refuses the run. Every rule below was measured against VITESS 3.8
+    ``monitor1D`` on a 1000-trajectory beam whose unfiltered total is 6.01e10,
+    and each one is here because the half-configured form exits 0 with a plot
+    nobody asked for:
+
+    ==========================  ==========================================
+    ``-l4`` with no ``-L``      total 0 -- lambda in [4, 0] keeps nothing
+    ``-L12`` with no ``-l``     total unchanged -- no filtering at all
+    ``-u-0.5`` with no ``-U``   total 3.87e10 -- a filter on [-0.5, 0]
+    ``-I1`` with no bounds      total unchanged -- no filtering at all
+    ``-u``/``-U`` with no -I    total unchanged -- no filtering at all
+    ==========================  ==========================================
+
+    Two things are deliberately **not** refused, because the binary handles them
+    correctly and refusing them would make a working configuration
+    inexpressible: filter 2 used on its own (measured identical to the same
+    filter in slot 1), and a combination set while fewer than two filters are
+    active, which changes nothing.
+    """
+
+    for label, lower, upper in (
+        ("lambda", lambda_minimum, lambda_maximum),
+        ("filter 1", minimum_1, maximum_1),
+        ("filter 2", minimum_2, maximum_2),
+    ):
+        if (lower is None) != (upper is None):
+            raise ValueError(
+                f"{label} needs both a minimum and a maximum, or neither; "
+                "VITESS reads a missing bound as 0 rather than as no bound"
+            )
+
+    both_filters_in_use = True
+    for index, parameter, minimum, maximum in (
+        (1, parameter_1, minimum_1, maximum_1),
+        (2, parameter_2, minimum_2, maximum_2),
+    ):
+        has_parameter = parameter != VtMonPar.NO_PAR
+        has_limits = minimum is not None and maximum is not None
+        if has_parameter and not has_limits:
+            raise ValueError(
+                f"filter {index} names a parameter but no limits to filter by"
+            )
+        if has_limits and not has_parameter:
+            raise ValueError(f"filter {index} limits require a filter parameter")
+        both_filters_in_use = both_filters_in_use and has_parameter
+
+    if both_filters_in_use and combination == VtFiltComb.NO_FCOMB:
+        raise ValueError(
+            "two filters must say how they combine: filterComb left at NO_FCOMB "
+            "keeps every neutron passing either filter, and only AND_AND_AND "
+            "keeps those passing both"
+        )
+
 
 class VtFormat2D(IntEnum):
     """
