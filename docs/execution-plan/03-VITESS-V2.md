@@ -1697,6 +1697,107 @@ staged trajectory, produced seven run files, and exercised the stricter models a
 reviewed converter before crossing the MCP boundary. The stack remains running; the UI
 gate and service entrypoint remain CP6 work exactly as recorded above.
 
+### CP4 second review — the prompts claimed more than the validator enforced
+
+Reviewed and corrected on 2026-09-17, on top of `67cc612`. The review probed the five
+**real** validation tools with ten configurations the prompts describe as impossible.
+All ten were recorded as "valid and recorded". Two defect classes, one of them the same
+shape as the one CP4's own review had already found once.
+
+**Empty file names were skipped rather than checked.** Every file field was gated on
+`if value:`, so a blank name went past both the staged-path check and the plain-filename
+check without being looked at. `parameters_to_arguments` then drops an empty string, so
+the flag vanished from the command line too — `sInputFileName=[""]` produced `-a1.0`,
+the weight for input file 1, with no `-A` beside it, and read_in ran with nothing to
+read and exited 0. The same hole swallowed writeout's `-A` and both monitors' `-O`.
+
+Both layers were fixed, and the division between them is the point:
+
+- **The schemas decide whether "no file" is allowed**, because only they can express
+  the conditional case — `sOutFileName` may be blank exactly when `bActive` is false,
+  which is writeout's documented way of running without writing, and a rule about
+  another field cannot live in a generic helper.
+- **`omitted_file_value` decides whether there is a file to check**, reading the answer
+  off the field itself: `None` where the annotation admits it, blank where the field's
+  own default is blank. That is what keeps `GuideParameters.ShapeFileName=""` working —
+  the documented way to omit `-S` — with no second table of optional fields to fall out
+  of step with the models.
+
+The first attempt put the conditional rule in both places, and the new tests caught it
+immediately: the tool layer refused `bActive=False, sOutFileName=""`, a configuration
+the schema accepts. **Two layers that hold opinions about the same question are worse
+than one layer**; two layers that answer different questions are what was wanted.
+
+**Four physics rules existed only as prose.** `nRep=0`, `FactInt=0` on both read-in and
+writeout, `eParX=NO_PAR` on monitor1D, and both axes `NO_PAR` with `NO_2D_FORMAT` on
+monitor2D were all recorded while the module's own prompt said in as many words that
+they could not be. `NO_PAR` (0) and `NO_2D_FORMAT` (-1) are sentinels this schema
+invented — neither is in the VITESS parameter list or among its four documented 2D
+formats — so a monitor configured with them asks VITESS to plot a quantity that does not
+exist, and still exits 0. They are model constraints now.
+
+**The VITESS documentation, not the prompt, settled each rule.** `rag/vitess-rag/data/`
+gives `repetition >= 1`, `intensity factor > 0` and `colour >= -1` — which means the
+prompt was the wrong one in exactly one case: writeout's said colour had to be "-1 for
+no filter, or a positive integer", and `0` is a colour like any other. Refusing it would
+have made a legal configuration impossible to express. The prompt was corrected to the
+documentation and a test pins the direction, so it cannot be "fixed" back into the
+schema later.
+
+**One canonical order of work, in all five prompts.** Each prompt had described two
+different orders in three places: PATH B ended "build, validate, present", the
+guidelines said "present the final configuration before validating it", and the
+validation rules ended "always validate the final JSON before presenting it". Monitor2D
+managed to say "validate, then present the JSON" and, eighty lines later, "after
+validation, return immediately". The sequence — collect, build, present, validate, stop
+— is now one authored block pasted into all five, and a test asserts the five copies are
+identical word for word, so an edit to one has to be an edit to all five. Presenting
+before validating is the direction kept: it is the user's only chance to catch a value
+that is legal and still not what they meant.
+
+**`read_file` is gone, and so is the paragraph describing it.** The tool trim left every
+specialist with `read_file` alone, on the theory that the delegation boundary carries
+`/findings/` in so a later module could read what an earlier one recorded. It could not:
+a `/findings/` file exists only because some specialist called `write_file`, none of
+these five has it, and without `ls` or `glob` there is no path to guess at. These
+specialists hand off through `module_results`, a typed state channel. Since `read_file`
+is mandatory in any allowlist `FilesystemMiddleware` accepts, core gained
+`filesystem_tools=None` — mount the middleware not at all. Core also now rejects a bare
+string: `Sequence[str]` admitted `"read_file"` by its type and turned it into eight
+one-letter tool names.
+
+**The prompt/tool regression test did not enforce its own guarantee.** Its docstring
+claimed it would catch read-in's historical `get_instrument_file` and
+`instrument_file_status`, but its regex matched a hard-coded list of tool names — so
+putting either back would not have matched the pattern at all and the test would have
+passed. It now reads **every** snake-case backticked word as a tool name and subtracts
+the ones that provably are not: parameter fields come from the models, executables from
+the catalog, and three VITESS 2D format names from a named list, because their enum
+members are spelled `MATR_CMPT`, `MATR_INT` and `XYZ_CMPT` and cannot be matched to the
+lower-case names the documentation uses. Separately, the one sanctioned prompt-versus-
+schema exception — read-in's `sInstrInfIn`, which the prompt must set to `null` rather
+than to the schema's unusable `instrument.inf` — was *skipped* rather than asserted, so
+the prompt could have drifted to any other value and the test would still have passed.
+The exception now carries the required value.
+
+```text
+uv run pytest -q (v2)                            257 passed  (was 221)
+juena-core                                       476 passed  (+2; same 2 failed,
+                                                 24 errored as before the change --
+                                                 all socket-bound, pre-existing)
+./juena test (chatbot, against the changed core) 232 passed
+ten deliberate breaks                            8 caught directly, 2 masked by the
+                                                 other layer and caught when both
+                                                 were broken together
+argument vectors before vs after                 byte-identical
+live five-module pipeline                        exit 0 x5, 7 files, both plots
+```
+
+The live run is the one worth reading twice: its `cli_parameters` are **produced by the
+five real validation tools**, not hand-written, so a validator that had started refusing
+something VITESS needs would show up as a missing flag or a non-zero exit code rather
+than as a passing unit test. Five exit codes of 0 and a 3–6 Å spectrum with error bars.
+
 ---
 
 ## Checkpoint 5 — advanced_mode
