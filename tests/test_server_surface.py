@@ -138,7 +138,15 @@ def test_importing_the_service_registers_both_agents(tmp_path: Path) -> None:
     [
         ({"DATABASE_URL": ""}, "DATABASE_URL"),
         ({"BLABLADOR_API_KEY": "", "OPENAI_API_KEY": ""}, "API_KEY"),
-        ({"VITESS_API_PUBLISHED": "true"}, "authenticates nobody"),
+        # This deployment's own sentence, not core's. Core refuses the same
+        # pairing a moment later with "local_principal authenticates nobody",
+        # so a test matching that phrase passes whether or not this check
+        # exists -- which is exactly how a guard rots. Two gates are right;
+        # a test that cannot tell them apart is not.
+        (
+            {"VITESS_API_PUBLISHED": "true"},
+            "let anyone on the network act as that user",
+        ),
     ],
 )
 def test_the_service_refuses_to_start_on_a_configuration_that_cannot_work(
