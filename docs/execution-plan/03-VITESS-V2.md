@@ -1591,6 +1591,62 @@ of the validation tools, not out of the test.
 - **The UI half of "Done when".** `vitess-app` still runs `sleep infinity` until CP6,
   so "in the UI" is CP6's check. Everything below the browser is proved above.
 
+### CP4 post-completion review
+
+Reviewed and corrected on 2026-09-17 in `Vitess-AI-Agent-v2` commit `ef21174`.
+This section supersedes the stronger claims above where they describe the original
+`e49d5f0` implementation rather than the reviewed one.
+
+The golden test proved that its **scripted** supervisor delegated in order, but
+`run_simulation` still checked only the set of `module_results`. Reversing all five
+delegations reproduced the exact failure the plan warned about: the complete set passed
+and VITESS executed in catalog order. The application boundary now appends a
+server-authored `SimulationOrderEvent` whenever its own specialist returns a validated
+configuration; `plan_simulation` appends the plan event; and `run_simulation` compares
+the first occurrence of every module after the latest plan, element by element. A later
+reconfiguration remains valid, while delegation before the latest plan or in a different
+first-pass order is refused. A specialist-supplied event is discarded and replaced by
+the boundary's own module name.
+
+Four other boundary defects were found by adversarial tests:
+
+- `schema_version` was recorded but never read. Execution now compares it with the
+  current model, and the fingerprint covers the complete canonical JSON schema rather
+  than only field names and flags. Old checkpointed configurations must be revalidated
+  after a type, constraint, nested field, default or flag changes.
+- The five parameter models still had Pydantic's default `extra="ignore"`. A misspelled
+  field therefore passed validation and silently selected its default. All command-line
+  parameter objects, including writeout's nested objects, now forbid unknown fields.
+- Several promises existed only in descriptions and prompts: a read-in could have a
+  different number of files and weights, a guide could have negative dimensions, and a
+  monitor could have zero bins or reversed ranges. Those are model constraints now, as
+  are writeout's filter ranges. NUL-bearing arguments are refused before process launch.
+- Upload validation checked only that a path was somewhere under the conversation's
+  `uploads/` tree. It accepted a read-in trajectory from the `instrument` slot and a
+  nonexistent path. Each file field now names its catalog-owned slot and must resolve to
+  an existing file there; the trace-file field is covered too. The read-in specialist's
+  staged-file tool now lists both `readin` and `instrument`, which is necessary because
+  `sInstrInfIn` is supplied by the separate catalog row.
+
+The guide prompt also called the default enum `constant` while the schema says
+`VT_LINEAR`; it now describes the actual default: linear with equal entrance and exit
+dimensions, producing a constant cross-section.
+
+```text
+uv run pytest -q                                206 passed
+juena-core delegation boundary                   7 passed
+uv sync --frozen                                ok (187 packages audited)
+wheel contents                                  supervisor + all five AGENT.md files
+docker compose up -d --build                    image sha256:65fc24f03091...
+vitess-app -> http://vitess-mcp:9005/health      healthy, both checks ok
+real five-module MCP pipeline                    exit 0 x5
+```
+
+Both application containers use that same image. The real pipeline used the existing
+staged trajectory, produced seven run files, and exercised the stricter models and the
+reviewed converter before crossing the MCP boundary. The stack remains running; the UI
+gate and service entrypoint remain CP6 work exactly as recorded above.
+
 ---
 
 ## Checkpoint 5 — advanced_mode
