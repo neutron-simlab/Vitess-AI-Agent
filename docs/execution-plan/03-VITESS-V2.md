@@ -2297,7 +2297,120 @@ under *Before you start*; its final paths are what the Docker allowlist must tes
 
 ### What actually landed
 
-*(Fill in after the work.)*
+Completed 2026-09-17 in `Vitess-AI-Agent-v2` `1326bbb`, `b95ce2f`, `6875b46` and
+`d9538c5`.
+
+```text
+vitess test                397 passed  (was 345 at the CP5 review)
+thirteen deliberate breaks 13 caught, after two of them turned out to be testing
+                           the wrong layer
+vitess test-all            187 packages audited, core clean at 4137186,
+                           image b03225d4…
+vitess health              ui ok · api ok · mcp ok
+upload -> inspect_thread_folders   the same file, written by one container and
+                           read by the other
+./juena health + test      still ok and 232 passed, beside a running v2
+```
+
+#### The application exists now
+
+`config.py` keeps its own `Config`, its `os.getenv` and its `validate_required`, and
+hands core a frozen `CoreSettings` — the extension mechanism being that there is none.
+`server/service.py` calls `create_app` with a `local_principal`, one extra router, and
+the two side-effect agent imports whose comment is transplanted from juena-chatbot.
+It serves seventeen routes and **nothing under `/auth/`**.
+
+`validate_required` refuses three things loudly at startup: no `DATABASE_URL`, no model
+key, and `VITESS_API_PUBLISHED`. That last one matters because every request here is
+the same local principal, so a reachable API lets anyone on the network act as that
+user — and core refuses the same pairing a moment later, which is how the *test* for it
+was found to be worthless. It matched core's phrase, so it passed whether or not this
+check existed. It now names this deployment's own sentence, and both gates stay.
+
+#### Uploads: a real file, because the reader is a compiled binary
+
+`server/uploads.py` writes to `{project}/{thread_id}/uploads/{module}/`, and the shared
+volume is what makes that path mean anything in the MCP container. The proof is one
+file uploaded through the HTTP route and then listed by `inspect_thread_folders` from
+the other container — nothing in between copies it.
+
+`FALLBACK_MODULE_TYPES` was not ported. It listed six slots, three of which took no
+files, and it existed because importing the catalog used to drag in LangChain. That
+cannot fail now, so a store that cannot name its slots is a broken install.
+
+The policy is this path's own, not a shared text validator: an extension allowlist, a
+100 MB ceiling, a refusal of empty files, and an **HDF5 signature check** for `.h5` and
+`.nxs`. Those two may never take the chat-attachment path, which decodes with
+`raw.decode("utf-8-sig")`; this one never decodes. The composer accordingly declares no
+`accept_file` at all, and a test pins the comment saying why.
+
+`thread_id` is a `UUID` in every signature rather than a string that gets checked, so
+FastAPI rejects `../..` before any route body runs.
+
+#### Retrieval degrades rather than disappearing
+
+`get_rag_tools()` returns four tools that answer `RAG_UNAVAILABLE: …` when the index is
+empty or Chroma will not open — never an empty list. **A model whose tool list changed
+between conversations cannot say "I could not look that up"**; it simply stops
+mentioning the documentation, and the user cannot tell an unanswerable question from an
+unasked one. Same choice CP3 made for the MCP gateway.
+
+Module specialists get three of the four. `vitess_debug_retrieval` exists to inspect
+retrieval when retrieval looks wrong, which is the orchestrator's problem — CP4
+narrowed these specialists from eleven tools to four, and three documentation tools is
+already the most that can be justified for one whose job is a conversation and a single
+validation call. The appended note carries the sentence the whole thing turns on:
+documentation explains what the *user* meant, and where it disagrees with the schema
+about what is legal, **the schema is what runs**.
+
+Importing `vitess_ai.retrieval` pulls in neither `chromadb` nor `onnxruntime`; every
+`vitess_rag` import is inside a function. A session fixture switches retrieval off for
+the suite, so the tool surface does not depend on whether the developer has
+`BLABLADOR_API_KEY` exported.
+
+#### The sidebar became a manifest
+
+97 lines of navigation plus 110 of manifest, against 596. Three slots, each showing what
+is staged with a **Remove** button beside it — because the answer to a file in the wrong
+slot is to move it, and the reason slots are labelled rather than guessed is that a
+trajectory file in the guide slot produces a simulation that runs, completes and is
+physically wrong.
+
+No output filename appears anywhere in the interface. A test greps all four —
+`output.dat`, `output.out`, `monitor1D.dat`, `monitor2D.dat` — and asserts each still
+has exactly one owner in the schema. The first generation's sidebar said `output.out`
+where `WriteoutParameters` said `output.dat`.
+
+The two file-reading prompts gained **SAY WHICH FILE YOU ARE USING**: re-read the store
+each turn and name what you found, because a file can be replaced between turns and the
+transcript will not notice. The enforceable half was already there —
+`staged_upload_path` refuses a path that is no longer staged.
+
+#### `./vitess`, copied rather than shared
+
+Sixteen commands. What was left behind is the host-process machinery: no pid files, no
+runtime directory, no `wait_for_*` loops, because every process here is a Compose
+service. `check-imports` runs from `test`, not only from `test-all` — it is the rule
+that is cheapest to keep and most expensive to have broken. `provenance` prints the core
+commit, whether that tree is dirty, and the image id.
+
+The container runs the API and the UI as two processes and dies if either does, since a
+UI still serving pages against a dead API looks like it works. The first version used
+`wait -n`, which is a bash builtin: this image's `/bin/sh` is dash, and the container
+restarted every few seconds until the loop was rewritten in POSIX shell.
+
+#### What CP6 deliberately left
+
+- **The output half of the first generation's file store.** Saving, listing and deleting
+  simulation outputs has two owners already — the MCP server writes them under the run
+  id it was given, and the artifact store delivers them. A third copy of "which files
+  may be handed to a user" is how a sweep quietly delivers what the guided path refuses.
+- **A live documentation query.** Indexing sends the manual to the embedding endpoint,
+  which costs the user's quota, so `vitess index-docs` is a command rather than a
+  startup step. The degradation path is proved; the answering path needs a real key.
+- **A conversation.** The stack runs on a placeholder model key. The four
+  conversation-shaped items under *Done when* — the agent naming a file back, a module
+  asking for one in the chat — need a real key and a person to talk to.
 
 ---
 
@@ -2389,7 +2502,7 @@ cheapest time to find that out is the day v2 first runs.
 |---|---|
 | **Depends on** | 02, verified |
 | **Unblocks** | — |
-| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 `4e21722`, reviewed in `cd7ffe6`: the FastMCP server as an internal Compose service with an explicit `/health` route, four exactly allowlisted tools, one pinned image run by two services sharing `/data/projects`, and a new monitor-file reader covering all five layouts `Monitor2DParameters.format` can ask for — proved by a real five-module VITESS pipeline run over MCP from the application container; the review added event-loop isolation, volume-boundary enforcement, unique-run evidence, concurrent health safety and reproducible VITESS/uv pins. CP3a `c2fdfbd`: the sole typed MCP gateway, four closed model façades, private run references, verified application-side file registration and the two root delivery middlewares — proved by a real five-module run and PNG plot through the application container. CP4 `e49d5f0`, with `juena-core` `08c013c`: the simulator rebuilt on `create_agent` and `SubAgentMiddleware` with **no legacy fallback** — `plan_simulation` writes the pipeline order into private state and `run_simulation` reads it back, so the order is a checked precondition rather than a graph shape; five explicit module specialists each with their own `AGENT.md` and one validation tool that is the sole writer of a typed `ModuleConfigurationResult`; one parameter-to-argument converter replacing five that had drifted; and a delegation boundary that returns a specialist's own module and nothing else. The three-order golden test compares what was planned, what was delegated and what was executed element by element, and fourteen deliberate breaks were caught. Proved by a real five-module VITESS run driven by the real validation tools from inside the application container. The module prompts were then restored to the originals' full detail -- the first pass cut them to a third of their length, which is wrong for a model that has to be told an m-value above 6 does not exist -- and each specialist's tool surface was narrowed from eleven tools to four, `execute` and `delete` among those removed (`f55e140`, with `juena-core` `4cd5969`). Suite at 216 passed. Two prompt-versus-validator reviews then followed: `66c2b05` with `juena-core` `8e45bc4` made the validator enforce what each prompt claims -- blank file names, four prose-only rules, one authored order of work pasted into all five, and `read_file` removed from specialists that can write no findings -- and `c271cd5` settled the monitor filter and read-in weight rules **against the VITESS 3.8 binaries** rather than against inference, keeping the three rules that catch a silently mis-applied filter, dropping the three that refused configurations VITESS handles correctly, and adding the one that matters: two filters left at `NO_FCOMB` are silently ORed, giving four times the beam. Suite at 308 passed. CP5 `5fb0253`, merged as `437cd75`: the sweep plans and runs from server-owned state -- `module_variants` and `simulation_plan` written only by tools, `run_batch_from_matrix` with no argument but its runtime, run names kept apart from server-generated run ids, and the matrix file rendered from the plan rather than read as it. The five specialists are compiled a second time unattended, with the guided prompt intact and no `ask_user`. Thirteen deliberate breaks caught, and a live two-run sweep gave ten exit codes of 0, seven files per run, two directories and two different monitored totals. Suite at 332 passed. A review then closed five limit and validation gaps (`91d2076`, with `juena-core` `4137186`): the Cartesian limit is measured before the product is built, one 32-run limit is shared by variant collection, planning and execution, stale schema fingerprints and unplanned modules are refused at both ends, a partly failed sweep is a tool error, run names are normalised on the model, and the façade became an allowlist. It also corrected CP5's claim that no filesystem route was mounted -- three are, none reaching `/data/projects` -- after which the same *name exactly the tools you have* rule CP4 enforced for specialists was extended to supervisors: core gained `filesystem_tools` on `build_supervisor_middleware`, both VITESS agents dropped `execute` and `delete`, and the prompt now describes the six that remain. Eleven deliberate breaks caught. Suite at 345 passed. CP6 is next |
+| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 `4e21722`, reviewed in `cd7ffe6`: the FastMCP server as an internal Compose service with an explicit `/health` route, four exactly allowlisted tools, one pinned image run by two services sharing `/data/projects`, and a new monitor-file reader covering all five layouts `Monitor2DParameters.format` can ask for — proved by a real five-module VITESS pipeline run over MCP from the application container; the review added event-loop isolation, volume-boundary enforcement, unique-run evidence, concurrent health safety and reproducible VITESS/uv pins. CP3a `c2fdfbd`: the sole typed MCP gateway, four closed model façades, private run references, verified application-side file registration and the two root delivery middlewares — proved by a real five-module run and PNG plot through the application container. CP4 `e49d5f0`, with `juena-core` `08c013c`: the simulator rebuilt on `create_agent` and `SubAgentMiddleware` with **no legacy fallback** — `plan_simulation` writes the pipeline order into private state and `run_simulation` reads it back, so the order is a checked precondition rather than a graph shape; five explicit module specialists each with their own `AGENT.md` and one validation tool that is the sole writer of a typed `ModuleConfigurationResult`; one parameter-to-argument converter replacing five that had drifted; and a delegation boundary that returns a specialist's own module and nothing else. The three-order golden test compares what was planned, what was delegated and what was executed element by element, and fourteen deliberate breaks were caught. Proved by a real five-module VITESS run driven by the real validation tools from inside the application container. The module prompts were then restored to the originals' full detail -- the first pass cut them to a third of their length, which is wrong for a model that has to be told an m-value above 6 does not exist -- and each specialist's tool surface was narrowed from eleven tools to four, `execute` and `delete` among those removed (`f55e140`, with `juena-core` `4cd5969`). Suite at 216 passed. Two prompt-versus-validator reviews then followed: `66c2b05` with `juena-core` `8e45bc4` made the validator enforce what each prompt claims -- blank file names, four prose-only rules, one authored order of work pasted into all five, and `read_file` removed from specialists that can write no findings -- and `c271cd5` settled the monitor filter and read-in weight rules **against the VITESS 3.8 binaries** rather than against inference, keeping the three rules that catch a silently mis-applied filter, dropping the three that refused configurations VITESS handles correctly, and adding the one that matters: two filters left at `NO_FCOMB` are silently ORed, giving four times the beam. Suite at 308 passed. CP5 `5fb0253`, merged as `437cd75`: the sweep plans and runs from server-owned state -- `module_variants` and `simulation_plan` written only by tools, `run_batch_from_matrix` with no argument but its runtime, run names kept apart from server-generated run ids, and the matrix file rendered from the plan rather than read as it. The five specialists are compiled a second time unattended, with the guided prompt intact and no `ask_user`. Thirteen deliberate breaks caught, and a live two-run sweep gave ten exit codes of 0, seven files per run, two directories and two different monitored totals. Suite at 332 passed. A review then closed five limit and validation gaps (`91d2076`, with `juena-core` `4137186`): the Cartesian limit is measured before the product is built, one 32-run limit is shared by variant collection, planning and execution, stale schema fingerprints and unplanned modules are refused at both ends, a partly failed sweep is a tool error, run names are normalised on the model, and the façade became an allowlist. It also corrected CP5's claim that no filesystem route was mounted -- three are, none reaching `/data/projects` -- after which the same *name exactly the tools you have* rule CP4 enforced for specialists was extended to supervisors: core gained `filesystem_tools` on `build_supervisor_middleware`, both VITESS agents dropped `execute` and `delete`, and the prompt now describes the six that remain. Eleven deliberate breaks caught. Suite at 345 passed. CP6 `1326bbb`, `b95ce2f`, `6875b46`, `d9538c5`: the application itself -- `create_app` over a fixed local principal with no route under `/auth/`, a `Config` that hands core a frozen `CoreSettings` and refuses three impossible configurations at startup, an upload route writing real files to the shared volume with an extension allowlist and an HDF5 signature check, documentation retrieval that answers `RAG_UNAVAILABLE` rather than disappearing, a three-slot sidebar manifest carrying no output filename at all, and a `./vitess` launcher with no host-process machinery in it. Thirteen deliberate breaks caught. Proved live: `vitess health` green on all three services, and one file uploaded through the API and then listed by the MCP server from the other container. juena-chatbot still healthy and green beside it. Suite at 397 passed |
 | **Decided** | schemas ported verbatim and kept out of core; `generate_cli_command` becomes a pure function in `cli/command.py`, building **argument vectors** rather than shell text; catalog becomes pure data carrying `cli_executable` and `accepts_upload` independently; **MCP is an internal Compose service sharing a volume**; simulator rebuilt with **no legacy fallback**; two registered agents rather than one supervisor; **PNG artifacts canonical**; Chroma stays; fixed local principal; **per-module upload slots kept, the three `path_only` rows deleted, sidebar becomes a manifest, `ask_user` is the second way in** |
 | **Open** | whether `research/` should come into core after all, once a sweep is lost to a closed browser (CP5); whether a run manifest on the volume is needed alongside the returned metadata (CP3a); whether content classification of uploads is worth adding — *reopen when files start arriving from other people, or in bulk* (CP6) |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — Compose topology replaces the host process, CP3a added for the evidence bridge, argument vectors replace shell text, recursive flag test, `simulator_legacy` dropped, real order test, `agent_id`, binary uploads separated |
