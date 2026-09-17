@@ -34,6 +34,7 @@ from langgraph.store.memory import InMemoryStore
 
 from juena_core.artifacts import ArtifactStore, set_artifact_store_for_tests
 from juena_core.server.agent.registry import list_registered_agents
+from vitess_ai.agents import vitess_agent as agent_module
 from vitess_ai.agents.vitess_agent import VITESS_AGENT_ID, build_vitess_graph
 from vitess_ai.cli.command import generate_cli_command
 from vitess_ai.modules.catalog import cli_executables, execution_order
@@ -441,3 +442,49 @@ def test_importing_the_agent_module_registers_exactly_the_vitess_agent() -> None
     import vitess_ai.agents.vitess_agent  # noqa: F401
 
     assert VITESS_AGENT_ID in list_registered_agents()
+
+
+def test_the_guided_factory_passes_the_gateway_to_the_facade_builder(
+    tmp_path: Path, configured: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default agent used `gateway.raw_tools`, an attribute that never existed.
+
+    Graph tests all supplied hand-built façade tools, so 417 tests passed while
+    opening the first guided conversation raised `AttributeError` in its
+    factory. This test reaches the factory and inspects its actual base tools.
+    """
+    captured: dict[str, Any] = {}
+
+    async def no_health() -> None:
+        return None
+
+    async def discovered() -> list[Any]:
+        return raw_tools()
+
+    monkeypatch.setattr(agent_module, "probe_server_health", no_health)
+    monkeypatch.setattr(agent_module, "discover_vitess_tools", discovered)
+    monkeypatch.setattr(agent_module, "get_store", lambda: InMemoryStore())
+    monkeypatch.setattr(agent_module, "get_checkpointer", lambda: None)
+    monkeypatch.setattr(agent_module, "compile_module_specialists", lambda **_: [])
+    monkeypatch.setattr(agent_module, "project_root", lambda: tmp_path)
+
+    def capture(**kwargs: Any) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(agent_module, "build_vitess_graph", capture)
+
+    asyncio.run(
+        agent_module.create_vitess_agent(
+            provider="blablador", model=configured.DEFAULT_MODEL
+        )
+    )
+
+    assert [item.name for item in captured["tools"]] == [
+        "ask_user",
+        "plan_simulation",
+        "run_simulation",
+        "inspect_thread_folders",
+        "generate_monitor1d_plot",
+        "generate_monitor2d_plot",
+    ]

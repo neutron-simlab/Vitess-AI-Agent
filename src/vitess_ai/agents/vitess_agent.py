@@ -195,7 +195,7 @@ async def create_vitess_agent(
         tools=[
             build_ask_user_tool(VITESS_AGENT_ID),
             plan_simulation,
-            *build_vitess_tools(gateway.raw_tools, project_root=root),
+            *build_vitess_tools(gateway, project_root=root),
         ],
         store=store,
         checkpointer=get_checkpointer(),
