@@ -1396,7 +1396,7 @@ Completed 2026-09-17 in `Vitess-AI-Agent-v2` commits `e49d5f0` and `f55e140`, wi
 `juena-core` (`08c013c`, `4cd5969`).
 
 ```text
-uv run pytest -q                                216 passed   (CP0-CP3a: 140)
+uv run pytest -q                                221 passed   (CP0-CP3a: 140)
 uv sync --frozen                                ok
 juena-core suite                                474 passed (unchanged: the 2 failures
                                                 and 24 errors are Postgres-only and
@@ -1526,7 +1526,15 @@ the one the validation tool enforces -- and a test asserts each specialist's pro
 names **its own** model and no other, because a prompt holding two modules' field
 names is how a specialist configures the wrong module.
 
-**A second test asserts each prompt names exactly the tools that specialist has**, in
+**A second test asserts the default-configuration block in each prompt is the schema
+default**, field by field, and that it omits no field. Two values ported straight from
+the first-generation prompts were already wrong: the guide's `eGuideShapeY` and
+`eGuideShapeZ` said `0` (VT_CONSTANT) where the schema says `1` (VT_LINEAR), so a model
+reading the prompt would configure a different guide from the one the user was shown.
+One exception is named in the test with its reason -- read-in's `sInstrInfIn`, where the
+prompt deliberately overrides a schema default that names a file which does not exist.
+
+**A third test asserts each prompt names exactly the tools that specialist has**, in
 both directions. The first-generation read-in prompt told the model to call
 `get_instrument_file` and `instrument_file_status`, neither of which its builder
 returned; a weaker model follows the prompt, the call fails, and it has no instruction
@@ -1555,7 +1563,9 @@ module can read what an earlier one recorded.
 
 `execute` and `delete` are gone from every module specialist. Four more deliberate
 breaks confirm it: widening the allowlist, dropping it at the call site, a prompt that
-stops naming a tool it has, and core narrowing its default.
+stops naming a tool it has, and core narrowing its default. Three more cover the
+prompt defaults: the old VT_CONSTANT value restored, a field dropped from a block, and
+a field named that the model does not have.
 
 #### Three defects the port had to correct rather than carry
 
@@ -1578,9 +1588,9 @@ reading the thread id from `runtime.execution_info` and the volume through the M
 gateway -- the store is the authority, not the transcript. Only read-in and guide get
 it; the other three write files and have nothing staged to look at.
 
-#### Eighteen guarantees broken on purpose
+#### Twenty-one guarantees broken on purpose
 
-Sixteen failed the moment they were broken. Two survived their first break and then
+Nineteen failed the moment they were broken. Two survived their first break and then
 failed when the break was made total -- both are held by **two independent layers**,
 which is worth recording rather than glossing:
 
@@ -1589,7 +1599,7 @@ which is worth recording rather than glossing:
 | A planned module with no configuration stops the run | `_configured_arguments` narrows the plan | `InternalSimulationRequest` (CP3a) refuses the mismatch too |
 | A file parameter must name a staged upload | the absolute-path check goes | resolving a relative path lands outside `uploads/` anyway |
 
-Removing both layers fails the tests in each case. Among the sixteen caught directly:
+Removing both layers fails the tests in each case. Among the nineteen caught directly:
 `module_results` marked private, `run_simulation` falling back to the catalog when
 nothing was planned, a specialist returning another module's entry, a flagless field
 skipped, an over-long file list truncated, an output filename allowed to be a path, a
