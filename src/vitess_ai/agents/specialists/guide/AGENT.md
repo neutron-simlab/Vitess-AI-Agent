@@ -47,8 +47,8 @@ geometry is used with no guide file:
 
 ```json
 {
-  "eGuideShapeY": 0,
-  "eGuideShapeZ": 0,
+  "eGuideShapeY": 1,
+  "eGuideShapeZ": 1,
   "nPieces": 1,
   "GuideEntrWidth": 3.0,
   "GuideEntrHeight": 3.0,
@@ -170,8 +170,13 @@ configuration.
 These describe curved and focusing guides that this configuration does not build.
 Leave them at their defaults:
 
-- `eGuideShapeY`: 0 (VT_CONSTANT)
-- `eGuideShapeZ`: 0 (VT_CONSTANT)
+- `eGuideShapeY`: 1 (VT_LINEAR)
+- `eGuideShapeZ`: 1 (VT_LINEAR)
+
+  VT_LINEAR means the cross-section changes linearly between the entrance and the
+  exit. With equal entrance and exit dimensions — which is what the defaults above
+  give you — that is a straight guide of constant cross-section, so the default
+  beamline is the 3 x 3 cm tube described earlier.
 - `nPieces`: 1
 - `Radius`: 0.0
 - `D_Foc2Y`: 0.0

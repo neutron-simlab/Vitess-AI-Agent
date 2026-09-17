@@ -522,6 +522,58 @@ def test_the_five_specialists_are_the_five_executable_modules(
     ]
 
 
+#: The one value a prompt is allowed to contradict its schema on, and why.
+#:
+#: `ReadInParameters.sInstrInfIn` defaults to the bare name `instrument.inf`, which
+#: names no file that exists. The prompt tells the model to send `null` instead, and
+#: the validation tool refuses anything that is not `null` or a staged path -- so the
+#: prompt, the tool and reality agree, and the schema default is the outlier.
+PROMPT_OVERRIDES_SCHEMA = {("readin", "sInstrInfIn")}
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_the_default_configuration_in_each_prompt_is_the_schema_default(
+    module: str,
+) -> None:
+    """A default written twice is a default that drifts.
+
+    These blocks were ported from the first-generation prompts, and two of the
+    values in them were already wrong against the schema: the guide's
+    `eGuideShapeY`/`eGuideShapeZ` said VT_CONSTANT where the schema says
+    VT_LINEAR. A model reading the prompt would configure a different guide than
+    the one the user was shown.
+    """
+    text = (
+        Path(__file__).parents[1]
+        / "src/vitess_ai/agents/specialists"
+        / module
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    block = re.search(r"```jsonc?\n(\{.*?\n\})\n```", text, re.S)
+    assert block is not None, f"{module}/AGENT.md has no default configuration block"
+    claimed = json.loads(re.sub(r"//.*", "", block.group(1)))
+
+    model = parameter_model(module)
+    for field_name, value in claimed.items():
+        assert field_name in model.model_fields, (
+            f"{module}/AGENT.md names {field_name}, which {model.__name__} has no field for"
+        )
+        if (module, field_name) in PROMPT_OVERRIDES_SCHEMA:
+            continue
+        default = model.model_fields[field_name].get_default(call_default_factory=True)
+        if hasattr(default, "value"):
+            default = default.value
+        if hasattr(default, "model_dump"):
+            default = default.model_dump(mode="json")
+        assert value == default, (
+            f"{module}/AGENT.md tells the model {field_name} defaults to {value!r}, "
+            f"but {model.__name__} says {default!r}"
+        )
+
+    missing = [name for name in model.model_fields if name not in claimed]
+    assert not missing, f"{module}/AGENT.md's default block omits {missing}"
+
+
 @pytest.mark.parametrize("module", execution_order())
 def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
     module: str,
