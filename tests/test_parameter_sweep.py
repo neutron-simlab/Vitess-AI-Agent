@@ -866,6 +866,13 @@ def test_the_factory_selects_its_facade_through_the_allowlist(
     assert set(names) == set(_ADVANCED_FACADE_TOOL_NAMES) | {
         "write_simulation_matrix",
         "run_batch_from_matrix",
+        # All four documentation tools, where a module specialist gets three:
+        # `vitess_debug_retrieval` is for noticing that retrieval is answering
+        # badly, and this is the agent that would notice.
+        "vitess_search",
+        "vitess_option_lookup",
+        "vitess_module_lookup",
+        "vitess_debug_retrieval",
     }
 
 

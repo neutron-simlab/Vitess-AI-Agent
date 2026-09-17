@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from langchain_core.tools import BaseTool
@@ -23,7 +24,9 @@ SPECIALIST_NAME = "writeout-specialist"
 OUTPUT_FILENAME_FIELDS = ("sOutFileName",)
 
 
-def build_tools(*, project_root: Path) -> list[BaseTool]:
+def build_tools(
+    *, project_root: Path, documentation_tools: Sequence[BaseTool] = ()
+) -> list[BaseTool]:
     """No staged-files tool: this module reads nothing the user uploaded."""
     return [
         build_validation_tool(
@@ -33,10 +36,13 @@ def build_tools(*, project_root: Path) -> list[BaseTool]:
             output_filename_fields=OUTPUT_FILENAME_FIELDS,
         ),
         build_ask_user_tool(SPECIALIST_NAME),
+        *documentation_tools,
     ]
 
 
-def build_sweep_tools(*, project_root: Path) -> list[BaseTool]:
+def build_sweep_tools(
+    *, project_root: Path, documentation_tools: Sequence[BaseTool] = ()
+) -> list[BaseTool]:
     """The same checks, over a list, with no `ask_user`: nobody is watching."""
     return [
         build_variants_tool(
@@ -45,4 +51,5 @@ def build_sweep_tools(*, project_root: Path) -> list[BaseTool]:
             project_root=project_root,
             output_filename_fields=OUTPUT_FILENAME_FIELDS,
         ),
+        *documentation_tools,
     ]

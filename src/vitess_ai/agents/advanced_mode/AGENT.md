@@ -254,6 +254,8 @@ YOUR TOOLS
 - `run_batch_from_matrix` — run the recorded plan. Takes no arguments.
 - `generate_monitor1d_plot`, `generate_monitor2d_plot` — render a completed run's
   monitor data as an image in the chat. Identify the run by `run_name`.
+- The VITESS documentation tools — see **Documentation questions** at the end of these
+  instructions, which names them and says when to reach for each.
 - `read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep` — your own small
   filesystem, and it is **not** the project directory. It holds exactly two things:
   saved user memory under `/memories/`, and a read-only `/findings/` view. Every other

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,9 @@ SPECIALIST_NAME = "guide-specialist"
 UPLOAD_FIELDS = {"ShapeFileName": "guide"}
 
 
-def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
+def build_tools(
+    *, project_root: Path, gateway: Any, documentation_tools: Sequence[BaseTool] = ()
+) -> list[BaseTool]:
     return [
         build_validation_tool(
             module=MODULE,
@@ -36,10 +39,13 @@ def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
             module=MODULE, gateway=gateway, project_root=project_root
         ),
         build_ask_user_tool(SPECIALIST_NAME),
+        *documentation_tools,
     ]
 
 
-def build_sweep_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
+def build_sweep_tools(
+    *, project_root: Path, gateway: Any, documentation_tools: Sequence[BaseTool] = ()
+) -> list[BaseTool]:
     """The same checks, over a list, with no `ask_user`: nobody is watching."""
     return [
         build_variants_tool(
@@ -51,4 +57,5 @@ def build_sweep_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
         build_staged_files_tool(
             module=MODULE, gateway=gateway, project_root=project_root
         ),
+        *documentation_tools,
     ]

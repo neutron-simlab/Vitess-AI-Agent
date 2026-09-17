@@ -71,3 +71,25 @@ def offline_model(configured):
     return build_chat_model(
         provider="blablador", model=configured.DEFAULT_MODEL, temperature=0.0
     )
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _documentation_retrieval_is_off_in_tests():
+    """No test opens Chroma, and none depends on a developer's API key.
+
+    The degradation path is still the real one: `get_rag_tools` returns its four
+    `RAG_UNAVAILABLE` tools, with the names the prompts name. What is switched
+    off is the branch that would build an embedding function and create a Chroma
+    directory inside the checkout -- which is what happens on a machine that has
+    `BLABLADOR_API_KEY` exported, and not on one that does not. A suite whose
+    tool surface depends on the developer's environment is not a suite.
+    """
+    from vitess_ai.config import Config
+    from vitess_ai.retrieval import tools as retrieval_tools
+
+    previous = Config.RAG_ENABLED
+    Config.RAG_ENABLED = False
+    retrieval_tools.get_rag_tools.cache_clear()
+    yield
+    Config.RAG_ENABLED = previous
+    retrieval_tools.get_rag_tools.cache_clear()

@@ -87,6 +87,17 @@ class Config:
         "VITESS_UPLOAD_EXTENSIONS", ".dat,.txt,.csv,.inf,.nxs,.h5"
     )
 
+    # -- VITESS documentation retrieval -------------------------------------
+    #: Chroma, embedded, over the markdown in `rag/vitess-rag/data`. **Core does
+    #: not learn about this**, the same rule that keeps core away from
+    #: juena-rag: an application that can search is an application concern.
+    RAG_ENABLED = _flag("VITESS_RAG_ENABLED", True)
+    RAG_DATA_DIR = Path(os.getenv("VITESS_RAG_DATA_DIR", "rag/vitess-rag/data"))
+    RAG_PERSIST_PATH = Path(os.getenv("VITESS_RAG_PERSIST_PATH", "rag/chroma_db"))
+    RAG_COLLECTION = os.getenv("VITESS_RAG_COLLECTION", "vitess_docs")
+    RAG_EMBEDDING_MODEL = os.getenv("VITESS_RAG_EMBEDDING_MODEL", "alias-embeddings")
+    RAG_REINDEX = _flag("VITESS_RAG_REINDEX", False)
+
     # -- serving ------------------------------------------------------------
     #: Container loopback. The API is not published; only the UI port is, and
     #: only on the host's loopback interface. Core refuses to pair a fixed

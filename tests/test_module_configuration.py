@@ -36,6 +36,7 @@ from vitess_ai.cli.arguments import (
 )
 from vitess_ai.modules.catalog import cli_executables, execution_order, upload_modules
 from vitess_ai.modules.parameters import PARAMETER_MODELS, parameter_model
+from vitess_ai.retrieval import SPECIALIST_RAG_TOOLS, specialist_rag_tools
 from vitess_ai.schema import (
     GuideParameters,
     Monitor1DParameters,
@@ -784,12 +785,30 @@ def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
 
 
 def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
+    """One specialist's tools, documentation included.
+
+    The documentation tools are injected rather than looked up inside the
+    builder, so that this stays a pure function of its arguments -- but the
+    agent builders do pass them, and `test_a_module_specialist_is_bound_only_the
+    _tools_its_job_needs` compiles the real specialist to prove it.
+    """
+    documentation = specialist_rag_tools()
     builders = {
-        "readin": lambda: readin_tools(project_root=tmp_path, gateway=None),
-        "guide": lambda: guide_tools(project_root=tmp_path, gateway=None),
-        "writeout": lambda: writeout_tools(project_root=tmp_path),
-        "monitor1d": lambda: monitor1d_tools(project_root=tmp_path),
-        "monitor2d": lambda: monitor2d_tools(project_root=tmp_path),
+        "readin": lambda: readin_tools(
+            project_root=tmp_path, gateway=None, documentation_tools=documentation
+        ),
+        "guide": lambda: guide_tools(
+            project_root=tmp_path, gateway=None, documentation_tools=documentation
+        ),
+        "writeout": lambda: writeout_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
+        "monitor1d": lambda: monitor1d_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
+        "monitor2d": lambda: monitor2d_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
     }
     return builders[module]()
 
@@ -920,11 +939,15 @@ def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
     )
     bound = set(specialist["runnable"].nodes["tools"].bound._tools_by_name)
 
-    expected = {f"validate_{module}_parameters", "ask_user"}
+    expected = {f"validate_{module}_parameters", "ask_user", *SPECIALIST_RAG_TOOLS}
     if module in {"readin", "guide"}:
         expected.add("list_staged_files")
 
     assert bound == expected
+    # `vitess_debug_retrieval` exists and is not here. It is for inspecting
+    # retrieval when retrieval looks wrong, which is the orchestrator's problem;
+    # a specialist whose job is one validation call has no use for it.
+    assert "vitess_debug_retrieval" not in bound
     for absent in ("execute", "delete", "read_file", "write_file", "ls", "glob"):
         assert absent not in bound
 

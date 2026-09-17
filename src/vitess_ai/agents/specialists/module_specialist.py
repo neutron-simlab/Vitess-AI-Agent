@@ -48,6 +48,7 @@ from juena_core.llms_providers import build_chat_model
 from juena_core.schema.agents import SpecialistReport
 from juena_core.schema.llm_models import BlabladorModelName, Provider
 from juena_core.server.agent.runtime_model_middleware import RuntimeModelContext
+from vitess_ai.retrieval.prompts import MODULE_RAG_CONTEXT_NOTE
 from vitess_ai.cli.arguments import ParameterConversionError, parameters_to_arguments
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
@@ -725,6 +726,11 @@ def build_module_prompt(
     one the validation tool will enforce.
     """
     authored = load_markdown(prompt_package, "AGENT.md")
+    # Appended rather than pasted into each AGENT.md: it describes tools every
+    # specialist is bound identically, so five copies would be five chances to
+    # disagree about which tool decides what is legal -- and the answer, "not
+    # these", is the sentence that matters.
+    authored = f"{authored}\n{MODULE_RAG_CONTEXT_NOTE}"
     if unattended:
         module = prompt_package.rsplit(".", 1)[-1]
         authored = (

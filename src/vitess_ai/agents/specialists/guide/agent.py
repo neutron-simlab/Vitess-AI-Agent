@@ -14,6 +14,7 @@ from vitess_ai.agents.specialists.guide.tools import (
     build_tools,
 )
 from vitess_ai.agents.specialists.module_specialist import build_module_specialist
+from vitess_ai.retrieval import specialist_rag_tools
 from vitess_ai.schema import GuideParameters
 
 DESCRIPTION = (
@@ -39,6 +40,7 @@ def build_guide_specialist(
     ``ask_user``, because a sweep nobody is watching cannot have its
     question answered. Same prompt, same checks, same model.
     """
+    documentation = specialist_rag_tools()
     return build_module_specialist(
         module=MODULE,
         name=SPECIALIST_NAME,
@@ -46,9 +48,9 @@ def build_guide_specialist(
         prompt_package="vitess_ai.agents.specialists.guide",
         model=GuideParameters,
         tools=(
-            build_sweep_tools(project_root=project_root, gateway=gateway)
+            build_sweep_tools(project_root=project_root, gateway=gateway, documentation_tools=documentation)
             if unattended
-            else build_tools(project_root=project_root, gateway=gateway)
+            else build_tools(project_root=project_root, gateway=gateway, documentation_tools=documentation)
         ),
         summarizer_model=summarizer_model,
         fallback_models=fallback_models,

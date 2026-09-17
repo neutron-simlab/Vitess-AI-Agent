@@ -14,6 +14,7 @@ from vitess_ai.agents.specialists.writeout.tools import (
     build_sweep_tools,
     build_tools,
 )
+from vitess_ai.retrieval import specialist_rag_tools
 from vitess_ai.schema import WriteoutParameters
 
 DESCRIPTION = (
@@ -38,6 +39,7 @@ def build_writeout_specialist(
     ``ask_user``, because a sweep nobody is watching cannot have its
     question answered. Same prompt, same checks, same model.
     """
+    documentation = specialist_rag_tools()
     return build_module_specialist(
         module=MODULE,
         name=SPECIALIST_NAME,
@@ -45,9 +47,9 @@ def build_writeout_specialist(
         prompt_package="vitess_ai.agents.specialists.writeout",
         model=WriteoutParameters,
         tools=(
-            build_sweep_tools(project_root=project_root)
+            build_sweep_tools(project_root=project_root, documentation_tools=documentation)
             if unattended
-            else build_tools(project_root=project_root)
+            else build_tools(project_root=project_root, documentation_tools=documentation)
         ),
         summarizer_model=summarizer_model,
         fallback_models=fallback_models,

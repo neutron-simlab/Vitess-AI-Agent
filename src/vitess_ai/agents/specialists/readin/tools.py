@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,9 @@ UPLOAD_FIELDS = {
 }
 
 
-def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
+def build_tools(
+    *, project_root: Path, gateway: Any, documentation_tools: Sequence[BaseTool] = ()
+) -> list[BaseTool]:
     return [
         build_validation_tool(
             module=MODULE,
@@ -46,10 +49,13 @@ def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
             upload_modules=("readin", "instrument"),
         ),
         build_ask_user_tool(SPECIALIST_NAME),
+        *documentation_tools,
     ]
 
 
-def build_sweep_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
+def build_sweep_tools(
+    *, project_root: Path, gateway: Any, documentation_tools: Sequence[BaseTool] = ()
+) -> list[BaseTool]:
     """The same checks, over a list, with no `ask_user`: nobody is watching."""
     return [
         build_variants_tool(
@@ -64,4 +70,5 @@ def build_sweep_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
             project_root=project_root,
             upload_modules=("readin", "instrument"),
         ),
+        *documentation_tools,
     ]
