@@ -2164,9 +2164,11 @@ live two-run sweep         2/2 runs, 10 exit codes of 0, 7 files each, two total
 
 ## Checkpoint 6 — retrieval, uploads, the UI and the launcher
 
-**Retrieval.** `retrieval/` (226 lines, four modules) ports verbatim. It is imported
-only by `advanced_mode` today; it stays that way and additionally becomes available to
-the five module specialists as a tool. Chroma stays. `vitess-rag` stays a submodule.
+**Retrieval.** `retrieval/` begins from the first-generation implementation, then gets
+an application-owned boundary around it. Both top-level agents and all five module
+specialists can consult it; specialists receive the three answer tools, while the two
+orchestrators additionally receive the retrieval-debug tool. Chroma stays.
+`vitess-rag` stays a submodule.
 **Core does not learn about it** — the same rule that keeps core away from juena-rag.
 
 Keep the graceful degradation already there: `get_rag_tools()` returns four stub tools
@@ -2400,6 +2402,92 @@ and a successful build restarts `vitess-app`: agent graphs cache their bound too
 without that restart a graph first opened against an empty index would keep its
 `RAG_UNAVAILABLE` tools even after Chroma had been populated.
 
+#### Post-CP6 retrieval completion and review
+
+The first top-level wiring pass was incomplete in two opposite directions. The guided
+supervisor had no documentation tools at all, while advanced mode appended a policy in
+its graph builder but bound the tools only in its production factory. A directly built
+graph — exactly what the golden tests use — therefore named four tools it did not have.
+The module prompt builder had the same defect: it appended the retrieval note even when
+its caller passed no documentation tools.
+
+Both graph builders now obtain an inseparable `(tools, policy)` pair. Guided mode gets a
+policy that resolves `AMBIGUOUS_QUERY` with `ask_user`; an unattended sweep retries with
+the module named and records the supported reading under `limitations`, because it has
+no interrupt tool. Module prompts append their retrieval note only when their builder
+passes the matching tool objects. The shared protocol teaches `NO_RESULTS`,
+`AMBIGUOUS_QUERY`, `[Chunk n]` and `RAG_UNAVAILABLE`, and names the manual-only modules
+that this application can explain but cannot execute.
+
+The review found four implementation defects beyond that design:
+
+- `create_vitess_agent` passed nonexistent `gateway.raw_tools` to a façade builder that
+  accepts the gateway itself, so the default agent raised before its first turn;
+- provider and Chroma failures were caught only while tools were constructed, not when
+  a persisted collection embedded a query;
+- the embedding client inherited the OpenAI SDK's ten-minute timeout; and
+- the new timeout and retry environment variables were documented but not forwarded by
+  Compose, making them false controls.
+
+The façade call is corrected and covered at the factory call site. Every real RAG tool
+is wrapped per call, preserving its name and description, catching `Exception` but not
+process cancellation, and returning a bounded `RAG_UNAVAILABLE` result without turning
+the cached real tool set into permanent stubs. The application replaces the submodule's
+embedding client with one bounded by `VITESS_RAG_QUERY_TIMEOUT_SECONDS` and
+`VITESS_RAG_MAX_RETRIES`, which Compose now forwards. It also validates the exact
+four-tool surface before appending a fixed policy, so an upstream deletion degrades to
+four explanatory stubs rather than silently recreating prompt/tool drift.
+
+The existing first-generation index was copied once rather than re-embedded. The source
+volume held the index, the v2 destination was empty, and the application was stopped
+during the copy. Afterward the destination SQLite file was owned by uid 10001, collection
+`vitess_docs` had `config_json_str='{}'`, and the database held **379 embeddings**.
+
+```text
+complete v2 suite                               438 passed
+uv sync --frozen                                187 packages audited
+import direction                                ok
+image                                           sha256:2d7a5d4cb039…
+live guided factory                             built; 17 tools, 4 of them RAG
+live advanced factory                           built; 16 tools, 4 of them RAG
+live prompt/tool agreement                      0 live tools unnamed, either agent
+live embedding client                           timeout 20.0, max_retries 1
+migrated index                                  vitess_docs · 379 embeddings · uid 10001
+health                                          ui ok · api ok · mcp ok
+```
+
+The answering path is still open honestly: `.env` contains the known placeholder
+`BLABLADOR_API_KEY`, so no successful query was sent to the embedding endpoint and no
+browser conversation is claimed.
+
+##### Reviewing the review
+
+Sixteen guarantees were removed one at a time to see whether a test failed. Thirteen
+did. Three did not, and all three were the same shape as the checkpoint 6 miss — the
+function was tested and the line that calls it was not:
+
+- `_validated_rag_tools` had a direct unit test, so deleting its **call** from
+  `get_rag_tools` left the suite green while the deployment bound whatever the embedded
+  package exposed;
+- the replaced embedding client's `close()` had no test, so the leak it exists to
+  prevent could return silently;
+- the two new startup refusals for the timeout and retry settings had none either.
+
+Four tests close those, and all sixteen breaks now fail exactly one test.
+
+The live run against the migrated index then found a real defect the suite could not.
+Degradation works — an invalid key produced `RAG_UNAVAILABLE` rather than an exception —
+but the reason handed to the model was `'str' object has no attribute 'data'`, the
+OpenAI SDK parsing an error body as an embedding response. The existing contract for
+these messages is "a message a user can act on, not a generic failure", and on the
+failure a new deployment actually hits it was neither. The guard now names the exception
+type.
+
+Two claims in the review's own report did not hold. `juena-core` was reported clean but
+carries a modified `.gitignore`; and both repositories gained an ignored `DOCS/`
+directory, which in this one was left empty despite the note that is meant to accompany
+each feature. The note is now written.
+
 #### The sidebar became a manifest
 
 97 lines of navigation plus 110 of manifest, against 596. Three slots, each showing what
@@ -2443,9 +2531,9 @@ restarted every few seconds until the loop was rewritten in POSIX shell.
   simulation outputs has two owners already — the MCP server writes them under the run
   id it was given, and the artifact store delivers them. A third copy of "which files
   may be handed to a user" is how a sweep quietly delivers what the guided path refuses.
-- **A live documentation query.** Indexing sends the manual to the embedding endpoint,
-  which costs the user's quota, so `vitess index-docs` is a command rather than a
-  startup step. The degradation path is proved; the answering path needs a real key.
+- **A live documentation query.** The existing 379-chunk index is now present, but each
+  question still has to be embedded. The degradation path and both real graph factories
+  are proved; the answering path needs a real key.
 - **A conversation.** The stack runs on a placeholder model key. The four
   conversation-shaped items under *Done when* — the agent naming a file back, a module
   asking for one in the chat — need a real key and a person to talk to.
