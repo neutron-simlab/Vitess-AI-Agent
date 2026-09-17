@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+#
+# VITESS AI Agent development shortcuts.
+#
+# Copied from juena-chatbot's `./juena` rather than shared with it: it is bash
+# with no dependency mechanism, and sourcing a library from a sibling repository
+# would make `vitess help` fail whenever that repository is not checked out
+# beside this one. There is nothing to share here but conventions, and
+# conventions travel by copying.
+#
+# What was deliberately left behind: the host-process machinery. No pid files,
+# no runtime directory, no `wait_for_*` loops. Every process this stack runs is
+# a Compose service, so `up`, `down`, `logs` and `ps` already cover all of them
+# -- including the MCP server, which is where `juena`'s `rag-up` had to grow its
+# own supervision.
+#
+# Run `vitess help` for the command list, `vitess install` to put it on PATH.
+
+set -euo pipefail
+
+# Every command runs against the repository this script lives in, not the
+# current directory -- which is what makes `vitess up` safe to type from
+# anywhere once the script is on PATH. Symlinks are followed by hand because
+# `readlink -f` is GNU-only and this has to work on macOS.
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+    link_target="$(readlink "$SCRIPT_PATH")"
+    case "$link_target" in
+        /*) SCRIPT_PATH="$link_target" ;;
+        *)  SCRIPT_PATH="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)/$link_target" ;;
+    esac
+done
+REPO_ROOT="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+cd "$REPO_ROOT"
+
+COMPOSE=(docker compose)
+UI_PORT="${UI_PORT:-9601}"
+JUENA_CORE_REPO="${JUENA_CORE_REPO:-$REPO_ROOT/../juena-core}"
+
+if [ -t 1 ]; then
+    CYAN=$'\033[36m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+else
+    CYAN=""; DIM=""; RESET=""
+fi
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+
+cmd_env() { ## Create .env from env.example if it does not exist
+    if [ -f .env ]; then
+        echo ".env already exists; leaving it alone."
+        return
+    fi
+    cp env.example .env
+    echo "Created .env from env.example. Set POSTGRES_PASSWORD and a model API key."
+}
+
+# ---------------------------------------------------------------------------
+# The stack
+# ---------------------------------------------------------------------------
+
+cmd_up() { ## Start the stack (builds the image if it is missing)
+    [ -f .env ] || die "no .env; run 'vitess env' first"
+    "${COMPOSE[@]}" up -d --build "$@"
+    echo
+    echo "UI:  http://127.0.0.1:${UI_PORT}"
+    echo "${DIM}The API binds container loopback and is not published.${RESET}"
+}
+
+cmd_down() { ## Stop the stack, keeping its volumes
+    "${COMPOSE[@]}" down "$@"
+}
+
+cmd_build() { ## Rebuild the image without starting anything
+    "${COMPOSE[@]}" build "$@"
+}
+
+cmd_logs() { ## Follow the application log
+    "${COMPOSE[@]}" logs -f vitess-app "$@"
+}
+
+cmd_mcp_logs() { ## Follow the MCP server log
+    "${COMPOSE[@]}" logs -f vitess-mcp "$@"
+}
+
+cmd_ps() { ## Show what is running
+    "${COMPOSE[@]}" ps
+}
+
+cmd_health() { ## Check the UI, the API and the MCP server
+    local failures=0
+    if curl -fsS "http://127.0.0.1:${UI_PORT}/_stcore/health" >/dev/null 2>&1; then
+        echo "ui    ok    http://127.0.0.1:${UI_PORT}"
+    else
+        echo "ui    DOWN"; failures=1
+    fi
+    # From inside the container: the API is on container loopback by design, so
+    # a check from the host would report DOWN on a perfectly healthy stack.
+    if "${COMPOSE[@]}" exec -T vitess-app curl -fsS http://127.0.0.1:9600/health >/dev/null 2>&1; then
+        echo "api   ok    container loopback :9600 (deliberately not published)"
+    else
+        echo "api   DOWN"; failures=1
+    fi
+    if "${COMPOSE[@]}" exec -T vitess-mcp curl -fsS http://127.0.0.1:9005/health >/dev/null 2>&1; then
+        echo "mcp   ok    vitess-mcp:9005 (Compose network only)"
+    else
+        echo "mcp   DOWN"; failures=1
+    fi
+    return "$failures"
+}
+
+cmd_index_docs() { ## Build the VITESS documentation index (embeds the manual)
+    echo "This sends the VITESS documentation to the embedding endpoint."
+    "${COMPOSE[@]}" exec -T vitess-app python -m vitess_ai.retrieval.bootstrap
+}
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+cmd_check_imports() { ## Fail if juena-core reached back into an application
+    [ -x "$JUENA_CORE_REPO/scripts/check-imports.sh" ] \
+        || die "juena-core is not at $JUENA_CORE_REPO; set JUENA_CORE_REPO"
+    ( cd "$JUENA_CORE_REPO" && ./scripts/check-imports.sh )
+}
+
+# The import check runs from here rather than only from `test-all`: it is the
+# rule that is cheapest to keep and most expensive to have broken. A core that
+# imports an application still passes every test in both repositories -- it just
+# cannot be used by the second one, which is discovered much later.
+# A dependency group, not an extra: `pytest` is declared under
+# `[dependency-groups]`, which `uv run` installs by default, so there is no
+# `--extra dev` here as there is in juena-chatbot.
+cmd_test() { ## Run the unit suite
+    cmd_check_imports
+    uv run pytest -q "$@"
+}
+
+cmd_test_all() { ## Run the suite, then check the lock and the image provenance
+    cmd_test
+    echo
+    uv sync --frozen
+    echo
+    cmd_provenance
+}
+
+cmd_provenance() { ## Print the core commit and image digest this build came from
+    local core_sha core_dirty image_id
+    core_sha="$(git -C "$JUENA_CORE_REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+    core_dirty="$(git -C "$JUENA_CORE_REPO" status --porcelain 2>/dev/null | head -1)"
+    image_id="$("${COMPOSE[@]}" images -q vitess-mcp 2>/dev/null | head -1)"
+    echo "juena-core commit  ${core_sha}"
+    if [ -n "$core_dirty" ]; then
+        echo "juena-core tree    ${DIM}DIRTY -- the image does not match any commit${RESET}"
+    else
+        echo "juena-core tree    clean"
+    fi
+    echo "vitess-ai image    ${image_id:-not built}"
+}
+
+# ---------------------------------------------------------------------------
+# Housekeeping
+# ---------------------------------------------------------------------------
+
+cmd_clean() { ## Remove Python caches and test output
+    find . -path ./.venv -prune -o -name __pycache__ -type d -print0 \
+        | xargs -0 rm -rf 2>/dev/null || true
+    rm -rf .pytest_cache .ruff_cache
+    echo "Cleaned."
+}
+
+cmd_install() { ## Symlink this script into ~/.local/bin
+    local target="${1:-$HOME/.local/bin}"
+    mkdir -p "$target"
+    ln -sf "$SCRIPT_PATH" "$target/vitess"
+    echo "Linked $target/vitess -> $SCRIPT_PATH"
+    case ":$PATH:" in
+        *":$target:"*) ;;
+        *) echo "${DIM}Add $target to your PATH.${RESET}" ;;
+    esac
+}
+
+cmd_help() { ## Show this help
+    echo "VITESS AI Agent development shortcuts"
+    echo
+    echo "  usage: vitess <command> [args...]"
+    echo
+    # Only the command name has underscores rewritten -- a description may
+    # legitimately contain one.
+    grep -E '^cmd_[a-z_]+\(\) \{ ## ' "$SCRIPT_PATH" \
+        | sed -E 's/^cmd_([a-z_]+)\(\) \{ ## /\1\t/' \
+        | awk -F'\t' "{gsub(/_/, \"-\", \$1); printf \"  ${CYAN}%-16s${RESET} %s\n\", \$1, \$2}"
+    echo
+    echo "  ${DIM}extra args pass through, e.g. 'vitess test -k upload'${RESET}"
+}
+
+main() {
+    local command="${1:-help}"
+    shift || true
+
+    # Commands are typed with dashes; the functions use underscores.
+    local fn="cmd_${command//-/_}"
+    if ! declare -F "$fn" >/dev/null; then
+        echo "error: unknown command '$command'" >&2
+        echo >&2
+        cmd_help >&2
+        exit 1
+    fi
+    "$fn" "$@"
+}
+
+main "$@"

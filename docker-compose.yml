@@ -102,11 +102,10 @@ services:
   vitess-app:
     image: *vitess-image
     container_name: vitess-app
-    # CP6 replaces this with the entrypoint that starts the API and the
-    # Streamlit UI. Until then the container exists so that the MCP contract can
-    # be proved from the place that will actually use it -- same image, same
-    # network, same volume.
-    command: ["sleep", "infinity"]
+    # One container, two processes: the API on container loopback and the
+    # Streamlit UI on the published port. If either stops, the container stops
+    # -- a UI still serving pages against a dead API looks like it works.
+    command: ["vitess-entrypoint"]
     environment:
       - VITESS_PROJECT_PATH=/data/projects
       - VITESS_MODULES_PATH=/vitess/MODULES
@@ -115,8 +114,25 @@ services:
       - VITESS_MCP_BASE_URL=http://vitess-mcp:9005
       - DATABASE_URL=postgresql://${POSTGRES_USER:-vitess}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your env file (see env.example)}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-vitess}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Container loopback, and not published. Core refuses to pair a fixed
+      # principal with a reachable API, which is the check these two satisfy.
+      - VITESS_BIND_HOST=127.0.0.1
+      - VITESS_API_PORT=9600
+      - UI_PORT=9601
+      - VITESS_ARTIFACT_ROOT=/data/artifacts
+      - VITESS_AUDIT_FILE=/data/artifacts/audit.jsonl
+      - BLABLADOR_API_KEY=${BLABLADOR_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - VITESS_RAG_PERSIST_PATH=/data/chroma
     volumes:
       - vitess-projects:/data/projects
+      # Delivered plots and their audit log. Separate from the project volume
+      # because these are what a *user* may download, and the MCP container --
+      # which mounts the project volume -- has no business in them.
+      - vitess-artifacts:/data/artifacts
+      # The documentation index, built once by `vitess index-docs`. A volume so
+      # that rebuilding the image does not mean embedding the manual again.
+      - vitess-chroma:/data/chroma
     ports:
       # Loopback only, and the UI alone. The API binds container loopback and is
       # not published. CP6 brings up the process that listens here.
@@ -133,6 +149,12 @@ services:
     restart: unless-stopped
 
 volumes:
+  vitess-artifacts:
+    driver: local
+    name: vitess-ai-artifacts
+  vitess-chroma:
+    driver: local
+    name: vitess-ai-chroma
   vitess-postgres:
     driver: local
     name: vitess-ai-postgres

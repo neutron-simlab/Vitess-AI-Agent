@@ -1326,6 +1326,33 @@ def test_every_prompt_carries_the_same_order_of_work_word_for_word() -> None:
         assert step in canonical
 
 
+def test_the_two_modules_that_read_a_file_are_told_to_re_read_the_store() -> None:
+    """A file can change between turns, and the transcript will not notice.
+
+    Today a file can be uploaded, replaced or removed and the model will carry
+    on with the path it saw once -- so it can build a command against a file
+    that is gone, or ask for one already provided. The enforceable half is in
+    the validator: `staged_upload_path` refuses a path that is no longer a
+    staged file. This is the other half, and it is what makes the right file
+    being the wrong file visible to the person who chose it.
+    """
+    carrying = {
+        module
+        for module in execution_order()
+        if "## SAY WHICH FILE YOU ARE USING" in _prompt_text(module)
+    }
+    blocks = {
+        module: _prompt_text(module).split("## SAY WHICH FILE YOU ARE USING")[1].split("---")[0]
+        for module in carrying
+    }
+
+    # Exactly the two with a `list_staged_files` tool. The other three write
+    # files rather than reading them, and have nothing staged to look at.
+    assert carrying == {"readin", "guide"}
+    assert len(set(blocks.values())) == 1, "the two copies have drifted"
+    assert "call `list_staged_files()` **again**" in blocks["readin"]
+
+
 @pytest.mark.parametrize("module", execution_order())
 def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) -> None:
     """The contradictions, named so they cannot come back one at a time."""

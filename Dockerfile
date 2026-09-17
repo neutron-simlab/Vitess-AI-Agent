@@ -94,20 +94,29 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY Vitess-AI-Agent-v2/src/ ./src/
 
-RUN uv sync --frozen --no-dev
+# The Streamlit pages and the two-process entrypoint. Separate from `src/`
+# because `app/` is not part of the installed package: it is run by `streamlit
+# run`, which takes a path rather than a module.
+COPY Vitess-AI-Agent-v2/app/ ./app/
+COPY Vitess-AI-Agent-v2/docker-entrypoint.sh /usr/local/bin/vitess-entrypoint
+
+RUN uv sync --frozen --no-dev && chmod +x /usr/local/bin/vitess-entrypoint
 
 # The project volume is mounted here in both services. Creating it in the image
 # with the runtime user's ownership is what makes a fresh named volume writable
 # without running as root: Docker copies this directory's mode and owner into an
 # empty volume the first time it is mounted.
 RUN useradd --create-home --uid 10001 vitess \
-    && mkdir -p /data/projects \
-    && chown -R vitess:vitess /data/projects
+    && mkdir -p /data/projects /data/artifacts /data/chroma \
+    && chown -R vitess:vitess /data
 
 USER vitess
 
 # 9005: the FastMCP server. Reachable on the Compose network only; the compose
 # file publishes no port for it, because MCP has no authentication.
-EXPOSE 9005
+# 9601: the Streamlit UI, published on the host's loopback interface only.
+# The API's 9600 is deliberately not exposed: it binds container loopback and
+# is reached only by the UI process beside it.
+EXPOSE 9005 9601
 
 CMD ["python", "-m", "vitess_ai.mcp.server"]

@@ -34,3 +34,8 @@ vitess-rag = { path = "rag/vitess-rag" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The repository root, so `tests/` can import `app.*`. The Streamlit pages are
+# not part of the installed package -- `streamlit run` takes a path, not a
+# module -- but their invariants are worth asserting, and `tests/` is already on
+# the path through pytest's rootdir insertion.
+pythonpath = ["."]
