@@ -197,6 +197,31 @@ class Monitor2DParameters(VitessParameterModel):
     )]
 
     @model_validator(mode="after")
+    def the_monitor_measures_something(self) -> "Monitor2DParameters":
+        """Both axes, the file format and the file name are all required.
+
+        `VtMonPar.NO_PAR` (0) and `VtFormat2D.NO_2D_FORMAT` (-1) are sentinels
+        this schema invented -- neither appears in the VITESS parameter list or
+        among the documented formats ('matrix', 'xyz', 'matrix_compact',
+        'xyz_compact'). A grid with no axes, written in no format, to no file,
+        still exits 0.
+        """
+        for field_name, value in (("xParam", self.xParam), ("yParam", self.yParam)):
+            if value == VtMonPar.NO_PAR:
+                raise ValueError(
+                    f"{field_name} must name the quantity for that axis; "
+                    "NO_PAR (0) is not a VITESS parameter"
+                )
+        if self.format == VtFormat2D.NO_2D_FORMAT:
+            raise ValueError(
+                "format must be one of the VITESS 2D formats; NO_2D_FORMAT (-1) "
+                "is not one of them"
+            )
+        if not self.fMonitorFilename.strip():
+            raise ValueError("fMonitorFilename is required")
+        return self
+
+    @model_validator(mode="after")
     def ranges_are_ordered(self) -> "Monitor2DParameters":
         if self.xMin >= self.xMax:
             raise ValueError("xMin must be smaller than xMax")

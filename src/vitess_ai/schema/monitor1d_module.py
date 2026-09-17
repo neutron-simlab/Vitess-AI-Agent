@@ -158,6 +158,24 @@ class Monitor1DParameters(VitessParameterModel):
     )]
 
     @model_validator(mode="after")
+    def the_monitor_measures_something(self) -> "Monitor1DParameters":
+        """`NO_PAR` and a blank file name are both "this monitor does nothing".
+
+        `VtMonPar.NO_PAR` is a zero sentinel this schema invented; it is not in
+        the VITESS parameter list, so `-X0` asks monitor1D to plot a quantity
+        that does not exist. A blank `fMonitorFilename` drops `-O` entirely and
+        the monitor writes nowhere.
+        """
+        if self.eParX == VtMonPar.NO_PAR:
+            raise ValueError(
+                "eParX must name the quantity to monitor; NO_PAR (0) is not a "
+                "VITESS parameter"
+            )
+        if not self.fMonitorFilename.strip():
+            raise ValueError("fMonitorFilename is required")
+        return self
+
+    @model_validator(mode="after")
     def ranges_are_ordered(self) -> "Monitor1DParameters":
         if self.xMin >= self.xMax:
             raise ValueError("xMin must be smaller than xMax")

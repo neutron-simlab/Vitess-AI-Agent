@@ -44,6 +44,7 @@ class ReadInParameters(VitessParameterModel):
     # Factor to normalize to source intensity
     FactInt: Annotated[float, Field(
         default=1.0,
+        gt=0,
         description="-I [-] Factor to normalize to the source intensity",
         json_schema_extra={"flag": "-I"}
     )]
@@ -58,6 +59,7 @@ class ReadInParameters(VitessParameterModel):
     # Detect color
     iDetectColor: Annotated[int, Field(
         default=-1,
+        ge=-1,
         description="-C [-] Only for VITESS format: Read only events with a given color",
         json_schema_extra={"flag": "-C"}
     )]
@@ -65,6 +67,7 @@ class ReadInParameters(VitessParameterModel):
     # Number of repetitions
     nRep: Annotated[int, Field(
         default=1,
+        ge=1,
         description="-R [-] Number of times the input is read",
         json_schema_extra={"flag": "-R"}
     )]
@@ -109,6 +112,28 @@ class ReadInParameters(VitessParameterModel):
             raise ValueError("at least one input file is required")
         if len(self.sInputFileName) != len(self.Weight):
             raise ValueError("read_in requires one weight per input file")
+        return self
+
+    @model_validator(mode="after")
+    def file_names_are_not_blank(self) -> "ReadInParameters":
+        """A field that names a file must name one.
+
+        A blank name is not "no file": `parameters_to_arguments` skips an empty
+        string, so `sInputFileName=[""]` produced `-a1.0` -- the weight for
+        input file 1 -- with no `-A` beside it, and read_in ran with nothing to
+        read. `sInstrInfIn` and `sTraceFileName` say "no file" with `None`,
+        which the converter drops flag and all; blank is a third state that
+        means nothing to anyone.
+        """
+        for index, name in enumerate(self.sInputFileName, start=1):
+            if not name.strip():
+                raise ValueError(f"input file {index} has no name")
+        for field_name in ("sInstrInfIn", "sTraceFileName"):
+            value = getattr(self, field_name)
+            if value is not None and not value.strip():
+                raise ValueError(
+                    f"{field_name} must be a file name or null, not an empty string"
+                )
         return self
 
 

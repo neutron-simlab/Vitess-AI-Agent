@@ -200,6 +200,7 @@ class WriteoutParameters(VitessParameterModel):
     # Neutron selection
     iDetectColor: Annotated[int, Field(
         default=-1,
+        ge=-1,
         description="-C [-] Write out only neutrons with a given color, -1 means any",
         json_schema_extra={"flag": "-C"}
     )]
@@ -213,6 +214,7 @@ class WriteoutParameters(VitessParameterModel):
     # Normalization and metadata
     FactInt: Annotated[float, Field(
         default=1.0,
+        gt=0,
         description="-I [-] Factor to normalize to the source intensity from MCNP data",
         json_schema_extra={"flag": "-I"}
     )]
@@ -235,6 +237,24 @@ class WriteoutParameters(VitessParameterModel):
         description="Filtering limits for neutron selection"
     )]
 
+    @model_validator(mode="after")
+    def an_active_writeout_names_its_file(self) -> "WriteoutParameters":
+        """`-A` is the whole point of the module when it is switched on.
+
+        `sOutFileName` may be null or blank only when `bActive` is false, which
+        is writeout's documented way of running the module without writing
+        anything. With `bActive` true and a blank name the converter dropped
+        `-A` silently and writeout wrote nowhere, which looks from the exit code
+        like a run that worked.
+        """
+        if self.bActive and not (self.sOutFileName or "").strip():
+            raise ValueError(
+                "sOutFileName is required while bActive is true; set bActive to "
+                "false to run writeout without writing a file"
+            )
+        return self
+
+
 # Schema for initial response
 class InitialResponseWriteout(BaseModel): 
     """
@@ -243,7 +263,6 @@ class InitialResponseWriteout(BaseModel):
     """
     response: Annotated[Literal['Default Setup', 'Customize', 'Not Known'], 
                         Field(description="Initial writeout module response type")]
-
 
 
 # Example usage

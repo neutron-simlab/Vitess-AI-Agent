@@ -23,6 +23,7 @@ from vitess_ai.agents.specialists.guide.tools import build_tools as guide_tools
 from vitess_ai.agents.specialists.module_specialist import (
     FILESYSTEM_TOOLS,
     build_module_prompt,
+    omitted_file_value,
 )
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
 from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
@@ -32,7 +33,7 @@ from vitess_ai.cli.arguments import (
     ParameterConversionError,
     parameters_to_arguments,
 )
-from vitess_ai.modules.catalog import execution_order
+from vitess_ai.modules.catalog import cli_executables, execution_order
 from vitess_ai.modules.parameters import PARAMETER_MODELS, parameter_model
 from vitess_ai.schema import (
     GuideParameters,
@@ -522,13 +523,19 @@ def test_the_five_specialists_are_the_five_executable_modules(
     ]
 
 
-#: The one value a prompt is allowed to contradict its schema on, and why.
+#: The one value a prompt is allowed to contradict its schema on, and what it must
+#: say instead.
 #:
 #: `ReadInParameters.sInstrInfIn` defaults to the bare name `instrument.inf`, which
 #: names no file that exists. The prompt tells the model to send `null` instead, and
 #: the validation tool refuses anything that is not `null` or a staged path -- so the
 #: prompt, the tool and reality agree, and the schema default is the outlier.
-PROMPT_OVERRIDES_SCHEMA = {("readin", "sInstrInfIn")}
+#:
+#: The required value is written here rather than the field merely being skipped. An
+#: exception that skips a field asserts nothing about it: the prompt could go back to
+#: claiming `"instrument.inf"`, or to anything else, and this test would still pass
+#: while the deliberate override it exists to protect had quietly been lost.
+PROMPT_OVERRIDES_SCHEMA = {("readin", "sInstrInfIn"): None}
 
 
 @pytest.mark.parametrize("module", execution_order())
@@ -559,6 +566,11 @@ def test_the_default_configuration_in_each_prompt_is_the_schema_default(
             f"{module}/AGENT.md names {field_name}, which {model.__name__} has no field for"
         )
         if (module, field_name) in PROMPT_OVERRIDES_SCHEMA:
+            required = PROMPT_OVERRIDES_SCHEMA[(module, field_name)]
+            assert value == required, (
+                f"{module}/AGENT.md overrides the schema default for {field_name}, "
+                f"which is allowed, but it must say {required!r} and it says {value!r}"
+            )
             continue
         default = model.model_fields[field_name].get_default(call_default_factory=True)
         if hasattr(default, "value"):
@@ -601,6 +613,32 @@ def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
     return builders[module]()
 
 
+#: Snake-case words that appear in a prompt between backticks and are not tools.
+#:
+#: Everything derivable is derived below -- parameter field names come from the
+#: models and `read_in` and friends from the catalog -- so this holds only what
+#: cannot be: three VITESS 2D file formats, whose enum members are spelled
+#: `MATR_CMPT`, `MATR_INT` and `XYZ_CMPT` and so cannot be matched to the lower-case
+#: names the documentation and the prompts use.
+PROSE_WORDS_THAT_LOOK_LIKE_TOOLS = frozenset(
+    {"matrix_compact", "matrix_integer", "xyz_compact"}
+)
+
+#: Anything in a prompt shaped like this is read as a tool name.
+TOOL_SHAPED = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?:\(\))?`")
+
+
+def _field_names(model: type[BaseModel]) -> set[str]:
+    """Every field name in a model and in the models nested inside it."""
+    names: set[str] = set()
+    for field_name, field in model.model_fields.items():
+        names.add(field_name)
+        annotation = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            names |= _field_names(annotation)
+    return names
+
+
 @pytest.mark.parametrize("module", execution_order())
 def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     module: str, tmp_path: Path
@@ -615,20 +653,27 @@ def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     Checked in both directions, because the opposite mistake -- a tool the
     specialist has and the prompt never mentions -- is a capability the model
     will not discover.
+
+    **Every snake-case word is read as a tool name**, and then the ones that
+    provably are not -- parameter fields, VITESS executables, three format names
+    -- are subtracted. The first version of this test matched a hard-coded list
+    of tool names instead, which meant it could only catch a tool it already knew
+    about: putting `get_instrument_file` back into a prompt, the exact regression
+    the docstring above claims to prevent, would not have matched the pattern at
+    all and the test would have passed.
     """
     prompt = build_module_prompt(
         f"vitess_ai.agents.specialists.{module}", parameter_model(module)
     )
-    named = set(
-        re.findall(
-            r"`(validate_[a-z0-9_]+|list_staged_files|ask_user|read_file|write_file"
-            r"|edit_file|delete|execute|glob|grep|ls)`",
-            prompt,
-        )
+    not_tools = (
+        _field_names(parameter_model(module))
+        | set(cli_executables().values())
+        | PROSE_WORDS_THAT_LOOK_LIKE_TOOLS
     )
-    available = {tool.name for tool in _specialist_tools(module, tmp_path)} | set(
-        FILESYSTEM_TOOLS
-    )
+    named = {token for token in TOOL_SHAPED.findall(prompt) if token not in not_tools}
+    available = {tool.name for tool in _specialist_tools(module, tmp_path)}
+    if FILESYSTEM_TOOLS is not None:
+        available |= set(FILESYSTEM_TOOLS)
 
     assert named == available
 
@@ -644,6 +689,13 @@ def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
     context spent on tools it will never use, and on a weaker model it is an
     invitation to use them. The allowlist is core's, so this pins what v2 asks
     for rather than what the upstream default happens to be.
+
+    There is no `read_file` either. It survived the first cut on the theory that
+    the delegation boundary carries `/findings/` in, so a later module could read
+    what an earlier one recorded -- but a `/findings/` file exists only because
+    some specialist called `write_file`, none of these five has it, and without
+    `ls` or `glob` there is no path to guess at. These specialists hand off
+    through `module_results`, a typed state channel.
     """
     specialist = next(
         spec
@@ -657,13 +709,13 @@ def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
     )
     bound = set(specialist["runnable"].nodes["tools"].bound._tools_by_name)
 
-    expected = {f"validate_{module}_parameters", "ask_user", "read_file"}
+    expected = {f"validate_{module}_parameters", "ask_user"}
     if module in {"readin", "guide"}:
         expected.add("list_staged_files")
 
     assert bound == expected
-    assert "execute" not in bound
-    assert "delete" not in bound
+    for absent in ("execute", "delete", "read_file", "write_file", "ls", "glob"):
+        assert absent not in bound
 
 
 def test_only_the_modules_that_read_a_file_can_list_staged_files(
@@ -725,3 +777,307 @@ def test_readin_lists_both_trajectory_and_instrument_upload_slots(tmp_path: Path
         "readin",
         "instrument",
     ]
+
+
+# ---------------------------------------------------------------------------
+# What the prompts claim, and what the validator enforces
+#
+# These came out of the CP4 review, which probed the real validation tools with
+# ten configurations the prompts describe as invalid and found all ten recorded
+# as "valid and recorded". Two defect classes: a file field whose value was
+# empty was skipped rather than checked, and four physics rules existed only as
+# prose. The rules live in the schemas now; these tests are what stops them
+# going back to the prompt.
+# ---------------------------------------------------------------------------
+
+
+def _blank_file_case(module: str, tmp_path: Path) -> tuple[Any, dict[str, Any]]:
+    """One configuration per module whose file field is blank."""
+    staged = stage_uploads(tmp_path)
+    cases: dict[str, tuple[Any, dict[str, Any]]] = {
+        "readin": (
+            readin_tools(project_root=tmp_path, gateway=None),
+            {"sInputFileName": [""], "Weight": [1.0], "sInstrInfIn": staged["instrument"]},
+        ),
+        "writeout": (writeout_tools(project_root=tmp_path), {"sOutFileName": ""}),
+        "monitor1d": (monitor1d_tools(project_root=tmp_path), {"fMonitorFilename": ""}),
+        "monitor2d": (monitor2d_tools(project_root=tmp_path), {"fMonitorFilename": ""}),
+    }
+    return cases[module]
+
+
+@pytest.mark.parametrize("module", ["readin", "writeout", "monitor1d", "monitor2d"])
+def test_a_blank_file_name_is_not_a_way_of_saying_there_is_no_file(
+    module: str, tmp_path: Path
+) -> None:
+    """A skipped check is not a passed check.
+
+    Every file field was gated on `if value:`, so an empty string was neither
+    staged-path-checked nor filename-checked -- it was simply not looked at, and
+    the configuration was recorded as valid. `parameters_to_arguments` then drops
+    an empty string, so the flag vanished from the command line too:
+    `sInputFileName=[""]` produced `-a1.0`, the weight for input file 1, with no
+    `-A` beside it. read_in ran with nothing to read and exited 0.
+    """
+    tools, parameters = _blank_file_case(module, tmp_path)
+    tool = named_tool(tools, f"validate_{module}_parameters")
+
+    command = _validate(tool, parameters)
+
+    assert "module_results" not in command.update
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [("sInstrInfIn", ""), ("sTraceFileName", "")],
+)
+def test_an_optional_readin_file_says_no_file_with_null_not_with_blank(
+    field_name: str, value: str, tmp_path: Path
+) -> None:
+    """`None` and `""` are not two spellings of the same thing.
+
+    These two fields do have a way of saying "no file" -- it is `null`, and the
+    converter drops the flag with it. A blank string is a third state that means
+    nothing to the schema, nothing to the converter and nothing to VITESS.
+    """
+    staged = stage_uploads(tmp_path)
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=None), "validate_readin_parameters"
+    )
+    base = {
+        "sInputFileName": [staged["readin"]],
+        "Weight": [1.0],
+        "sInstrInfIn": staged["instrument"],
+    }
+
+    refused = _validate(tool, {**base, field_name: value})
+    accepted = _validate(tool, {**base, field_name: None} if field_name != "sInstrInfIn" else base)
+
+    assert "module_results" not in refused.update
+    assert "module_results" in accepted.update
+
+
+def test_a_blank_shape_file_is_still_how_the_guide_says_it_has_none(
+    tmp_path: Path,
+) -> None:
+    """The one file field where blank is the answer, and it must stay working.
+
+    `GuideParameters.ShapeFileName` defaults to `""`, which the converter turns
+    into no `-S` at all -- that is the documented way to run a guide whose shape
+    comes from the dimensions rather than from a file. Tightening the blank rule
+    for the other four modules must not take this with it, and the rule is
+    derived from this field's own default rather than from a second list.
+    """
+    stage_uploads(tmp_path)
+    tool = named_tool(
+        guide_tools(project_root=tmp_path, gateway=None), "validate_guide_parameters"
+    )
+
+    command = _validate(tool, {"ShapeFileName": ""})
+
+    assert "module_results" in command.update
+    recorded = command.update["module_results"]["guide"]["parameters"]
+    assert "-S" not in " ".join(parameters_to_arguments(GuideParameters(**recorded)))
+
+
+@pytest.mark.parametrize(
+    ("model", "field_name", "value", "omitted"),
+    [
+        # Blank is this field's own default: no shape file, omit `-S`.
+        (GuideParameters, "ShapeFileName", "", True),
+        (GuideParameters, "ShapeFileName", "   ", True),
+        (GuideParameters, "ShapeFileName", "guide.dat", False),
+        # `None` is how these say "no file", and the annotation admits it.
+        (ReadInParameters, "sInstrInfIn", None, True),
+        (ReadInParameters, "sTraceFileName", None, True),
+        # Required, with a real default: there is no way to say "no file".
+        (Monitor1DParameters, "fMonitorFilename", "monitor1D.dat", False),
+    ],
+)
+def test_whether_a_file_field_is_absent_is_read_off_the_schema(
+    model: type[BaseModel], field_name: str, value: Any, omitted: bool
+) -> None:
+    """One source of truth for which file fields are optional.
+
+    The old gate was `if value:`, which treated every falsy value as absent and
+    checked none of them. This asks the field instead -- does its annotation
+    admit `None`, is its own default blank -- so there is no second table of
+    optional fields to fall out of step with the models.
+    """
+    assert omitted_file_value(model, field_name, value) is omitted
+
+
+def test_a_required_file_field_refuses_a_blank_name_at_the_tool_too() -> None:
+    """`fMonitorFilename` has no way to say "no file", so blank is an error.
+
+    This is the second reading of the same rule `Monitor1DParameters` enforces.
+    It is deliberately *not* a second reading of writeout's rule, which depends
+    on `bActive` and therefore lives in one place only.
+    """
+    with pytest.raises(ValueError, match="an empty name is not how"):
+        omitted_file_value(Monitor1DParameters, "fMonitorFilename", "")
+
+
+@pytest.mark.parametrize(
+    ("module", "parameters", "claimed_by_the_prompt"),
+    [
+        ("readin", {"nRep": 0}, "`nRep` must be 1 or more"),
+        ("readin", {"FactInt": 0}, "`FactInt` must be greater than 0"),
+        ("readin", {"iDetectColor": -2}, "`iDetectColor` must be -1 or more"),
+        ("writeout", {"FactInt": 0}, "`FactInt` must be greater than 0"),
+        ("writeout", {"iDetectColor": -2}, "`iDetectColor` must be -1 or more"),
+        ("monitor1d", {"eParX": 0}, "`eParX` cannot be `NO_PAR` (0)"),
+        ("monitor2d", {"xParam": 0}, "`xParam` cannot be `NO_PAR` (0)"),
+        ("monitor2d", {"yParam": 0}, "`yParam` cannot be `NO_PAR` (0)"),
+        ("monitor2d", {"format": -1}, "`format` cannot be `NO_2D_FORMAT` (-1)"),
+    ],
+)
+def test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces(
+    module: str, parameters: dict[str, Any], claimed_by_the_prompt: str, tmp_path: Path
+) -> None:
+    """Prose is not an enforcement layer, and a weaker model is why.
+
+    Each of these was recorded as a valid configuration while the module's own
+    prompt said in as many words that it could not be. `NO_PAR` (0) and
+    `NO_2D_FORMAT` (-1) are sentinels this schema invented -- neither is in the
+    VITESS parameter list or among its documented 2D formats -- so a monitor
+    configured with them asks VITESS to plot a quantity that does not exist, and
+    still exits 0.
+    """
+    staged = stage_uploads(tmp_path)
+    tools = {
+        "readin": lambda: readin_tools(project_root=tmp_path, gateway=None),
+        "writeout": lambda: writeout_tools(project_root=tmp_path),
+        "monitor1d": lambda: monitor1d_tools(project_root=tmp_path),
+        "monitor2d": lambda: monitor2d_tools(project_root=tmp_path),
+    }[module]()
+    base = (
+        {
+            "sInputFileName": [staged["readin"]],
+            "Weight": [1.0],
+            "sInstrInfIn": staged["instrument"],
+        }
+        if module == "readin"
+        else {}
+    )
+
+    command = _validate(
+        named_tool(tools, f"validate_{module}_parameters"), {**base, **parameters}
+    )
+
+    assert "module_results" not in command.update, (
+        f"{module}/AGENT.md says {claimed_by_the_prompt}, and the validator agreed"
+    )
+
+
+def test_colour_zero_is_a_colour_and_not_a_missing_filter(tmp_path: Path) -> None:
+    """The one place the prompt was wrong and the validator was right.
+
+    `writeout/AGENT.md` said colour values had to be "-1 for no filter, or a
+    positive integer". The VITESS documentation says the range is >= -1, where
+    -1 means "write every trajectory" -- so 0 is a colour like any other, and
+    refusing it would have made a legal configuration impossible to express.
+    The prompt was corrected to match; this keeps the correction from being
+    reverted into the schema.
+    """
+    command = _validate(
+        named_tool(writeout_tools(project_root=tmp_path), "validate_writeout_parameters"),
+        {"iDetectColor": 0},
+    )
+
+    assert "module_results" in command.update
+
+
+def test_writeout_may_be_switched_off_instead_of_named(tmp_path: Path) -> None:
+    """`bActive=False` is how writeout runs without writing; blank is not.
+
+    Requiring the file name outright would make the module's own "don't write
+    anything" setting unreachable, so the rule is conditional -- and that is the
+    rule the prompt states.
+    """
+    tool = named_tool(writeout_tools(project_root=tmp_path), "validate_writeout_parameters")
+
+    assert "module_results" in _validate(
+        tool, {"bActive": False, "sOutFileName": ""}
+    ).update
+    assert "module_results" not in _validate(
+        tool, {"bActive": True, "sOutFileName": ""}
+    ).update
+
+
+def _prompt_text(module: str) -> str:
+    return (
+        Path(__file__).parents[1]
+        / "src/vitess_ai/agents/specialists"
+        / module
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+
+def _order_of_work(module: str) -> str:
+    text = _prompt_text(module)
+    start = text.index("## THE ORDER OF WORK")
+    return text[start : text.index("\n---\n", start)]
+
+
+def test_every_prompt_carries_the_same_order_of_work_word_for_word() -> None:
+    """Five copies of a sequence is five chances to disagree, and they did.
+
+    Before this, three statements in each prompt described two different orders:
+    PATH B ended "build, validate, present", the guidelines said "present the
+    final configuration before validating it", and the validation rules ended
+    "always validate the final JSON before presenting it to the user". Monitor2D
+    managed to say "validate, then present the JSON" and, eighty lines later,
+    "after validation, return immediately".
+
+    The sequence is authored once and pasted into all five, and this is what
+    keeps them identical -- an edit to one has to be an edit to all five.
+    """
+    texts = {module: _order_of_work(module) for module in execution_order()}
+    distinct = set(texts.values())
+
+    assert len(distinct) == 1, (
+        "these prompts describe different orders of work: "
+        + ", ".join(sorted(texts))
+    )
+    canonical = distinct.pop()
+    for step in (
+        "1. **Collect**",
+        "2. **Build**",
+        "3. **Present**",
+        "4. **Validate**",
+        "5. **Then stop.**",
+    ):
+        assert step in canonical
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) -> None:
+    """The contradictions, named so they cannot come back one at a time."""
+    text = _prompt_text(module)
+    tool = f"validate_{module}_parameters"
+
+    for contradiction in (
+        "Always validate the final JSON before presenting it to the user",
+        "**Present the final configuration** before validating it",
+        f"Always use `{tool}` before presenting",
+    ):
+        assert contradiction not in text, f"{module}/AGENT.md still says: {contradiction}"
+
+    present = text.index("Present it to the user, formatted")
+    assert present < text.index(f"Validate it using the `{tool}` tool")
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_no_prompt_names_a_findings_file_no_specialist_can_write(module: str) -> None:
+    """`read_file` went, and the paragraph that described it had to go with it.
+
+    A `/findings/` file exists only because some specialist called `write_file`.
+    None of these five has it, so the prompt was teaching the model about a
+    hand-off that could not happen -- and a weaker model that believes it will
+    go looking for one before configuring anything.
+    """
+    text = _prompt_text(module)
+
+    assert "/findings/" not in text
+    assert "read_file" not in text
