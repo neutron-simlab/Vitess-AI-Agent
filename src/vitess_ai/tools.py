@@ -681,10 +681,16 @@ def build_vitess_tools(
     ]
 
 
-def vitess_supervisor_middleware() -> list[Any]:
-    """The CP3a root hooks: evidence block first, artifact attachment second."""
+def vitess_supervisor_middleware(agent_name: str = "vitess") -> list[Any]:
+    """The CP3a root hooks: evidence block first, artifact attachment second.
+
+    ``agent_name`` is what the `<verified_by_server>` block says produced the
+    evidence, so the sweep passes its own id. Both agents run the same hooks over
+    the same channel -- that is the point of the seam — but a sweep's evidence
+    labelled `vitess` would send a reader to the wrong thread for it.
+    """
 
     return [
-        ExecutionEvidenceMiddleware(agent_name="vitess"),
+        ExecutionEvidenceMiddleware(agent_name=agent_name),
         ArtifactMessageMiddleware(),
     ]

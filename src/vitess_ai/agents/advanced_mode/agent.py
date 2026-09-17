@@ -20,20 +20,20 @@ Three things the first-generation agent did that this does not:
   wiped conversation state for **every** user.
 - `DynamicModelMiddleware`, which core replaced with `RuntimeModelMiddleware`.
 - A `FilesystemBackend` rooted at the whole configured project path, so one
-  conversation could read another's files. It is scoped to this thread's directory
-  here, and the scoping happens at invocation because the thread is not known when the
-  graph is built.
+  conversation could read another's files. **No filesystem route is mounted here at
+  all**: the sweep reads its inputs through `inspect_thread_folders`, which is already
+  scoped to one thread by the MCP server, and the guided agent mounts none either. A
+  per-thread route would have to be swapped at invocation, since the thread is not
+  known when the graph is built, and giving one of the two agents a filesystem the
+  other lacks is an asymmetry nothing here needs.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from deepagents.backends import CompositeBackend
-from deepagents.backends.filesystem import FilesystemBackend
 from langchain.agents import create_agent
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
@@ -91,27 +91,6 @@ class AdvancedModeResources:
 
     app: CompiledStateGraph
     gateway: VitessGateway
-
-
-def build_sweep_backend(store: Any, thread_root: Path | None = None) -> Any:
-    """The supervisor backend, plus a read-only view of this thread's own files.
-
-    Rooted at one conversation's directory rather than the project path. With one
-    user that is not a privacy problem; it is still a correctness one, because a
-    model that can see every conversation's outputs will eventually cite the wrong
-    run's numbers.
-    """
-
-    backend = build_supervisor_backend(store)
-    if thread_root is None:
-        return backend
-    thread_root.mkdir(parents=True, exist_ok=True)
-    return CompositeBackend(
-        default=backend,
-        routes={
-            "/runs/": FilesystemBackend(root_dir=str(thread_root), virtual_mode=True),
-        },
-    )
 
 
 def build_advanced_mode_graph(

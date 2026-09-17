@@ -21,10 +21,15 @@ from typing import Any
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from vitess_ai.agents.specialists.guide.tools import build_sweep_tools as guide_sweep
 from vitess_ai.agents.specialists.guide.tools import build_tools as guide_tools
+from vitess_ai.agents.specialists.monitor1d.tools import build_sweep_tools as monitor1d_sweep
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
+from vitess_ai.agents.specialists.monitor2d.tools import build_sweep_tools as monitor2d_sweep
 from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
+from vitess_ai.agents.specialists.readin.tools import build_sweep_tools as readin_sweep
 from vitess_ai.agents.specialists.readin.tools import build_tools as readin_tools
+from vitess_ai.agents.specialists.writeout.tools import build_sweep_tools as writeout_sweep
 from vitess_ai.agents.specialists.writeout.tools import build_tools as writeout_tools
 from vitess_ai.mcp.connection import TOOL_NAMES
 from vitess_ai.modules.catalog import execution_order
@@ -259,4 +264,94 @@ def configured_modules(
     )
     if only is not None:
         written = {name: value for name, value in written.items() if name in only}
+    return written
+
+
+def _swept(tool: Any, parameter_sets: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
+    """Call one real sweep validation tool and return what it wrote to state."""
+    call = tool.coroutine or tool.func
+    result = call(runtime=runtime(**kwargs), parameter_sets=parameter_sets)
+    if asyncio.iscoroutine(result):
+        result = asyncio.run(result)
+    assert isinstance(result, Command), result
+    written = result.update.get("module_variants")
+    if written is None:
+        raise AssertionError(result.update["messages"][0].text)
+    return written
+
+
+def swept_modules(
+    project_root: Path,
+    thread_id: str = THREAD_ID,
+    *,
+    guide_widths: tuple[float, ...] = (3.0,),
+) -> dict[str, Any]:
+    """The `module_variants` the five real sweep tools produce for one thread.
+
+    The sweep equivalent of `configured_modules`, and for the same reason: a
+    plan built from hand-written variants would prove nothing about what a
+    sweep specialist can actually record. Only the guide varies, which is what
+    a one-parameter sweep looks like; the other four send the single-element
+    list a module with no variation still has to send.
+    """
+    staged = stage_uploads(project_root, thread_id)
+    gateway = None  # the validation tools never touch it
+    written: dict[str, Any] = {}
+
+    written.update(
+        _swept(
+            named_tool(
+                readin_sweep(project_root=project_root, gateway=gateway),
+                "validate_readin_variants",
+            ),
+            [
+                {
+                    "sInputFileName": [staged["readin"]],
+                    "Weight": [1.0],
+                    "sInstrInfIn": staged["instrument"],
+                }
+            ],
+            thread_id=thread_id,
+        )
+    )
+    written.update(
+        _swept(
+            named_tool(
+                guide_sweep(project_root=project_root, gateway=gateway),
+                "validate_guide_variants",
+            ),
+            [{"GuideEntrWidth": width} for width in guide_widths],
+            thread_id=thread_id,
+        )
+    )
+    written.update(
+        _swept(
+            named_tool(
+                writeout_sweep(project_root=project_root),
+                "validate_writeout_variants",
+            ),
+            [{"sOutFileName": "output.dat"}],
+            thread_id=thread_id,
+        )
+    )
+    written.update(
+        _swept(
+            named_tool(
+                monitor1d_sweep(project_root=project_root),
+                "validate_monitor1d_variants",
+            ),
+            [{}],
+            thread_id=thread_id,
+        )
+    )
+    written.update(
+        _swept(
+            named_tool(
+                monitor2d_sweep(project_root=project_root),
+                "validate_monitor2d_variants",
+            ),
+            [{}],
+            thread_id=thread_id,
+        )
+    )
     return written
