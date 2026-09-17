@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.json_schema import SkipJsonSchema
 
 from juena_core.agents.specialist_runtime import (
+    UNATTENDED_NOTICE,
     build_specialist_backend,
     build_specialist_middleware,
     load_markdown,
@@ -57,13 +58,16 @@ from vitess_ai.state import VitessBridgeState
 __all__ = [
     "SPECIALIST_PROVIDER",
     "SPECIALIST_MODEL",
+    "SWEEP_NOTICE",
     "FILESYSTEM_TOOLS",
     "FILESYSTEM_TOOL_DESCRIPTIONS",
     "build_module_prompt",
     "build_module_specialist",
     "build_staged_files_tool",
     "build_validation_tool",
+    "build_variants_tool",
     "omitted_file_value",
+    "validate_module_parameters",
     "plain_filename",
     "staged_upload_path",
 ]
@@ -244,6 +248,55 @@ def _message(runtime: ToolRuntime[Any, Any], text: str, *, error: bool = False) 
     )
 
 
+def validate_module_parameters(
+    parameters: Mapping[str, Any],
+    *,
+    module: str,
+    model: type[BaseModel],
+    schema_version: str,
+    project_root: Path,
+    thread_id: str,
+    upload_fields: Mapping[str, str] | None = None,
+    output_filename_fields: tuple[str, ...] = (),
+) -> ModuleConfigurationResult:
+    """Validate one parameter object, or raise saying why.
+
+    Shared by the guided agent's validation tool and the sweep's variants tool
+    so that a value the sweep accepts is one the guided path would accept too.
+    Two copies of this would be two definitions of "valid", and the sweep's
+    would be the one nobody watches.
+    """
+
+    validated = model(**parameters)
+    for field_name, upload_module in (upload_fields or {}).items():
+        value = getattr(validated, field_name, None)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if omitted_file_value(model, field_name, item):
+                continue
+            staged_upload_path(
+                str(item),
+                field_name=field_name,
+                project_root=project_root,
+                thread_id=thread_id,
+                upload_module=upload_module,
+            )
+    for field_name in output_filename_fields:
+        value = getattr(validated, field_name, None)
+        if omitted_file_value(model, field_name, value):
+            continue
+        plain_filename(str(value), field_name=field_name)
+    # Built and thrown away: a configuration that cannot be expressed as VITESS
+    # arguments must fail here, not at execution time with the user gone.
+    parameters_to_arguments(validated)
+    return ModuleConfigurationResult(
+        module=module,
+        validated_at=datetime.now(timezone.utc),
+        parameters=validated.model_dump(mode="json"),
+        schema_version=schema_version,
+    )
+
+
 def build_validation_tool(
     *,
     module: str,
@@ -307,27 +360,17 @@ def build_validation_tool(
             )
 
         try:
-            thread_id = _thread_id(runtime)
-            validated = model(**parameters)
-            for field_name, upload_module in (upload_fields or {}).items():
-                value = getattr(validated, field_name, None)
-                values = value if isinstance(value, list) else [value]
-                for item in values:
-                    if omitted_file_value(model, field_name, item):
-                        continue
-                    staged_upload_path(
-                        str(item),
-                        field_name=field_name,
-                        project_root=project_root,
-                        thread_id=thread_id,
-                        upload_module=upload_module,
-                    )
-            for field_name in output_filename_fields:
-                value = getattr(validated, field_name, None)
-                if omitted_file_value(model, field_name, value):
-                    continue
-                plain_filename(str(value), field_name=field_name)
-            arguments = parameters_to_arguments(validated)
+            result = validate_module_parameters(
+                parameters,
+                module=module,
+                model=model,
+                schema_version=version,
+                project_root=project_root,
+                thread_id=_thread_id(runtime),
+                upload_fields=upload_fields,
+                output_filename_fields=output_filename_fields,
+            )
+            arguments = parameters_to_arguments(model(**result.parameters))
         except (ValidationError, ValueError, ParameterConversionError) as exc:
             return Command(
                 update={
@@ -341,12 +384,6 @@ def build_validation_tool(
                 }
             )
 
-        result = ModuleConfigurationResult(
-            module=module,
-            validated_at=datetime.now(timezone.utc),
-            parameters=validated.model_dump(mode="json"),
-            schema_version=version,
-        )
         return Command(
             update={
                 "messages": [
@@ -361,6 +398,159 @@ def build_validation_tool(
         )
 
     return validate
+
+
+class _VariantsArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    parameter_sets: list[dict[str, Any]] | str = Field(
+        description=(
+            "Every parameter object this module should sweep over, as a list. "
+            "Give one object per value of the parameter being varied; give a "
+            "single-element list when this module does not vary."
+        )
+    )
+    runtime: Annotated[
+        ToolRuntime[Any, Any],
+        InjectedToolArg,
+        SkipJsonSchema(),
+    ]
+
+
+def build_variants_tool(
+    *,
+    module: str,
+    model: type[BaseModel],
+    project_root: Path,
+    upload_fields: Mapping[str, str] | None = None,
+    output_filename_fields: tuple[str, ...] = (),
+    max_variants: int = 64,
+) -> BaseTool:
+    """Build the sweep's writer: N validated configurations for one module.
+
+    The guided agent's tool records one configuration per module. A sweep needs
+    several -- that is what a sweep is -- so this records a list, and
+    `write_simulation_matrix` combines the lists into runs.
+
+    **Every set is validated by the same function the guided path uses**, and
+    **all or none are recorded**: a partially validated list would let a sweep
+    run the sets that happened to pass while the model believed it had asked for
+    more, and the missing runs are invisible in the results.
+    """
+
+    version = module_schema_version(model)
+
+    @tool(
+        f"validate_{module}_variants",
+        args_schema=_VariantsArguments,
+        description=(
+            f"Validate every {module} parameter object this sweep should run and "
+            "record them together. Give a single-element list when this module "
+            "does not vary. Nothing is recorded unless every set is valid."
+        ),
+    )
+    def validate_variants(
+        runtime: ToolRuntime[Any, Any],
+        parameter_sets: list[dict[str, Any]] | str,
+    ) -> Command:
+        if isinstance(parameter_sets, str):
+            try:
+                parameter_sets = json.loads(parameter_sets)
+            except json.JSONDecodeError as exc:
+                return Command(
+                    update={"messages": [_message(runtime, f"Not valid JSON: {exc}", error=True)]}
+                )
+        if isinstance(parameter_sets, dict):
+            # One object where a list was asked for is a near miss, not a bug.
+            parameter_sets = [parameter_sets]
+        if not isinstance(parameter_sets, list) or not parameter_sets:
+            return Command(
+                update={
+                    "messages": [
+                        _message(
+                            runtime,
+                            f"Expected a non-empty list of {module} parameter "
+                            f"objects, got {type(parameter_sets).__name__}.",
+                            error=True,
+                        )
+                    ]
+                }
+            )
+        if len(parameter_sets) > max_variants:
+            return Command(
+                update={
+                    "messages": [
+                        _message(
+                            runtime,
+                            f"{len(parameter_sets)} variants for {module} exceeds "
+                            f"the limit of {max_variants}. A sweep this wide is "
+                            "almost always a mistake in how the values were "
+                            "expanded; check with the user before growing it.",
+                            error=True,
+                        )
+                    ]
+                }
+            )
+
+        validated: list[ModuleConfigurationResult] = []
+        for index, parameters in enumerate(parameter_sets):
+            if not isinstance(parameters, dict):
+                return Command(
+                    update={
+                        "messages": [
+                            _message(
+                                runtime,
+                                f"{module} variant {index + 1} is a "
+                                f"{type(parameters).__name__}, not a parameter object.",
+                                error=True,
+                            )
+                        ]
+                    }
+                )
+            try:
+                validated.append(
+                    validate_module_parameters(
+                        parameters,
+                        module=module,
+                        model=model,
+                        schema_version=version,
+                        project_root=project_root,
+                        thread_id=_thread_id(runtime),
+                        upload_fields=upload_fields,
+                        output_filename_fields=output_filename_fields,
+                    )
+                )
+            except (ValidationError, ValueError, ParameterConversionError) as exc:
+                return Command(
+                    update={
+                        "messages": [
+                            _message(
+                                runtime,
+                                f"{module} variant {index + 1} of "
+                                f"{len(parameter_sets)} is not valid, so none were "
+                                f"recorded:\n{exc}",
+                                error=True,
+                            )
+                        ]
+                    }
+                )
+
+        return Command(
+            update={
+                "messages": [
+                    _message(
+                        runtime,
+                        f"Recorded {len(validated)} validated {module} "
+                        f"configuration(s) for this sweep.",
+                    )
+                ],
+                "module_variants": {
+                    module: [item.model_dump(mode="json") for item in validated]
+                },
+            }
+        )
+
+    return validate_variants
 
 
 def build_staged_files_tool(
@@ -434,6 +624,7 @@ def build_module_specialist(
     tools: list[BaseTool],
     summarizer_model: Any,
     fallback_models: list[Any],
+    unattended: bool = False,
 ) -> CompiledSubAgent:
     """Compile one module specialist from the pieces its own package chose.
 
@@ -452,7 +643,9 @@ def build_module_specialist(
             provider=SPECIALIST_PROVIDER, model=SPECIALIST_MODEL, temperature=0.0
         ),
         tools=tools,
-        system_prompt=build_module_prompt(prompt_package, model),
+        system_prompt=build_module_prompt(
+            prompt_package, model, unattended=unattended
+        ),
         middleware=build_specialist_middleware(
             backend=build_specialist_backend(),
             summarizer_model=summarizer_model,
@@ -460,11 +653,12 @@ def build_module_specialist(
             filesystem_tool_descriptions=FILESYSTEM_TOOL_DESCRIPTIONS,
             specialist_name=name,
             filesystem_tools=FILESYSTEM_TOOLS,
+            unattended=unattended,
         ),
         response_format=ToolStrategy(SpecialistReport),
         context_schema=RuntimeModelContext,
         state_schema=VitessBridgeState,
-        name=f"vitess_{module}_specialist",
+        name=f"vitess_{module}_{'sweep' if unattended else 'specialist'}",
     )
     return {
         "name": name,
@@ -474,7 +668,54 @@ def build_module_specialist(
     }
 
 
-def build_module_prompt(prompt_package: str, model: type[BaseModel]) -> str:
+SWEEP_NOTICE = """
+This run is part of a **parameter sweep**, not a guided conversation. Everything above
+about *what the values mean* -- the ranges, the units, the file rules, the physics, the
+defaults -- applies unchanged. What changes is how you are asked and how you answer.
+
+**There is no user to ask.** You have no `ask_user` tool, and nobody is watching this
+run. Every instruction above that says "ask the user", "offer the choice" or "wait for
+the user to provide" becomes, here: **use the schema default**, unless the objective
+you were given says otherwise. If the objective does not mention a parameter, it keeps
+its default. Do not stop to ask; there is nothing to stop for.
+
+**You own parameter interpretation and generation.** The objective gives you intent --
+"vary FactInt with values [0.1, 0.5, 1, 2]", "the guide's eGuideShapeY should be
+linear" -- and it is your job to turn that into complete, valid parameter objects. Do
+not expect the orchestrator to fill anything in; it does not know this module's fields
+and must not guess at them. If the objective is genuinely ambiguous, choose the reading
+the schema supports, say which reading you chose in your report, and record it under
+`limitations`.
+
+**You validate a list, not one object.** Your validation tool is
+`validate_{module}_variants` and it takes `parameter_sets` -- every configuration this
+module should sweep over.
+
+- If the objective names values to vary, produce **one complete parameter object per
+  value**. The objects are identical apart from the field being varied: build the full
+  object once, then repeat it with each value substituted.
+- If the objective names no variation for this module, send a **single-element list**
+  holding the defaults. A module that does not vary still has to be validated; a module
+  with no variation is not a module with no configuration.
+
+**Either every set is valid or none are recorded.** A partly validated list would run
+the sets that happened to pass while the objective asked for more, and the missing runs
+would be invisible in the results. So if one set fails, fix it and call the tool again
+with the whole list. Do not drop the failing set and continue.
+
+**Your report is the deliverable.** Say how many configurations you recorded and what
+varies between them. Put anything you could not settle in `limitations` -- an honest gap
+there is worth far more than a guess, because the orchestrator can act on a gap and
+cannot act on a guess.
+"""
+
+
+def build_module_prompt(
+    prompt_package: str,
+    model: type[BaseModel],
+    *,
+    unattended: bool = False,
+) -> str:
     """The authored prompt, followed by the module's own parameter schema.
 
     The first-generation prompts interpolated `model_json_schema()` into a
@@ -484,6 +725,12 @@ def build_module_prompt(prompt_package: str, model: type[BaseModel]) -> str:
     one the validation tool will enforce.
     """
     authored = load_markdown(prompt_package, "AGENT.md")
+    if unattended:
+        module = prompt_package.rsplit(".", 1)[-1]
+        authored = (
+            f"{authored}\n## Running unattended\n\n{UNATTENDED_NOTICE}\n"
+            f"\n## This run is a sweep\n{SWEEP_NOTICE.format(module=module)}"
+        )
     schema = json.dumps(model.model_json_schema(), indent=2)
     return (
         f"{authored}\n## The parameter schema you must satisfy\n\n"

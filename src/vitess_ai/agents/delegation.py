@@ -33,23 +33,41 @@ __all__ = ["ModuleSpecialistDelegate", "with_module_delegation_boundary"]
 
 
 class ModuleSpecialistDelegate(SpecialistDelegate):
-    """One module specialist, allowed to return that module's configuration."""
+    """One module specialist, allowed to return that module's configuration.
+
+    Guided or sweep -- the same delegate wraps both, because the rule is the
+    same: one module, its own entry, nothing else.
+    """
 
     def __init__(self, runnable: Runnable, *, name: str, module: str) -> None:
         super().__init__(runnable, name=name)
         self._module = module
 
+    def _own(self, values: dict[str, Any], channel: str) -> Any | None:
+        """This specialist's entry in one module-keyed channel, and no other's.
+
+        Nothing sends either channel inbound, so the guide specialist has no
+        legitimate way to know what read-in decided, and an entry under another
+        module's name can only be something it made up.
+        """
+        written = values.get(channel)
+        return written.get(self._module) if isinstance(written, dict) else None
+
     def _outbound(self, sent: dict[str, Any], result: Any) -> dict[str, Any]:
         crossing = super()._outbound(sent, result)
         values = result if isinstance(result, dict) else {}
-        validated = values.get("module_results")
-        own = (
-            validated.get(self._module)
-            if isinstance(validated, dict)
-            else None
-        )
-        if own is not None:
-            crossing["module_results"] = {self._module: own}
+
+        # The guided path writes one configuration; a sweep writes a list of
+        # them. Both are this specialist's own work and both come back the same
+        # way, under their own channel.
+        configured = False
+        for channel in ("module_results", "module_variants"):
+            own = self._own(values, channel)
+            if own is not None:
+                crossing[channel] = {self._module: own}
+                configured = True
+
+        if configured:
             crossing["simulation_order_events"] = [
                 SimulationOrderEvent(
                     kind="configured", module=self._module

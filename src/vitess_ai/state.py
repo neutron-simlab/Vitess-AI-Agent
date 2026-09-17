@@ -17,6 +17,7 @@ __all__ = [
     "SimulationOrderEvent",
     "VitessBridgeState",
     "merge_module_results",
+    "merge_module_variants",
 ]
 
 
@@ -65,6 +66,23 @@ def merge_module_results(
     return merged
 
 
+def merge_module_variants(
+    left: Mapping[str, Any] | None,
+    right: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge a sweep's per-module variant lists by module name.
+
+    The same rule as `merge_module_results`, one level up: a module's whole list
+    of variants is replaced together, because re-validating a module means the
+    user changed what that module should sweep over, and half-replacing a list
+    would pair new values with old ones.
+    """
+
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
 class VitessBridgeState(SpecialistOutcomeState):
     """The channels the VITESS agents add to core's specialist-outcome state."""
 
@@ -96,3 +114,15 @@ class VitessBridgeState(SpecialistOutcomeState):
     #: pipeline nobody had configured. `execution_events` can be private because
     #: `run_simulation` runs at the root and never crosses that boundary.
     module_results: NotRequired[Annotated[dict[str, Any], merge_module_results]]
+    #: The batch path's equivalent: ``{module: [ModuleConfigurationResult, ...]}``,
+    #: one list per module, each holding the values that module sweeps over. Not
+    #: private, for the same reason as `module_results` -- a sweep specialist
+    #: writes it and it has to survive the trip back out.
+    module_variants: NotRequired[Annotated[dict[str, Any], merge_module_variants]]
+    #: One `SimulationPlanEntry` per run of a sweep, dumped to JSON. Written by
+    #: `write_simulation_matrix` from `module_variants`, read by
+    #: `run_batch_from_matrix`. Both ends are server-owned; the model chooses
+    #: which combinations it wants, never the identifiers or the parameters.
+    #: Last write wins, so re-planning a sweep replaces it rather than appending
+    #: a second sweep to the first.
+    simulation_plan: NotRequired[Annotated[list[Any], PrivateStateAttr]]

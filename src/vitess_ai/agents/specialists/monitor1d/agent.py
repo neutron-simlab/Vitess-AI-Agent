@@ -11,6 +11,7 @@ from vitess_ai.agents.specialists.module_specialist import build_module_speciali
 from vitess_ai.agents.specialists.monitor1d.tools import (
     MODULE,
     SPECIALIST_NAME,
+    build_sweep_tools,
     build_tools,
 )
 from vitess_ai.schema import Monitor1DParameters
@@ -27,14 +28,27 @@ def build_monitor1d_specialist(
     project_root: Path,
     summarizer_model: Any,
     fallback_models: list[Any],
+    unattended: bool = False,
 ) -> CompiledSubAgent:
+    """Compile this module's specialist.
+
+    ``unattended`` compiles the copy a parameter sweep delegates to: it
+    validates a list of configurations instead of one and has no
+    ``ask_user``, because a sweep nobody is watching cannot have its
+    question answered. Same prompt, same checks, same model.
+    """
     return build_module_specialist(
         module=MODULE,
         name=SPECIALIST_NAME,
         description=DESCRIPTION,
         prompt_package="vitess_ai.agents.specialists.monitor1d",
         model=Monitor1DParameters,
-        tools=build_tools(project_root=project_root),
+        tools=(
+            build_sweep_tools(project_root=project_root)
+            if unattended
+            else build_tools(project_root=project_root)
+        ),
         summarizer_model=summarizer_model,
         fallback_models=fallback_models,
+        unattended=unattended,
     )
