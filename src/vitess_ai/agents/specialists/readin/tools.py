@@ -11,6 +11,7 @@ from juena_core.agents.ask_user import build_ask_user_tool
 from vitess_ai.agents.specialists.module_specialist import (
     build_staged_files_tool,
     build_validation_tool,
+    build_variants_tool,
 )
 from vitess_ai.schema import ReadInParameters
 
@@ -45,4 +46,22 @@ def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
             upload_modules=("readin", "instrument"),
         ),
         build_ask_user_tool(SPECIALIST_NAME),
+    ]
+
+
+def build_sweep_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
+    """The same checks, over a list, with no `ask_user`: nobody is watching."""
+    return [
+        build_variants_tool(
+            module=MODULE,
+            model=ReadInParameters,
+            project_root=project_root,
+            upload_fields=UPLOAD_FIELDS,
+        ),
+        build_staged_files_tool(
+            module=MODULE,
+            gateway=gateway,
+            project_root=project_root,
+            upload_modules=("readin", "instrument"),
+        ),
     ]

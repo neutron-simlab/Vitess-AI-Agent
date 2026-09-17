@@ -7,7 +7,10 @@ from pathlib import Path
 from langchain_core.tools import BaseTool
 
 from juena_core.agents.ask_user import build_ask_user_tool
-from vitess_ai.agents.specialists.module_specialist import build_validation_tool
+from vitess_ai.agents.specialists.module_specialist import (
+    build_validation_tool,
+    build_variants_tool,
+)
 from vitess_ai.schema import Monitor2DParameters
 
 MODULE = "monitor2d"
@@ -30,4 +33,16 @@ def build_tools(*, project_root: Path) -> list[BaseTool]:
             output_filename_fields=OUTPUT_FILENAME_FIELDS,
         ),
         build_ask_user_tool(SPECIALIST_NAME),
+    ]
+
+
+def build_sweep_tools(*, project_root: Path) -> list[BaseTool]:
+    """The same checks, over a list, with no `ask_user`: nobody is watching."""
+    return [
+        build_variants_tool(
+            module=MODULE,
+            model=Monitor2DParameters,
+            project_root=project_root,
+            output_filename_fields=OUTPUT_FILENAME_FIELDS,
+        ),
     ]
