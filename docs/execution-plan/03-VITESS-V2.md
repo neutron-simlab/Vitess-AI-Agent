@@ -2212,19 +2212,21 @@ one that was since replaced. Instead, each turn that touches a module **reads th
 store and states what it found**: *"Using `sample_beam.dat` for readin."* Same discipline
 as `<verified_by_server>` — the store is the authority, not the transcript.
 
-**3. `ask_user` is the second way in.** When a module needs a file and none is staged, the
-specialist asks **in the chat**, where the person already is, rather than leaving them to
-discover the sidebar. This needs no new mechanism: `ask_user` is already a tool, already
-raises a LangGraph `interrupt()`, already renders as a card, and already resumes the
-thread (00, and `juena_core.agents.ask_user`). The answer routes to the same
-`file_storage` endpoint the sidebar posts to.
+**3. `ask_user` keeps the upload in the conversation.** When a module needs a file and
+none is staged, the specialist asks **in the chat**, where the person already is, rather
+than silently failing or continuing with no input. The question pauses the graph while
+the person uploads through the labelled sidebar slot, then the answer resumes the same
+specialist and it reads the store again. Core's clarification answer is a string, not a
+binary body with a structured module destination, so the card does not pretend to be a
+second upload protocol.
 
 ### The constraint that shapes this
 
-An in-chat upload **cannot** go through juena's composer-attachment path. That path
+The upload prompted from the chat **cannot** go through juena's composer-attachment path.
+That path
 decodes with `raw.decode("utf-8-sig")` (`juena/server/chat/inputs.py:104`) and puts the
-result in graph state; VITESS trajectory files can be `VT_BINARY` and large. The in-chat
-route must post to `file_storage` with an explicit module, exactly as the sidebar does.
+result in graph state; VITESS trajectory files can be `VT_BINARY` and large. The sidebar
+therefore remains the one route to `file_storage`, with an explicit module.
 
 Which is worth noticing honestly: **the composer would have to ask the destination
 question anyway.** That is the strongest argument for keeping labelled slots — they
@@ -2287,8 +2289,9 @@ under *Before you start*; its final paths are what the Docker allowlist must tes
   proves app and MCP genuinely share the volume;
 - the agent **names that file back** on the next turn without being asked, because it
   read the store rather than the transcript;
-- a module with nothing staged asks for a file **in the chat**, and answering the card
-  stores it against the right module;
+- a module with nothing staged asks for a file **in the chat**; while its card is pending,
+  uploading through the named sidebar slot stores it against the right module, after
+  which answering the card makes the specialist read the store again;
 - **no output filename appears anywhere in the sidebar** — `writeout`, `monitor1d` and
   `monitor2d` collect theirs conversationally, from the schema default;
 - `WriteoutParameters.sOutFileName` is the only `output.dat` in the system. The old
@@ -2312,6 +2315,14 @@ upload -> inspect_thread_folders   the same file, written by one container and
 ./juena health + test      still ok and 232 passed, beside a running v2
 ```
 
+The subsequent CP6 review finished at **411 passed**, `uv sync --frozen` still
+auditing 187 packages and `check-imports` green. The rebuilt app and MCP services both
+ran image `sha256:62a765bc1d9ef257f350d2be263c4378356e4c3580768ab82f2e7eada0aee269`.
+A live sidebar-client flow began with no chat row, created the row under `vitess`, read
+the three-slot manifest, staged read-in and instrument files, and received 422 for both
+a second instrument file and an `.h5` in that slot; its files and disposable thread were
+removed afterward. UI, API and MCP health remained green.
+
 #### The application exists now
 
 `config.py` keeps its own `Config`, its `os.getenv` and its `validate_required`, and
@@ -2320,12 +2331,14 @@ hands core a frozen `CoreSettings` — the extension mechanism being that there 
 the two side-effect agent imports whose comment is transplanted from juena-chatbot.
 It serves seventeen routes and **nothing under `/auth/`**.
 
-`validate_required` refuses three things loudly at startup: no `DATABASE_URL`, no model
-key, and `VITESS_API_PUBLISHED`. That last one matters because every request here is
-the same local principal, so a reachable API lets anyone on the network act as that
-user — and core refuses the same pairing a moment later, which is how the *test* for it
-was found to be worthless. It matched core's phrase, so it passed whether or not this
-check existed. It now names this deployment's own sentence, and both gates stay.
+`validate_required` refuses four things loudly at startup: no `DATABASE_URL`, no model
+key, `VITESS_API_PUBLISHED`, and a non-loopback `VITESS_BIND_HOST`. The last two matter
+because every request here is the same local principal, so a reachable API lets anyone
+on the network act as that user — and core refuses the published pairing a moment later,
+which is how the *test* for it was found to be worthless. It matched core's phrase, so it
+passed whether or not this check existed. It now names this deployment's own sentence,
+and both gates stay. Boolean environment variables are parsed strictly too; a
+misspelling such as `VITESS_API_PUBLISHED=treu` cannot silently disable the guard.
 
 #### Uploads: a real file, because the reader is a compiled binary
 
@@ -2338,11 +2351,24 @@ the other container — nothing in between copies it.
 files, and it existed because importing the catalog used to drag in LangChain. That
 cannot fail now, so a store that cannot name its slots is a broken install.
 
+The CP6 review found that the first port still used the catalog only for those three
+names: the client was broken by calling core's `_headers` property as a function, the UI
+kept its own fallback slot list, and the store ignored each catalog row's `extensions`
+and `max_files`. The repaired `/files/modules` response carries the whole manifest from
+the catalog, the UI renders it rather than copying it, and the store enforces the same
+per-slot formats and counts. A new conversation is created before a sidebar-first upload
+so ownership checks no longer make the first upload answer 404.
+
 The policy is this path's own, not a shared text validator: an extension allowlist, a
 100 MB ceiling, a refusal of empty files, and an **HDF5 signature check** for `.h5` and
 `.nxs`. Those two may never take the chat-attachment path, which decodes with
 `raw.decode("utf-8-sig")`; this one never decodes. The composer accordingly declares no
 `accept_file` at all, and a test pins the comment saying why.
+
+The HTTP layer now reads at most one byte beyond the configured ceiling before handing
+the body to the store, and same-name uploads publish with an exclusive hard link rather
+than an exists-then-write race. Two concurrent `beam.dat` uploads therefore become
+`beam.dat` and `beam_1.dat`; neither replaces the other.
 
 `thread_id` is a `UUID` in every signature rather than a string that gets checked, so
 FastAPI rejects `../..` before any route body runs.
@@ -2368,6 +2394,12 @@ Importing `vitess_ai.retrieval` pulls in neither `chromadb` nor `onnxruntime`; e
 the suite, so the tool surface does not depend on whether the developer has
 `BLABLADOR_API_KEY` exported.
 
+The review separated graceful *serving* from the explicit indexing command. A failed
+`vitess index-docs` now exits non-zero rather than printing a failure and returning 0,
+and a successful build restarts `vitess-app`: agent graphs cache their bound tools, so
+without that restart a graph first opened against an empty index would keep its
+`RAG_UNAVAILABLE` tools even after Chroma had been populated.
+
 #### The sidebar became a manifest
 
 97 lines of navigation plus 110 of manifest, against 596. Three slots, each showing what
@@ -2385,6 +2417,12 @@ The two file-reading prompts gained **SAY WHICH FILE YOU ARE USING**: re-read th
 each turn and name what you found, because a file can be replaced between turns and the
 transcript will not notice. The enforceable half was already there —
 `staged_upload_path` refuses a path that is no longer staged.
+
+The review also repaired conversation identity in the page itself. Switching modes now
+starts a fresh thread instead of drawing the old mode's transcript under the new header,
+and loading a thread from the URL restores its recorded `agent_id` before rebuilding the
+client. The server's agent-on-resume check remains the final boundary; the UI no longer
+makes the wrong request first.
 
 #### `./vitess`, copied rather than shared
 
