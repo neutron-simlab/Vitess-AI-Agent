@@ -1800,6 +1800,85 @@ than as a passing unit test. Five exit codes of 0 and a 3–6 Å spectrum with e
 
 ---
 
+### CP4 third review — the validator claimed more than VITESS requires
+
+A further round of review fixes arrived uncommitted: read-in weights bounded and summed,
+`allow_inf_nan=False` on every CLI-bound float, a shared monitor-filter validator, an
+`ask_user` confirmation between presenting and validating, and a tool-name test that
+finally sees one-word tools such as `execute` and `ls`. Its own note said the monitor
+rules were inferred from the pinned documentation and the repository's examples, because
+the upstream source was behind a browser check.
+
+That is the sentence worth acting on. **The documentation is silent on filter
+completeness, so the binary is the authority** — and `vitess-mcp` has a real VITESS 3.8
+build in it. Every rule was measured on a 1000-trajectory beam whose unfiltered total is
+6.01e10, by piping `read_in` into `monitor1D` and summing the monitor file.
+
+Six of the new rules were checked. **Three are right, and for stronger reasons than
+were given:**
+
+| Half-written form | What VITESS 3.8 actually does |
+|---|---|
+| `-l4` with no `-L` | monitors **0** — the window is λ ∈ [4, 0] and keeps nothing |
+| `-L12` with no `-l` | no filtering at all |
+| `-u-0.5` with no `-U` | 3.87e10 — a filter on [-0.5, 0] that nobody asked for |
+| `-I1` with no bounds | no filtering at all |
+| `-u`/`-U` with no `-I` | no filtering at all |
+
+A missing bound is **0**, not "no bound", and the run exits 0 either way. So a filter is
+all three flags or none of them — and the lambda pair, which the review had not covered,
+belongs to the same rule and is now in it.
+
+**Three refuse configurations the binary handles correctly**, which is the CP4 defect
+class pointed the other way — the `iDetectColor=0` case again:
+
+- **`[1.0, 1.0]` is a correct answer to "weight the two files equally."** read_in divides
+  every weight by their total: `[1.0, 1.0]`, `[0.5, 0.5]` and `[0.1, 0.1]` all monitor
+  4.19578e10, and `[2.0, 6.0]`, `[0.5, 1.5]` and `[0.25, 0.75]` all monitor 3.2863e10.
+  Only the ratio survives. The VITESS sentence "their sum should give 1" is a
+  readability convention, not a condition the binary imposes, and a validator enforcing
+  it refuses a correct simulation over its spelling. The bounds stay — 0.0–1.0 is
+  documented, and a negative weight is nonsense — the sum rule goes, and the prompt now
+  teaches the normalisation instead of asserting the sum.
+- **Filter 2 works on its own.** `-J5 -v4 -V12` with no filter 1 monitors 4.15848e10,
+  identical to the same filter in slot 1.
+- **A combination with fewer than two filters changes nothing.** One complete filter
+  monitors 1.62002e10 whether the combination says `NO_FCOMB`, `AND` or `OR`.
+
+**And one rule the review got right for the wrong reason, which is the find of this
+round.** `NO_FCOMB` is not "no combination". With both filters complete, `-C-1` (the
+schema default), `-C0` and `-C2` all monitor **4.63264e10** — the union — and only `-C1`
+monitors **1.14587e10**, the intersection. A user who configures two filters and leaves
+the combination alone has silently chosen OR and gets four times the beam. So
+`filterComb` is required exactly when both filters are in use, and nowhere else. The
+loop was closed end to end: the vector the real `validate_monitor1d_parameters` produces
+for two filters and `AND_AND_AND` —
+`-I1 -J5 -C1 -u-0.5 -U0.5 -v4.0 -V12.0` — monitors 1.14587e10 against the real binary,
+and the configuration now refused monitors 4.63264e10.
+
+The `ask_user` confirmation was checked against the first-generation prompts rather than
+kept on taste: their `DO NOT ask for any confirmation` is **post-validation** behaviour,
+which THE ORDER OF WORK already carries in step 6. Nothing in v1 objects to confirming
+before recording, so the step stays, now as step 4 of six in all five prompts.
+
+`test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces` was itself half a test:
+its third column was a comment, and two of its claims appeared in no prompt at all. It
+now asserts the prompt says the thing before proving the validator enforces it.
+
+```text
+uv run pytest -q (v2)                     308 passed  (was 257 at CP4, 296 as reviewed)
+twelve deliberate breaks                  12 caught, after splitting one weight case
+                                          that covered two bounds and neither
+argument vectors before vs after          byte-identical to CP4's
+validator vector vs real monitor1D        1.14587e10 (AND) against 4.63264e10 (default)
+```
+
+The weight-bound case is worth keeping in mind: `[-0.1, 1.1]` looks like it covers both
+bounds and covers neither, because deleting either one leaves the other value still out
+of range. One case per bound.
+
+---
+
 ## Checkpoint 5 — advanced_mode
 
 **The graph assembly is close to a port. The data path is not** — see *the batch path
