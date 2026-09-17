@@ -33,8 +33,10 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
+from langchain_core.tools import tool
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
+from pydantic import TypeAdapter
 
 from juena_core.artifacts import ArtifactStore, set_artifact_store_for_tests
 from juena_core.server.agent.registry import (
@@ -42,9 +44,15 @@ from juena_core.server.agent.registry import (
     list_registered_agents,
 )
 from vitess_ai.agents.advanced_mode import ADVANCED_MODE_AGENT_ID
-from vitess_ai.agents.advanced_mode.agent import build_advanced_mode_graph
+from vitess_ai.agents.advanced_mode import agent as agent_module
+from vitess_ai.agents.advanced_mode.agent import (
+    _ADVANCED_FACADE_TOOL_NAMES,
+    _advanced_facade_tools,
+    build_advanced_mode_graph,
+)
 from vitess_ai.agents.advanced_mode.tools import MAX_SWEEP_RUNS, build_batch_tools
 from vitess_ai.agents.delegation import ModuleSpecialistDelegate
+from vitess_ai.agents.vitess_agent import VITESS_FILESYSTEM_TOOLS
 from vitess_ai.agents.specialists.guide.tools import build_sweep_tools as guide_sweep
 from vitess_ai.agents.specialists.guide.tools import build_tools as guide_guided
 from vitess_ai.agents.specialists.module_specialist import build_module_prompt
@@ -225,6 +233,7 @@ def test_replanning_a_sweep_does_not_reuse_the_first_one_s_directories(
     [
         (["only one"], "run names were given"),
         (["same", "same"], "must be distinct"),
+        (["same", " same "], "must be distinct"),
     ],
 )
 def test_run_names_are_checked_before_anything_is_planned(
@@ -261,6 +270,33 @@ def test_a_sweep_wider_than_the_limit_is_refused_rather_than_run(
         for bins in (10, 20, 30, 40, 50)
     ]
 
+    command, _tools = _plan(tmp_path, variants=variants, combination="cartesian")
+
+    assert f"over the limit of {MAX_SWEEP_RUNS}" in _errors(command)[0]
+    assert "simulation_plan" not in command.update
+
+
+def test_cartesian_limit_is_checked_before_the_product_is_materialized(
+    tmp_path: Path, artifact_store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    variants = swept_modules(tmp_path, guide_widths=tuple(float(n) for n in range(2, 10)))
+    variants["monitor1d"] = [
+        {
+            **variants["monitor1d"][0],
+            "parameters": {
+                **variants["monitor1d"][0]["parameters"],
+                "nBinsX": bins,
+            },
+        }
+        for bins in (10, 20, 30, 40, 50)
+    ]
+
+    def product_must_not_run(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("the oversized Cartesian product was materialized")
+
+    monkeypatch.setattr(
+        "vitess_ai.agents.advanced_mode.tools.product", product_must_not_run
+    )
     command, _tools = _plan(tmp_path, variants=variants, combination="cartesian")
 
     assert f"over the limit of {MAX_SWEEP_RUNS}" in _errors(command)[0]
@@ -413,6 +449,33 @@ def test_a_batch_with_no_recorded_plan_refuses_instead_of_running_nothing(
     assert "write_simulation_matrix first" in _errors(result)[0]
 
 
+def test_execution_rechecks_the_sweep_limit_from_checkpointed_state(
+    tmp_path: Path, artifact_store
+) -> None:
+    requested: list[dict[str, Any]] = []
+
+    def record(call: dict[str, Any]) -> dict[str, Any]:
+        requested.append(call["args"])
+        return simulation_payload()
+
+    command, tools = _plan(tmp_path, run_simulation=record)
+    original = command.update["simulation_plan"][0]
+    oversized = [
+        {
+            **original,
+            "run_name": f"run {index + 1}",
+            "simulation_run_id": str(uuid4()),
+        }
+        for index in range(MAX_SWEEP_RUNS + 1)
+    ]
+
+    result = _run_batch(tools, oversized)
+
+    assert requested == []
+    assert f"over the limit of {MAX_SWEEP_RUNS}" in _errors(result)[0]
+    assert result.update["execution_events"][0]["status"] == "tool_error"
+
+
 def test_a_failed_run_is_reported_and_not_recorded_as_a_result(
     tmp_path: Path, artifact_store
 ) -> None:
@@ -442,6 +505,74 @@ def test_a_failed_run_is_reported_and_not_recorded_as_a_result(
         "good"
     ]
     assert any("exit 1" in event.get("command", "") + _text(result) for event in result.update["execution_events"])
+    assert all(message.status == "error" for message in result.update["messages"])
+
+
+def test_a_stale_variant_schema_is_refused_before_planning(
+    tmp_path: Path, artifact_store
+) -> None:
+    variants = swept_modules(tmp_path)
+    variants["guide"][0] = {
+        **variants["guide"][0],
+        "schema_version": "old-schema",
+    }
+
+    command, _tools = _plan(tmp_path, variants=variants)
+
+    assert "schema has changed" in _errors(command)[0]
+    assert "simulation_plan" not in command.update
+
+
+def test_execution_refuses_a_plan_with_an_unplanned_module(
+    tmp_path: Path, artifact_store
+) -> None:
+    requested: list[dict[str, Any]] = []
+
+    def record(call: dict[str, Any]) -> dict[str, Any]:
+        requested.append(call["args"])
+        return simulation_payload()
+
+    command, tools = _plan(tmp_path, run_simulation=record)
+    plan = json.loads(json.dumps(command.update["simulation_plan"]))
+    plan[0]["modules"]["invented"] = {
+        "module": "invented",
+        "validated_at": "2026-09-17T00:00:00+00:00",
+        "parameters": {},
+        "schema_version": "invented",
+    }
+
+    result = _run_batch(tools, plan)
+
+    assert requested == []
+    assert "unplanned modules" in _text(result)
+
+
+def test_execution_refuses_a_plan_whose_schema_became_stale(
+    tmp_path: Path, artifact_store
+) -> None:
+    requested: list[dict[str, Any]] = []
+
+    def record(call: dict[str, Any]) -> dict[str, Any]:
+        requested.append(call["args"])
+        return simulation_payload()
+
+    command, tools = _plan(tmp_path, run_simulation=record)
+    plan = json.loads(json.dumps(command.update["simulation_plan"]))
+    plan[0]["modules"]["guide"]["schema_version"] = "old-schema"
+
+    result = _run_batch(tools, plan)
+
+    assert requested == []
+    assert "schema has changed" in _text(result)
+
+
+def test_invalid_run_name_is_a_tool_error_not_an_uncaught_validation_error(
+    tmp_path: Path, artifact_store
+) -> None:
+    command, _tools = _plan(tmp_path, run_names=["   "])
+
+    assert "run name" in _errors(command)[0].lower()
+    assert "simulation_plan" not in command.update
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +609,28 @@ def test_a_sweep_specialist_keeps_the_whole_guided_prompt(tmp_path: Path) -> Non
     assert sweep.startswith(authored)
     assert "This run is a sweep" in sweep
     assert "validate_guide_variants" in sweep
-    assert "ask_user" not in guided[: guided.index("## THE ORDER OF WORK")] or True
+    assert "There is no user to ask" in sweep
+
+
+def test_a_single_variant_object_reaches_the_documented_compatibility_path(
+    tmp_path: Path,
+) -> None:
+    tool = named_tool(
+        guide_sweep(project_root=tmp_path, gateway=None), "validate_guide_variants"
+    )
+    trusted_runtime = runtime()
+    validated = TypeAdapter(
+        tool.args_schema.model_fields["parameter_sets"].annotation
+    ).validate_python(
+        {"GuideEntrWidth": 3.0}
+    )
+
+    command = tool.func(
+        runtime=trusted_runtime,
+        parameter_sets=validated,
+    )
+
+    assert len(command.update["module_variants"]["guide"]) == 1
 
 
 def test_a_variant_list_is_recorded_whole_or_not_at_all(tmp_path: Path) -> None:
@@ -514,6 +666,25 @@ def test_a_module_that_does_not_vary_still_records_one_configuration(
     command = tool.func(runtime=runtime(), parameter_sets=[{}])
 
     assert len(command.update["module_variants"]["guide"]) == 1
+
+
+def test_a_specialist_cannot_record_more_variants_than_a_sweep_can_run(
+    tmp_path: Path,
+) -> None:
+    tool = named_tool(
+        guide_sweep(project_root=tmp_path, gateway=None), "validate_guide_variants"
+    )
+
+    command = tool.func(
+        runtime=runtime(),
+        parameter_sets=[
+            {"GuideEntrWidth": float(index + 1)}
+            for index in range(MAX_SWEEP_RUNS + 1)
+        ],
+    )
+
+    assert f"limit of {MAX_SWEEP_RUNS}" in _errors(command)[0]
+    assert "module_variants" not in command.update
 
 
 def test_a_specialist_returns_only_its_own_module_s_variants() -> None:
@@ -615,6 +786,159 @@ def test_the_sweep_signs_its_evidence_with_its_own_agent_id() -> None:
     ]
 
 
+def test_advanced_mode_allowlists_its_facade_tools() -> None:
+    class _Tool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    selected = _advanced_facade_tools(
+        [
+            _Tool("run_simulation"),
+            _Tool("inspect_thread_folders"),
+            _Tool("generate_monitor1d_plot"),
+            _Tool("generate_monitor2d_plot"),
+            _Tool("future_dangerous_tool"),
+        ]
+    )
+
+    assert [tool.name for tool in selected] == [
+        "inspect_thread_folders",
+        "generate_monitor1d_plot",
+        "generate_monitor2d_plot",
+    ]
+
+
+def test_the_factory_selects_its_facade_through_the_allowlist(
+    tmp_path: Path, configured: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An allowlist nothing calls is the same defect as a denylist.
+
+    `_advanced_facade_tools` is tested directly, but the factory is the only
+    place it matters and the factory needs a live MCP server, so nothing proved
+    it was used. Replacing the call with the old
+    `[item for item in facade if item.name != "run_simulation"]` passed the
+    whole suite.
+    """
+    captured: dict[str, Any] = {}
+
+    async def no_health() -> None:
+        return None
+
+    async def discovered() -> list[Any]:
+        return raw_tools()
+
+    monkeypatch.setattr(agent_module, "probe_server_health", no_health)
+    monkeypatch.setattr(agent_module, "discover_vitess_tools", discovered)
+    monkeypatch.setattr(agent_module, "get_store", lambda: InMemoryStore())
+    monkeypatch.setattr(agent_module, "get_checkpointer", lambda: None)
+    monkeypatch.setattr(agent_module, "compile_sweep_specialists", lambda **_: [])
+    monkeypatch.setattr(agent_module, "project_root", lambda: tmp_path)
+
+    # The façade grows a tool. Today's denylist and today's allowlist select the
+    # same three tools, so nothing distinguishes them until one more exists --
+    # which is the entire situation the allowlist is for.
+    real_facade = agent_module.build_vitess_tools
+
+    def facade_with_a_new_tool(*args: Any, **kwargs: Any) -> list[Any]:
+        @tool("purge_thread_outputs", description="A tool added later, to no fanfare.")
+        def purge() -> str:
+            return "purged"
+
+        return [*real_facade(*args, **kwargs), purge]
+
+    monkeypatch.setattr(agent_module, "build_vitess_tools", facade_with_a_new_tool)
+
+    def capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(agent_module, "build_advanced_mode_graph", capture)
+    asyncio.run(
+        agent_module.create_advanced_mode_agent(
+            provider="blablador", model=configured.DEFAULT_MODEL
+        )
+    )
+
+    names = [tool.name for tool in captured["tools"]]
+    assert names[: len(_ADVANCED_FACADE_TOOL_NAMES)] == list(_ADVANCED_FACADE_TOOL_NAMES)
+    assert "run_simulation" not in names
+    assert "purge_thread_outputs" not in names
+    assert set(names) == set(_ADVANCED_FACADE_TOOL_NAMES) | {
+        "write_simulation_matrix",
+        "run_batch_from_matrix",
+    }
+
+
+def test_advanced_prompt_describes_the_actual_filesystem_boundary() -> None:
+    prompt = (
+        Path(__file__).parents[1]
+        / "src/vitess_ai/agents/advanced_mode/AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    assert "`read_file`" in prompt
+    assert "no `ask_user` tool, project-filesystem access or shell" in prompt
+    assert "`/data/projects` included, is refused with a message saying so" in prompt
+
+
+def test_the_sweep_binds_only_the_filesystem_tools_its_prompt_names(
+    tmp_path: Path, offline_model: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The supervisor half of CP4's "name exactly the tools you have".
+
+    Core's default hands a supervisor all eight tools its backend can offer,
+    `execute` and `delete` among them. Neither can do anything here -- `execute`
+    replies that the backend implements no sandbox protocol, and both refuse any
+    path outside `/memories/` -- but a tool named `execute` is the one a weaker
+    model reaches for when it decides to run VITESS itself, which is the single
+    thing one execution path exists to prevent. This asserts three links at
+    once: the agent asks for the narrowed set, the middleware binds exactly it,
+    and the prompt names exactly what was bound.
+    """
+    captured: dict[str, Any] = {}
+    real = agent_module.build_supervisor_middleware
+
+    def capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(agent_module, "build_supervisor_middleware", capture)
+    agent_module.build_advanced_mode_graph(
+        supervisor_model=_ScriptedSupervisor(responses=[AIMessage("done")]),
+        summarizer_model=offline_model,
+        fallback_models=[],
+        specialists=[
+            {
+                "name": "guide-specialist",
+                "description": "Configure the guide.",
+                "runnable": _Nothing(),
+                "module": "guide",
+            }
+        ],
+        tools=[],
+        store=InMemoryStore(),
+    )
+
+    assert captured["filesystem_tools"] == VITESS_FILESYSTEM_TOOLS
+    filesystem = next(
+        item
+        for item in real(**captured)
+        if type(item).__name__ == "FilesystemMiddleware"
+    )
+    bound = {tool.name for tool in filesystem.tools}
+    assert bound == set(VITESS_FILESYSTEM_TOOLS)
+
+    prompt = (
+        Path(__file__).parents[1] / "src/vitess_ai/agents/advanced_mode/AGENT.md"
+    ).read_text(encoding="utf-8")
+    for name in sorted(bound):
+        assert f"`{name}`" in prompt, f"AGENT.md never mentions `{name}`"
+    # The two it does not have appear once each, in the sentence saying so.
+    assert "There is no `execute` and no `delete`." in prompt
+    for absent in ("execute", "delete"):
+        assert absent not in bound
+        assert prompt.count(f"`{absent}`") == 1
+
+
 def test_a_two_run_sweep_completes_through_the_real_graph(
     tmp_path: Path, offline_model: Any, artifact_store: ArtifactStore
 ) -> None:
@@ -702,11 +1026,9 @@ def test_a_two_run_sweep_completes_through_the_real_graph(
         fallback_models=[],
         specialists=specialists,
         tools=[
-            *[
-                item
-                for item in build_vitess_tools(gateway, project_root=tmp_path)
-                if item.name != "run_simulation"
-            ],
+            *_advanced_facade_tools(
+                build_vitess_tools(gateway, project_root=tmp_path)
+            ),
             *build_batch_tools(gateway, project_root=tmp_path),
         ],
         store=InMemoryStore(),

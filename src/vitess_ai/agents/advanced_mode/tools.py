@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from itertools import product
+from math import prod
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
@@ -41,8 +42,11 @@ from vitess_ai.cli.arguments import parameters_to_arguments
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import parameter_model
 from vitess_ai.run import InternalSimulationRequest, VitessGateway
-from vitess_ai.schema.module_result import ModuleConfigurationResult
-from vitess_ai.schema.simulation_plan import SimulationPlanEntry
+from vitess_ai.schema.module_result import (
+    ModuleConfigurationResult,
+    module_schema_version,
+)
+from vitess_ai.schema.simulation_plan import MAX_SWEEP_RUNS, SimulationPlanEntry
 from vitess_ai.state import SimulationRunReference
 from vitess_ai.tools import (
     attach_artifacts,
@@ -53,11 +57,6 @@ from vitess_ai.tools import (
 )
 
 __all__ = ["MAX_SWEEP_RUNS", "build_batch_tools"]
-
-#: A sweep wider than this is almost always an expansion mistake -- a Cartesian
-#: product of two lists somebody meant to pair. Each run is a full VITESS
-#: pipeline, so the cost of finding out by running is measured in hours.
-MAX_SWEEP_RUNS = 32
 
 MATRIX_FILENAME = "simulation_matrix.json"
 
@@ -96,6 +95,24 @@ class _BatchArguments(BaseModel):
     ]
 
 
+def _current_result(module: str, value: Any) -> ModuleConfigurationResult:
+    """Validate one stored result against the module and schema in this build."""
+
+    result = ModuleConfigurationResult.model_validate(value)
+    if result.module != module:
+        raise ValueError(
+            f"A configuration recorded under {module!r} says it is for "
+            f"{result.module!r}"
+        )
+    current_version = module_schema_version(parameter_model(module))
+    if result.schema_version != current_version:
+        raise ValueError(
+            f"The {module!r} parameter schema has changed since its variants "
+            "were validated. Delegate to that specialist again."
+        )
+    return result
+
+
 def _variants(runtime: ToolRuntime[Any, Any]) -> dict[str, list[ModuleConfigurationResult]]:
     """Every module's validated variants, or a refusal naming what is missing."""
 
@@ -124,14 +141,36 @@ def _variants(runtime: ToolRuntime[Any, Any]) -> dict[str, list[ModuleConfigurat
         entries = stored[module]
         if not isinstance(entries, list) or not entries:
             raise ValueError(f"The variants recorded for {module} are not a non-empty list")
-        validated = [ModuleConfigurationResult.model_validate(entry) for entry in entries]
-        for entry in validated:
-            if entry.module != module:
-                raise ValueError(
-                    f"A variant recorded under {module!r} says it is for {entry.module!r}"
-                )
+        validated = [_current_result(module, entry) for entry in entries]
         variants[module] = validated
     return variants
+
+
+def _combination_size(
+    variants: dict[str, list[ModuleConfigurationResult]],
+    combination: str,
+) -> int:
+    """Return the expansion size without constructing the expansion."""
+
+    planned = list(execution_order())
+    if combination == "cartesian":
+        return prod(len(variants[module]) for module in planned)
+    if combination != "paired":
+        raise ValueError(f"Unknown sweep combination: {combination!r}")
+
+    lengths = {len(variants[module]) for module in planned}
+    width = max(lengths)
+    uneven = [
+        module for module in planned if len(variants[module]) not in (1, width)
+    ]
+    if uneven:
+        raise ValueError(
+            "A paired sweep needs every module to have the same number of "
+            f"variants, or exactly one to reuse. These have neither: "
+            + ", ".join(f"{module} ({len(variants[module])})" for module in uneven)
+            + f"; the widest is {width}."
+        )
+    return width
 
 
 def _combine(
@@ -153,18 +192,7 @@ def _combine(
             for chosen in product(*(variants[module] for module in planned))
         ]
 
-    lengths = {len(variants[module]) for module in planned}
-    width = max(lengths)
-    uneven = [
-        module for module in planned if len(variants[module]) not in (1, width)
-    ]
-    if uneven:
-        raise ValueError(
-            "A paired sweep needs every module to have the same number of "
-            f"variants, or exactly one to reuse. These have neither: "
-            + ", ".join(f"{module} ({len(variants[module])})" for module in uneven)
-            + f"; the widest is {width}."
-        )
+    width = _combination_size(variants, combination)
     return [
         {
             module: variants[module][index if len(variants[module]) > 1 else 0]
@@ -243,19 +271,19 @@ def build_batch_tools(
         try:
             user_id, thread_id, graph_run_id = runtime_identity(runtime)
             variants = _variants(runtime)
-            combined = _combine(variants, combination)
+            combination_size = _combination_size(variants, combination)
         except (ValidationError, ValueError) as exc:
             return Command(
                 update={"messages": [tool_message(runtime, str(exc), error=True)]}
             )
 
-        if len(combined) > MAX_SWEEP_RUNS:
+        if combination_size > MAX_SWEEP_RUNS:
             return Command(
                 update={
                     "messages": [
                         tool_message(
                             runtime,
-                            f"That combination is {len(combined)} simulations, over "
+                            f"That combination is {combination_size} simulations, over "
                             f"the limit of {MAX_SWEEP_RUNS}. A sweep this wide is "
                             "usually a Cartesian product where paired rows were "
                             "meant. Check with the user which they want before "
@@ -265,6 +293,8 @@ def build_batch_tools(
                     ]
                 }
             )
+
+        combined = _combine(variants, combination)
 
         names = list(run_names or [])
         if names and len(names) != len(combined):
@@ -291,16 +321,34 @@ def build_batch_tools(
                 }
             )
 
-        entries = [
-            SimulationPlanEntry(
-                run_name=names[index] if names else f"run {index + 1}",
-                # Generated here, by trusted code. The model names runs; it does
-                # not name directories.
-                simulation_run_id=uuid4(),
-                modules=modules,
+        try:
+            entries = [
+                SimulationPlanEntry(
+                    run_name=names[index] if names else f"run {index + 1}",
+                    # Generated here, by trusted code. The model names runs; it does
+                    # not name directories.
+                    simulation_run_id=uuid4(),
+                    modules=modules,
+                )
+                for index, modules in enumerate(combined)
+            ]
+        except ValidationError as exc:
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(runtime, f"Run names are not valid: {exc}", error=True)
+                    ]
+                }
             )
-            for index, modules in enumerate(combined)
-        ]
+        normalized_names = [entry.run_name for entry in entries]
+        if len(set(normalized_names)) != len(normalized_names):
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(runtime, "Run names must be distinct.", error=True)
+                    ]
+                }
+            )
 
         rendered = _render_matrix(entries, combination=combination)
         delivered = ""
@@ -378,6 +426,26 @@ def build_batch_tools(
                     ]
                 }
             )
+        if len(plan) > MAX_SWEEP_RUNS:
+            event = ExecutionEvidence(
+                graph_run_id=graph_run_id,
+                command="VITESS parameter sweep",
+                status="tool_error",
+                exit_code=None,
+            )
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(
+                            runtime,
+                            f"The recorded plan contains {len(plan)} simulations, "
+                            f"over the limit of {MAX_SWEEP_RUNS}.",
+                            error=True,
+                        )
+                    ],
+                    "execution_events": [event.model_dump(mode="json")],
+                }
+            )
 
         planned = execution_order()
         events: list[dict[str, Any]] = []
@@ -407,7 +475,7 @@ def build_batch_tools(
                     runtime,
                     f"Sweep complete: {succeeded} of {len(plan)} run(s) succeeded.\n"
                     + "\n".join(lines),
-                    error=succeeded == 0,
+                    error=succeeded != len(plan),
                 )
             ],
             "execution_events": events,
@@ -449,12 +517,17 @@ async def _run_one(
     missing = [module for module in planned if module not in entry.modules]
     if missing:
         return failure(f"planned modules missing from the entry: {', '.join(missing)}")
+    unplanned = sorted(set(entry.modules) - set(planned))
+    if unplanned:
+        return failure(f"entry contains unplanned modules: {', '.join(unplanned)}")
 
     try:
         module_results = {
             module: {
                 "cli_parameters": parameters_to_arguments(
-                    parameter_model(module)(**entry.modules[module].parameters)
+                    parameter_model(module)(
+                        **_current_result(module, entry.modules[module]).parameters
+                    )
                 )
             }
             for module in planned

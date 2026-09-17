@@ -20,17 +20,18 @@ Three things the first-generation agent did that this does not:
   wiped conversation state for **every** user.
 - `DynamicModelMiddleware`, which core replaced with `RuntimeModelMiddleware`.
 - A `FilesystemBackend` rooted at the whole configured project path, so one
-  conversation could read another's files. **No filesystem route is mounted here at
-  all**: the sweep reads its inputs through `inspect_thread_folders`, which is already
-  scoped to one thread by the MCP server, and the guided agent mounts none either. A
-  per-thread route would have to be swapped at invocation, since the thread is not
-  known when the graph is built, and giving one of the two agents a filesystem the
-  other lacks is an asymmetry nothing here needs.
+  conversation could read another's files. **No project-filesystem route is mounted
+  here**: the sweep reads its inputs through `inspect_thread_folders`, which is already
+  scoped to one thread by the MCP server, and the guided agent mounts none either.
+  Core still supplies its normal virtual routes for per-user memory and read-only
+  findings; neither route exposes `/data/projects`. A per-thread project route would
+  have to be swapped at invocation, since the thread is not known when the graph is
+  built, and giving one of the two agents a project filesystem the other lacks is an
+  asymmetry nothing here needs.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -54,7 +55,7 @@ from juena_core.server.database.store import get_store
 from vitess_ai.agents.advanced_mode.tools import build_batch_tools
 from vitess_ai.agents.delegation import with_module_delegation_boundary
 from vitess_ai.agents.specialists import compile_sweep_specialists
-from vitess_ai.agents.vitess_agent import project_root
+from vitess_ai.agents.vitess_agent import VITESS_FILESYSTEM_TOOLS, project_root
 from vitess_ai.mcp.connection import discover_vitess_tools, probe_server_health
 from vitess_ai.run import VitessGateway
 from vitess_ai.state import VitessBridgeState
@@ -63,6 +64,11 @@ from vitess_ai.tools import build_vitess_tools, vitess_supervisor_middleware
 logger = get_logger(__name__)
 
 ADVANCED_MODE_AGENT_ID = "advanced_mode"
+_ADVANCED_FACADE_TOOL_NAMES = (
+    "inspect_thread_folders",
+    "generate_monitor1d_plot",
+    "generate_monitor2d_plot",
+)
 SUMMARIZER_PROVIDER = Provider.BLABLADOR.value
 SUMMARIZER_MODEL = BlabladorModelName.GPT_OSS.value
 
@@ -93,6 +99,28 @@ class AdvancedModeResources:
     gateway: VitessGateway
 
 
+def _advanced_facade_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    """Select the read-only façade tools advanced mode is allowed to expose.
+
+    This is an allowlist rather than "everything except run_simulation". If the
+    guided façade later grows another execution or maintenance tool, a sweep
+    must not acquire it merely because nobody remembered to extend a denylist.
+    """
+
+    indexed: dict[str, BaseTool] = {}
+    for item in tools:
+        if item.name in indexed:
+            raise ValueError(f"Duplicate VITESS façade tool: {item.name}")
+        indexed[item.name] = item
+    missing = [name for name in _ADVANCED_FACADE_TOOL_NAMES if name not in indexed]
+    if missing:
+        raise ValueError(
+            "Advanced mode is missing required VITESS façade tools: "
+            + ", ".join(missing)
+        )
+    return [indexed[name] for name in _ADVANCED_FACADE_TOOL_NAMES]
+
+
 def build_advanced_mode_graph(
     *,
     supervisor_model: Any,
@@ -108,6 +136,7 @@ def build_advanced_mode_graph(
 
     middleware = build_supervisor_middleware(
         backend=backend if backend is not None else build_supervisor_backend(store),
+        filesystem_tools=VITESS_FILESYSTEM_TOOLS,
         summarizer_model=summarizer_model,
         fallback_models=fallback_models,
         subagents=with_module_delegation_boundary(specialists),
@@ -161,7 +190,7 @@ async def create_advanced_mode_agent(
             # and its order comes from the catalog inside the batch tools.
             # `run_simulation` is absent too -- a sweep runs its plan, one run at a
             # time, through `run_batch_from_matrix`.
-            *[item for item in facade if item.name != "run_simulation"],
+            *_advanced_facade_tools(facade),
             *build_batch_tools(gateway, project_root=root),
         ],
         store=store,

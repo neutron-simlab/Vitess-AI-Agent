@@ -94,6 +94,19 @@ class VitessAgentResources:
     gateway: VitessGateway
 
 
+#: What either VITESS agent's own filesystem is for: core's per-user memory and
+#: the read-only `/findings/` view. Not `execute` and not `delete`.
+#:
+#: Neither works here -- `SupervisorStateBackend` implements no sandbox protocol,
+#: so `execute` answers with a message about a backend it does not have, and both
+#: refuse any path outside `/memories/`. They are a dead affordance, and `execute`
+#: is the specific one a weaker model reaches for when it decides to run VITESS
+#: itself. CP4 removed both from the module specialists for the same reason; a
+#: supervisor whose only route to a binary is one trusted MCP gateway has the
+#: same reason and a stronger one.
+VITESS_FILESYSTEM_TOOLS = ("read_file", "write_file", "edit_file", "ls", "glob", "grep")
+
+
 def project_root() -> Path:
     """The shared volume, from the environment both containers already read."""
     return Path(os.environ.get("VITESS_PROJECT_PATH") or DEFAULT_PROJECT_ROOT)
@@ -117,6 +130,7 @@ def build_vitess_graph(
 
     middleware = build_supervisor_middleware(
         backend=build_supervisor_backend(store),
+        filesystem_tools=VITESS_FILESYSTEM_TOOLS,
         summarizer_model=summarizer_model,
         fallback_models=fallback_models,
         # Already carrying this application's delegation boundary, which returns

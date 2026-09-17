@@ -53,6 +53,7 @@ from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
 )
+from vitess_ai.schema.simulation_plan import MAX_SWEEP_RUNS
 from vitess_ai.state import VitessBridgeState
 
 __all__ = [
@@ -403,7 +404,7 @@ def build_validation_tool(
 class _VariantsArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    parameter_sets: list[dict[str, Any]] | str = Field(
+    parameter_sets: list[dict[str, Any]] | dict[str, Any] | str = Field(
         description=(
             "Every parameter object this module should sweep over, as a list. "
             "Give one object per value of the parameter being varied; give a "
@@ -424,7 +425,6 @@ def build_variants_tool(
     project_root: Path,
     upload_fields: Mapping[str, str] | None = None,
     output_filename_fields: tuple[str, ...] = (),
-    max_variants: int = 64,
 ) -> BaseTool:
     """Build the sweep's writer: N validated configurations for one module.
 
@@ -451,7 +451,7 @@ def build_variants_tool(
     )
     def validate_variants(
         runtime: ToolRuntime[Any, Any],
-        parameter_sets: list[dict[str, Any]] | str,
+        parameter_sets: list[dict[str, Any]] | dict[str, Any] | str,
     ) -> Command:
         if isinstance(parameter_sets, str):
             try:
@@ -476,14 +476,14 @@ def build_variants_tool(
                     ]
                 }
             )
-        if len(parameter_sets) > max_variants:
+        if len(parameter_sets) > MAX_SWEEP_RUNS:
             return Command(
                 update={
                     "messages": [
                         _message(
                             runtime,
                             f"{len(parameter_sets)} variants for {module} exceeds "
-                            f"the limit of {max_variants}. A sweep this wide is "
+                            f"the limit of {MAX_SWEEP_RUNS}. A sweep this wide is "
                             "almost always a mistake in how the values were "
                             "expanded; check with the user before growing it.",
                             error=True,

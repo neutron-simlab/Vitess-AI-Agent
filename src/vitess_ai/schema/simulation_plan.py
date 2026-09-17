@@ -34,11 +34,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from vitess_ai.schema.module_result import ModuleConfigurationResult
 
-__all__ = ["SimulationPlanEntry"]
+__all__ = ["MAX_SWEEP_RUNS", "SimulationPlanEntry"]
+
+#: One limit shared by variant collection, matrix expansion and execution. A
+#: module cannot contribute more variants than any valid sweep could consume.
+MAX_SWEEP_RUNS = 32
 
 
 class SimulationPlanEntry(BaseModel):
@@ -52,3 +56,13 @@ class SimulationPlanEntry(BaseModel):
     #: checked against the catalog's execution order when the entry is executed, so
     #: a sweep cannot quietly run a four-module pipeline.
     modules: dict[str, ModuleConfigurationResult]
+
+    @field_validator("run_name")
+    @classmethod
+    def clean_run_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("run name must not be blank")
+        if any(ord(character) < 32 or ord(character) == 127 for character in cleaned):
+            raise ValueError("run name must not contain control characters")
+        return cleaned
