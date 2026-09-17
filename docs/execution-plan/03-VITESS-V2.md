@@ -1132,7 +1132,81 @@ artifact in the browser, with its exit code in the `<verified_by_server>` block.
 
 ### What actually landed
 
-*(Fill in after the work.)*
+Completed and reviewed in v2 `c2fdfbd` (*bridge VITESS MCP evidence into agent
+state*). The bridge is three deliberately separate pieces:
+
+- `vitess_ai.run.VitessGateway` owns the discovered raw tools. It accepts an
+  `InternalSimulationRequest` assembled by trusted application code, invokes the
+  MCP tool with a generated internal tool-call id, and validates only
+  `ToolMessage.artifact["structured_content"]` through a strict
+  `MCPToolArtifact` and the CP3 payload models. It never parses the text block.
+  Transport failures, tool errors and malformed structured payloads all become
+  typed failed execution evidence rather than an exception-shaped hole in the
+  ledger.
+- `build_vitess_tools()` exposes four same-named application façades. Their
+  closed model schemas contain only `run_name` and, for plots, `filename`;
+  `thread_id`, `simulation_run_id`, `module_results` and `run_specs` are absent.
+  `ToolRuntime` is declared as an injected, JSON-hidden field, so ToolNode strips
+  any forged value and supplies the real runtime without weakening
+  `extra="forbid"`. The execution façade reads the UUID thread id from
+  `runtime.execution_info`, the user and graph invocation from typed context,
+  validated module state from `runtime.state`, and generates the simulation UUID
+  itself.
+- `VitessBridgeState` adds a private list-reduced `simulation_runs` channel. It
+  pairs a model-chosen human label with the server-generated UUID, allowing the
+  plot façades to select a run without ever making an ownership identifier a
+  model argument. It extends core's `SpecialistOutcomeState`, whose private
+  list-reduced `execution_events` channel carries the evidence. The exported
+  `vitess_supervisor_middleware()` is the CP4 splice: root
+  `ExecutionEvidenceMiddleware` plus `ArtifactMessageMiddleware`.
+
+The application does not trust the shared mount merely because both containers
+can see it. Before mutating `ArtifactStore`, it resolves **every** claimed file
+under its own `<project>/<thread>/outputs/<simulation-run>/` root, rejects
+absolute paths, traversal, duplicate metadata, missing files, byte-count drift,
+and a symlink in any ownership or file-path component. This includes a symlink
+to another thread *inside the same project volume*, not just an escape outside
+the volume. Only after that pass does it register the files; unsupported or
+over-budget output is recorded as undelivered evidence. Plot façades require the
+PNG itself to register successfully.
+
+Two review findings changed the implementation before commit:
+
+1. An explicit strict façade schema initially rejected LangGraph's injected
+   `ToolRuntime`, making the tool return a generic invocation error before it
+   reached MCP. The final schema includes an `InjectedToolArg` plus
+   `SkipJsonSchema` runtime field. A real `create_agent` test proves the call,
+   private evidence reducer, root evidence block and artifact attachment as one
+   graph, rather than testing the four parts independently.
+2. Reporting a partly failed pipeline as several generic execution attempts
+   lets core's retry semantics treat earlier zero-exit modules as a successful
+   retry. A successful pipeline therefore records one entry per module, while a
+   failed pipeline records one failed pipeline operation with the non-zero exit
+   code. The MCP payload still retains every module's exact evidence.
+
+`tests/test_evidence_bridge.py` has 19 focused tests. It proves valid structured
+content becomes five typed entries, malformed content becomes `tool_error`,
+owner mismatches and path escapes fail, transport text is bounded, a
+claimed-but-absent file cannot leave a successful result, all four model schemas
+exclude the trusted fields, the plot uses a private run UUID, and the real graph
+ends with both `<verified_by_server>` and `juena_artifacts`. Full suite:
+
+```text
+uv sync --frozen                         Audited 187 packages
+uv run pytest -q                         140 passed
+```
+
+The reviewed image is
+`sha256:955af1ea39a66829abb38426f663581a0f950a65a002e956a7af357eea6cf5ca`.
+From `vitess-app`, against the real internal HTTP MCP service, the façade ran
+`readin -> guide -> writeout -> monitor1d -> monitor2d`; all five exits were
+zero. The root answer contained `<verified_by_server>` and attached
+`guide_shape_out.dat`, `monitor1D.dat`, `monitor2D.dat`, `output.dat` and
+`result.txt`. The plot façade then produced and registered `monitor1D.png`.
+This proves the browser-facing message payload; the literal browser rendering
+cannot be exercised until CP6 replaces `sleep infinity` with the API/UI
+entrypoint, so that final visual check remains in CP6 rather than pulling its
+entrypoint into this checkpoint.
 
 ---
 
@@ -1670,7 +1744,7 @@ cheapest time to find that out is the day v2 first runs.
 |---|---|
 | **Depends on** | 02, verified |
 | **Unblocks** | — |
-| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 `4e21722`, reviewed in `cd7ffe6`: the FastMCP server as an internal Compose service with an explicit `/health` route, four exactly allowlisted tools, one pinned image run by two services sharing `/data/projects`, and a new monitor-file reader covering all five layouts `Monitor2DParameters.format` can ask for — proved by a real five-module VITESS pipeline run over MCP from the application container; the review added event-loop isolation, volume-boundary enforcement, unique-run evidence, concurrent health safety and reproducible VITESS/uv pins. Suite at 121 passed. CP3a is next |
+| **Executed** | checkpoints 0, 1 and 2 complete in `Vitess-AI-Agent-v2`, suite at 50 passed. CP0 `5ba4aeb`: the five parameter schemas ported verbatim, every leaf field carrying a CLI flag. CP1 `8cd7b8d`: `generate_cli_command` as a pure function emitting argument vectors, with an MCP-side runner that never builds shell text. CP2 `06ea450`, reviewed in `d33925e`: the catalog as pure data — importing it pulls in neither `langchain` nor `deepagents`, executables are basenames, the three `path_only` rows are gone and their filenames are asserted to still be owned by the parameter schemas; the review added exact row, field, import-surface and direct-dependency guards. CP3 `4e21722`, reviewed in `cd7ffe6`: the FastMCP server as an internal Compose service with an explicit `/health` route, four exactly allowlisted tools, one pinned image run by two services sharing `/data/projects`, and a new monitor-file reader covering all five layouts `Monitor2DParameters.format` can ask for — proved by a real five-module VITESS pipeline run over MCP from the application container; the review added event-loop isolation, volume-boundary enforcement, unique-run evidence, concurrent health safety and reproducible VITESS/uv pins. CP3a `c2fdfbd`: the sole typed MCP gateway, four closed model façades, private run references, verified application-side file registration and the two root delivery middlewares — proved by a real five-module run and PNG plot through the application container. Suite at 140 passed. CP4 is next |
 | **Decided** | schemas ported verbatim and kept out of core; `generate_cli_command` becomes a pure function in `cli/command.py`, building **argument vectors** rather than shell text; catalog becomes pure data carrying `cli_executable` and `accepts_upload` independently; **MCP is an internal Compose service sharing a volume**; simulator rebuilt with **no legacy fallback**; two registered agents rather than one supervisor; **PNG artifacts canonical**; Chroma stays; fixed local principal; **per-module upload slots kept, the three `path_only` rows deleted, sidebar becomes a manifest, `ask_user` is the second way in** |
 | **Open** | whether `research/` should come into core after all, once a sweep is lost to a closed browser (CP5); whether a run manifest on the volume is needed alongside the returned metadata (CP3a); whether content classification of uploads is worth adding — *reopen when files start arriving from other people, or in bulk* (CP6) |
 | **Revised** | 2026-09-15 after [REVIEW.md](REVIEW.md) — Compose topology replaces the host process, CP3a added for the evidence bridge, argument vectors replace shell text, recursive flag test, `simulator_legacy` dropped, real order test, `agent_id`, binary uploads separated |
