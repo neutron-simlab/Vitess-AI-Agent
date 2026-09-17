@@ -108,12 +108,17 @@ def _guard_query_tool(source: BaseTool) -> BaseTool:
                 exc,
                 exc_info=True,
             )
-            # The type name matters: a bad key reaches this as the OpenAI
-            # SDK's `AttributeError: 'str' object has no attribute 'data'`
-            # from parsing an error body as an embedding response. Unqualified
-            # that reads as a bug in this application rather than a credential
-            # to check, and it is the failure a new deployment actually hits.
-            return _unavailable_message(f"{type(exc).__name__}: {exc}")
+            # Keep provider internals in the server log above. A bad key can
+            # surface from the OpenAI SDK as an unrelated AttributeError, which
+            # sends the user toward application code rather than the setting
+            # they can fix. The model-facing result names the safe checks that
+            # cover both a failed query embedding and a local Chroma failure.
+            return _unavailable_message(
+                "The query could not be embedded or read from the local index. "
+                "Verify BLABLADOR_API_KEY, BLABLADOR_BASE_URL, and that the "
+                "VITESS documentation index is readable, then retry. The server "
+                "log contains the underlying provider or index error."
+            )
 
     return guarded
 

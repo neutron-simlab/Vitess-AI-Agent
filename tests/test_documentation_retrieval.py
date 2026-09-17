@@ -265,11 +265,15 @@ def test_a_query_time_failure_degrades_for_that_call_and_keeps_the_real_tool(
     second = guarded.invoke({"query": "guide width"})
 
     assert first.startswith("RAG_UNAVAILABLE:")
-    # Named, not just relayed. An invalid key arrives here as the OpenAI SDK's
-    # `AttributeError: 'str' object has no attribute 'data'` -- measured against
-    # the real endpoint -- and without the type that reads as a bug in this
-    # application rather than a credential to check.
-    assert "TimeoutError: embedding endpoint timed out" in first
+    # Actionable deployment checks, not the provider's implementation detail.
+    # An invalid key was observed to arrive as an unrelated AttributeError;
+    # relaying that sends the user toward application code instead of the
+    # credential or endpoint they can fix.
+    assert "BLABLADOR_API_KEY" in first
+    assert "BLABLADOR_BASE_URL" in first
+    assert "index is readable" in first
+    assert "TimeoutError" not in first
+    assert "embedding endpoint timed out" not in first
     assert second == "[Chunk 1] guide width"
     assert guarded.name == flaky.name
     assert guarded.description == flaky.description

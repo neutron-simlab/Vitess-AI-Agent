@@ -3,8 +3,3 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 .env
-
-
-# Docs -- internal development notes and reviews. Deliberately not
-# tracked: they are working material, not part of the package.
-DOCS/
