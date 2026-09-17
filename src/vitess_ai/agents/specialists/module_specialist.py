@@ -269,9 +269,10 @@ def build_validation_tool(
         args_schema=_ValidationArguments,
         description=(
             f"Validate the complete {module} parameter object and record it for "
-            "this conversation. Call it once you have every value; a validation "
-            "error is returned to you to fix, and nothing is recorded until it "
-            "passes."
+            "this conversation. Call it only after you have displayed the complete "
+            "object and `ask_user` has returned the user's affirmative confirmation. "
+            "A validation error is returned to you to fix, and nothing is recorded "
+            "until it passes."
         ),
     )
     def validate(

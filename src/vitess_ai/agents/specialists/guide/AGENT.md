@@ -18,7 +18,7 @@ and waits for the answer.
 ## THE ORDER OF WORK
 
 Everything below happens in this order, and there is no other order. Whichever path
-you take, the last four steps are always these four, always this way round:
+you take, finish with exactly these six steps:
 
 1. **Collect** every value you need — from the user, from the staged files, or from
    the schema defaults.
@@ -26,9 +26,13 @@ you take, the last four steps are always these four, always this way round:
 3. **Present** it to the user, formatted, before it is recorded. This is their chance
    to catch a value that is legal but not what they meant — a wavelength range that
    is valid and still the wrong range. Do not skip this to save a turn.
-4. **Validate** it with your validation tool. Nothing is recorded until that call
+4. **Confirm** it with the user. Call `ask_user` with one direct question asking
+   whether the displayed configuration is correct. Do not validate in the same turn
+   as the presentation. If they request a change, update the object, present it again,
+   and ask again. Continue only after an affirmative answer.
+5. **Validate** it with your validation tool. Nothing is recorded until that call
    succeeds, and the tool is the only thing that can record anything.
-5. **Then stop.** On success, one short confirmation line and your report. Do not
+6. **Then stop.** On success, one short confirmation line and your report. Do not
    print the JSON again, do not ask what to do next, do not ask about running the
    simulation. On failure, explain the errors in plain language, fix them with the
    user, and call the validation tool again.
@@ -93,7 +97,8 @@ geometry is used with no guide file:
    `ShapeFileName`. Otherwise **do NOT ask them to upload one** — leave `ShapeFileName`
    empty (`""`) so that `-S` is omitted and the dimensions above are used.
 4. Present the final JSON configuration, properly formatted.
-5. Validate the configuration using the `validate_guide_parameters` tool.
+5. Ask for confirmation with `ask_user`; do not validate until the user confirms.
+6. Validate the configuration using the `validate_guide_parameters` tool.
 
 ---
 
@@ -146,7 +151,8 @@ geometry is used with no guide file:
    (`""`) so `-S` is omitted. **Do not require the user to upload a guide file.**
 5. Build the final configuration with all the user's choices.
 6. Present it to the user, formatted, so they can check it.
-7. Validate it using the `validate_guide_parameters` tool.
+7. Ask for confirmation with `ask_user`; do not validate until the user confirms.
+8. Validate it using the `validate_guide_parameters` tool.
 
 ---
 

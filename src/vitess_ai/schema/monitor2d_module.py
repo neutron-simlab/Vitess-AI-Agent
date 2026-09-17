@@ -1,6 +1,12 @@
 from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
-from vitess_ai.schema.base import VitessParameterModel, VtMonPar, VtFiltComb, VtFormat2D
+from vitess_ai.schema.base import (
+    VitessParameterModel,
+    VtFiltComb,
+    VtFormat2D,
+    VtMonPar,
+    validate_monitor_filter_configuration,
+)
 
 
 class Monitor2DParameters(VitessParameterModel):
@@ -234,6 +240,21 @@ class Monitor2DParameters(VitessParameterModel):
         ):
             if lower is not None and upper is not None and lower >= upper:
                 raise ValueError(f"{label} minimum must be smaller than its maximum")
+        return self
+
+    @model_validator(mode="after")
+    def filters_are_complete(self) -> "Monitor2DParameters":
+        validate_monitor_filter_configuration(
+            lambda_minimum=self.lambdaMin,
+            lambda_maximum=self.lambdaMax,
+            parameter_1=self.filterParam1,
+            minimum_1=self.filterVarMin1,
+            maximum_1=self.filterVarMax1,
+            parameter_2=self.filterParam2,
+            minimum_2=self.filterVarMin2,
+            maximum_2=self.filterVarMax2,
+            combination=self.filterComb,
+        )
         return self
 
 

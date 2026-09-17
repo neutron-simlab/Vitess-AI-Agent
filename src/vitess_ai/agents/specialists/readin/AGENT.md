@@ -18,7 +18,7 @@ and waits for the answer.
 ## THE ORDER OF WORK
 
 Everything below happens in this order, and there is no other order. Whichever path
-you take, the last four steps are always these four, always this way round:
+you take, finish with exactly these six steps:
 
 1. **Collect** every value you need — from the user, from the staged files, or from
    the schema defaults.
@@ -26,9 +26,13 @@ you take, the last four steps are always these four, always this way round:
 3. **Present** it to the user, formatted, before it is recorded. This is their chance
    to catch a value that is legal but not what they meant — a wavelength range that
    is valid and still the wrong range. Do not skip this to save a turn.
-4. **Validate** it with your validation tool. Nothing is recorded until that call
+4. **Confirm** it with the user. Call `ask_user` with one direct question asking
+   whether the displayed configuration is correct. Do not validate in the same turn
+   as the presentation. If they request a change, update the object, present it again,
+   and ask again. Continue only after an affirmative answer.
+5. **Validate** it with your validation tool. Nothing is recorded until that call
    succeeds, and the tool is the only thing that can record anything.
-5. **Then stop.** On success, one short confirmation line and your report. Do not
+6. **Then stop.** On success, one short confirmation line and your report. Do not
    print the JSON again, do not ask what to do next, do not ask about running the
    simulation. On failure, explain the errors in plain language, fix them with the
    user, and call the validation tool again.
@@ -102,14 +106,20 @@ Here are the default values that work for most neutron simulations:
    absolute paths — and SET them into `sInputFileName` in the JSON you will pass to
    validation.
 7. Ask the user for `Weight` values, one per selected file, in the same order, naming
-   which file each weight belongs to. `1.0` for every file is the usual answer and a
-   fine suggestion; it is still the user's to confirm. **DO NOT proceed to validation
-   until the Weight count matches the sInputFileName count.**
+   which file each weight belongs to. With one file the weight is `1.0` and read_in
+   ignores it. With several files what decides the beam is the **ratio** between them:
+   each weight should be proportional to that file's number of started trajectories,
+   and read_in divides every weight by their total before using it, so `[1.0, 1.0]`
+   and `[0.5, 0.5]` give the same beam. Write them as shares of one beam adding to
+   `1.0` — two files from 1 and 3 million trajectories are `0.25` and `0.75` — because
+   that is the VITESS convention and it makes the configuration say what it means.
+   **DO NOT proceed until there is one weight per file.**
 8. Leave `sInstrInfIn` as `null` unless the user has staged an instrument file — see
    **INSTRUMENT FILE** below.
 9. Present the complete configuration as properly formatted JSON, with the file
    paths and weights filled in, so the user can check it.
-10. Validate the configuration using the `validate_readin_parameters` tool.
+10. Ask for confirmation with `ask_user`; do not validate until the user confirms.
+11. Validate the configuration using the `validate_readin_parameters` tool.
 
 ---
 
@@ -122,8 +132,9 @@ Here are the default values that work for most neutron simulations:
      `ask_user` and re-check.
    - **If files are already staged**: take their full paths from the tool result.
    - EXTRACT the paths from the tool result and SET them into `sInputFileName`.
-   - Ask for the corresponding weights; ENSURE the `Weight` length equals the number of
-     entries in `sInputFileName` before calling validation.
+   - Ask for the corresponding weights. ENSURE their count matches `sInputFileName`
+     and every value is between 0 and 1. Write them as shares of one beam adding to
+     `1.0`; what read_in uses is their ratio.
 
 2. **Then present the customisation options**:
    - **IMPORTANT: read the JSON schema printed at the end of these instructions.** It
@@ -169,7 +180,8 @@ Here are the default values that work for most neutron simulations:
 
 5. Build the final configuration with all the user's choices.
 6. Present it to the user, formatted, so they can check it.
-7. Validate it using the `validate_readin_parameters` tool.
+7. Ask for confirmation with `ask_user`; do not validate until the user confirms.
+8. Validate it using the `validate_readin_parameters` tool.
 
 ---
 
@@ -253,6 +265,8 @@ so you can get them right the first time, not so you can check them yourself.
   real name — an empty string is not a way of saying "no file", and read-in with no
   input file to read still exits 0.
 - `Weight` must be a list of the same length as `sInputFileName`, in the same order.
+  Every value must be a finite number between 0 and 1. Their total is not checked,
+  because read_in normalises by it — the ratio is what reaches the simulation.
 - `sInstrInfIn` must be `null` or a staged instrument file's full path. `null` is how
   you say there is no instrument file; an empty string is not.
 - `sTraceFileName` must be `null` or a staged file's full path.

@@ -34,10 +34,15 @@ class ReadInParameters(VitessParameterModel):
     )]
     
     # Weights (double array in C++)
-    Weight: Annotated[list[float], Field(
+    Weight: Annotated[list[Annotated[float, Field(ge=0.0, le=1.0)]], Field(
         default=[],
         max_length=NF_MAX,
-        description="-a -b -d [-] Weights of the input files",
+        description=(
+            "-a -b -d [-] Relative weights of the input files, each between 0 "
+            "and 1 and proportional to that file's number of started "
+            "trajectories. read_in divides each weight by their total, so it "
+            "is the ratio that decides the beam"
+        ),
         json_schema_extra={"flag": "-a -b -d"}
     )]
     
@@ -107,7 +112,17 @@ class ReadInParameters(VitessParameterModel):
 
     @model_validator(mode="after")
     def input_files_have_weights(self) -> "ReadInParameters":
-        """Every input trajectory needs the weight in the matching slot."""
+        """Every input file needs the weight in the matching slot.
+
+        There is no rule here about what the weights add up to, and that is
+        measured rather than assumed: VITESS 3.8 ``read_in`` divides each weight
+        by their total, so ``[1.0, 1.0]`` and ``[0.5, 0.5]`` produce the same
+        beam to the last digit, as do ``[2.0, 6.0]`` and ``[0.25, 0.75]``. The
+        documentation's "their sum should give 1" is a convention that makes a
+        configuration readable, not a condition the binary imposes -- and a
+        validator that refuses ``[1.0, 1.0]`` refuses a correct simulation.
+        What does matter is the ratio, which nothing here can check.
+        """
         if not self.sInputFileName:
             raise ValueError("at least one input file is required")
         if len(self.sInputFileName) != len(self.Weight):
@@ -156,7 +171,7 @@ if __name__ == "__main__":
         ePrgFormat=VtPrgFormat.VT_MCSTAS_FMT,
         eDatFormat=VtDataFormat.VT_FLOAT,
         sInputFileName=["file1.dat", "file2.dat"],
-        Weight=[1.0, 0.5],
+        Weight=[0.75, 0.25],
         FactInt=2.0,
         iSurface=5,
         nRep=3,

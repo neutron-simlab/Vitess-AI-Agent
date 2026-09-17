@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Annotated, Any
 
 import pytest
+from juena_core.schema.agents import SpecialistReport
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field, ValidationError
@@ -33,7 +34,7 @@ from vitess_ai.cli.arguments import (
     ParameterConversionError,
     parameters_to_arguments,
 )
-from vitess_ai.modules.catalog import cli_executables, execution_order
+from vitess_ai.modules.catalog import cli_executables, execution_order, upload_modules
 from vitess_ai.modules.parameters import PARAMETER_MODELS, parameter_model
 from vitess_ai.schema import (
     GuideParameters,
@@ -241,6 +242,186 @@ def test_readin_requires_one_weight_per_input_file(tmp_path: Path) -> None:
 
     assert "module_results" not in command.update
     assert "one weight per input file" in command.update["messages"][0].text
+
+
+@pytest.mark.parametrize(
+    "weights",
+    [
+        [-0.1, 1.0],
+        [1.1, 0.0],
+        [float("nan"), 1.0],
+        [float("inf"), 0.0],
+    ],
+)
+def test_readin_refuses_a_weight_that_is_not_a_number_between_zero_and_one(
+    weights: list[float], tmp_path: Path
+) -> None:
+    """The documented range is 0.0 - 1.0, and a non-number is not a weight.
+
+    One case per bound, deliberately. A single ``[-0.1, 1.1]`` case looks like it
+    covers both and covers neither: deleting either bound from the model leaves
+    the other value still out of range, and the test goes on passing.
+    """
+    staged = stage_uploads(tmp_path)
+    second = tmp_path / THREAD_ID / "uploads/readin/second.dat"
+    second.write_text("second beam\n", encoding="utf-8")
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=None),
+        "validate_readin_parameters",
+    )
+
+    command = _validate(
+        tool,
+        {
+            "sInputFileName": [staged["readin"], str(second)],
+            "Weight": weights,
+            "sInstrInfIn": None,
+        },
+    )
+
+    assert "module_results" not in command.update
+
+
+@pytest.mark.parametrize("weights", [[0.25, 0.75], [0.5, 0.5], [1.0, 1.0]])
+def test_equal_weights_need_not_be_written_as_halves(
+    weights: list[float], tmp_path: Path
+) -> None:
+    """``[1.0, 1.0]`` is the right answer to "weight them equally", not a bug.
+
+    A round of this review made the weights sum to 1.0 on the strength of the
+    VITESS sentence "their sum should give 1". Measured against VITESS 3.8
+    ``read_in``, that sum is a readability convention and nothing else: two
+    files weighted ``[1.0, 1.0]``, ``[0.5, 0.5]`` and ``[0.1, 0.1]`` all gave a
+    monitored total of 4.19578e10, and ``[2.0, 6.0]``, ``[0.5, 1.5]`` and
+    ``[0.25, 0.75]`` all gave 3.2863e10. read_in divides by the total, so only
+    the ratio survives -- and a validator that refuses ``[1.0, 1.0]`` refuses a
+    correct simulation over its spelling.
+    """
+    staged = stage_uploads(tmp_path)
+    second = tmp_path / THREAD_ID / "uploads/readin/second.dat"
+    second.write_text("second beam\n", encoding="utf-8")
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=None),
+        "validate_readin_parameters",
+    )
+
+    command = _validate(
+        tool,
+        {
+            "sInputFileName": [staged["readin"], str(second)],
+            "Weight": weights,
+            "sInstrInfIn": None,
+        },
+    )
+
+    assert "module_results" in command.update
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: GuideParameters(Radius=float("nan")),
+        lambda: WriteoutParameters(
+            filter_limits={"filtLambdaMin": float("nan")}
+        ),
+        lambda: Monitor1DParameters(xMin=float("nan")),
+        lambda: Monitor2DParameters(yMax=float("inf")),
+    ],
+)
+def test_no_cli_parameter_model_accepts_a_non_finite_number(build: Any) -> None:
+    with pytest.raises(ValidationError, match="finite number"):
+        build()
+
+
+#: Half-written monitor filters, with what VITESS 3.8 ``monitor1D`` does with
+#: each one instead of refusing it. The unfiltered total of the probe beam is
+#: 6.01e10; a complete POS_Y filter on [-0.5, 0.5] gives 1.62e10.
+HALF_WRITTEN_FILTERS = [
+    ({"filterVarMin1": -1.0, "filterVarMax1": 1.0}, "limits require a filter parameter"),
+    ({"filterParam1": 1}, "no limits to filter by"),
+    ({"filterParam1": 1, "filterVarMin1": -1.0}, "needs both a minimum and a maximum"),
+    ({"filterParam2": 2, "filterVarMax2": 1.0}, "needs both a minimum and a maximum"),
+    ({"lambdaMin": 4.0}, "lambda needs both a minimum and a maximum"),
+    ({"lambdaMax": 12.0}, "lambda needs both a minimum and a maximum"),
+]
+
+
+@pytest.mark.parametrize("model", [Monitor1DParameters, Monitor2DParameters])
+@pytest.mark.parametrize(("parameters", "message"), HALF_WRITTEN_FILTERS)
+def test_a_half_written_monitor_filter_is_refused(
+    model: type[BaseModel], parameters: dict[str, Any], message: str
+) -> None:
+    """VITESS fills a missing bound with 0 and runs, which is the whole problem.
+
+    Measured on a 1000-trajectory beam: ``-l4`` with no ``-L`` monitored a total
+    of 0 -- a wavelength window of [4, 0] keeps nothing and the file is zeros --
+    while ``-L12`` with no ``-l`` filtered nothing at all. ``-u-0.5`` with no
+    ``-U`` gave 3.87e10, a filter on [-0.5, 0] that nobody asked for, and a
+    filter parameter with no bounds, or bounds with no parameter, filtered
+    nothing. Every one of them exits 0.
+    """
+    with pytest.raises(ValidationError, match=message):
+        model(**parameters)
+
+
+@pytest.mark.parametrize("model", [Monitor1DParameters, Monitor2DParameters])
+def test_two_monitor_filters_must_say_how_they_combine(
+    model: type[BaseModel],
+) -> None:
+    """``NO_FCOMB`` is not "no combination"; it is OR, and it is the default.
+
+    Measured with both filters complete: ``-C-1`` (the default ``NO_FCOMB``),
+    ``-C0`` and ``-C2`` all monitored 4.63264e10, the union of the two filters,
+    and only ``-C1`` gave 1.14587e10, the intersection. A user who sets two
+    filters and leaves the combination alone has silently chosen OR. This is the
+    one combination rule worth enforcing -- see the test below for the two that
+    are not.
+    """
+    with pytest.raises(ValidationError, match="must say how they combine"):
+        model(
+            filterParam1=1,
+            filterVarMin1=-1.0,
+            filterVarMax1=1.0,
+            filterParam2=5,
+            filterVarMin2=4.0,
+            filterVarMax2=12.0,
+        )
+
+
+@pytest.mark.parametrize("model", [Monitor1DParameters, Monitor2DParameters])
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {},
+        {"filterParam1": 1, "filterVarMin1": -1.0, "filterVarMax1": 1.0},
+        {"filterParam2": 5, "filterVarMin2": 4.0, "filterVarMax2": 12.0},
+        {
+            "filterParam1": 1,
+            "filterVarMin1": -1.0,
+            "filterVarMax1": 1.0,
+            "filterParam2": 5,
+            "filterVarMin2": 4.0,
+            "filterVarMax2": 12.0,
+            "filterComb": 1,
+        },
+        {"filterComb": 1},
+        {"lambdaMin": 4.0, "lambdaMax": 12.0},
+    ],
+)
+def test_a_working_monitor_filter_is_not_refused_for_its_spelling(
+    model: type[BaseModel], parameters: dict[str, Any]
+) -> None:
+    """Two rules a round of this review added are not in the binary.
+
+    **Filter 2 on its own works.** ``-J5 -v4 -V12`` with no filter 1 monitored
+    4.15848e10, the same as putting that filter in slot 1. **A combination with
+    fewer than two filters changes nothing.** One complete filter gave 1.62002e10
+    whether the combination said ``NO_FCOMB``, ``AND`` or ``OR``, and so did no
+    filter at all. Refusing either would make a correct configuration
+    inexpressible, which is the same defect as a prompt claiming a rule the
+    validator does not enforce, pointed the other way.
+    """
+    model(**parameters)
 
 
 @pytest.mark.parametrize(
@@ -613,19 +794,26 @@ def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
     return builders[module]()
 
 
-#: Snake-case words that appear in a prompt between backticks and are not tools.
+#: Lower-case identifiers that appear in a prompt between backticks and are not tools.
 #:
 #: Everything derivable is derived below -- parameter field names come from the
-#: models and `read_in` and friends from the catalog -- so this holds only what
-#: cannot be: three VITESS 2D file formats, whose enum members are spelled
-#: `MATR_CMPT`, `MATR_INT` and `XYZ_CMPT` and so cannot be matched to the lower-case
-#: names the documentation and the prompts use.
+#: models, report field names from `SpecialistReport`, and module/executable names
+#: from the catalog -- so this holds only what cannot be derived: JSON's null,
+#: one module not in this application, and VITESS's lower-case 2D format names.
 PROSE_WORDS_THAT_LOOK_LIKE_TOOLS = frozenset(
-    {"matrix_compact", "matrix_integer", "xyz_compact"}
+    {
+        "kdsource",
+        "matrix",
+        "matrix_compact",
+        "matrix_integer",
+        "null",
+        "xyz",
+        "xyz_compact",
+    }
 )
 
 #: Anything in a prompt shaped like this is read as a tool name.
-TOOL_SHAPED = re.compile(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?:\(\))?`")
+TOOL_SHAPED = re.compile(r"`([a-z][a-z0-9_]*)(?:\(\))?`")
 
 
 def _field_names(model: type[BaseModel]) -> set[str]:
@@ -654,19 +842,19 @@ def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     specialist has and the prompt never mentions -- is a capability the model
     will not discover.
 
-    **Every snake-case word is read as a tool name**, and then the ones that
-    provably are not -- parameter fields, VITESS executables, three format names
-    -- are subtracted. The first version of this test matched a hard-coded list
-    of tool names instead, which meant it could only catch a tool it already knew
-    about: putting `get_instrument_file` back into a prompt, the exact regression
-    the docstring above claims to prevent, would not have matched the pattern at
-    all and the test would have passed.
+    **Every lower-case backticked identifier is read as a tool name**, and then
+    the ones that provably are not are subtracted. Requiring an underscore left
+    `execute`, `delete`, `glob`, `grep` and `ls` invisible -- exactly the former
+    filesystem capabilities this test must catch if a prompt invents them.
     """
     prompt = build_module_prompt(
         f"vitess_ai.agents.specialists.{module}", parameter_model(module)
     )
     not_tools = (
         _field_names(parameter_model(module))
+        | set(SpecialistReport.model_fields)
+        | set(execution_order())
+        | {spec.name for spec in upload_modules()}
         | set(cli_executables().values())
         | PROSE_WORDS_THAT_LOOK_LIKE_TOOLS
     )
@@ -676,6 +864,29 @@ def test_each_prompt_names_exactly_the_tools_that_specialist_has(
         available |= set(FILESYSTEM_TOOLS)
 
     assert named == available
+
+
+@pytest.mark.parametrize(
+    "invented_tool",
+    ["get_instrument_file", "execute", "delete", "glob", "grep", "ls"],
+)
+def test_tool_candidate_parser_covers_invented_and_one_word_tools(
+    invented_tool: str,
+) -> None:
+    assert TOOL_SHAPED.findall(f"`{invented_tool}`") == [invented_tool]
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_validation_tool_description_requires_confirmation(
+    module: str, tmp_path: Path
+) -> None:
+    tool = named_tool(
+        _specialist_tools(module, tmp_path), f"validate_{module}_parameters"
+    )
+
+    assert "only after" in tool.description
+    assert "ask_user" in tool.description
+    assert "affirmative confirmation" in tool.description
 
 
 @pytest.mark.parametrize("module", execution_order())
@@ -925,11 +1136,45 @@ def test_a_required_file_field_refuses_a_blank_name_at_the_tool_too() -> None:
         ("readin", {"FactInt": 0}, "`FactInt` must be greater than 0"),
         ("readin", {"iDetectColor": -2}, "`iDetectColor` must be -1 or more"),
         ("writeout", {"FactInt": 0}, "`FactInt` must be greater than 0"),
-        ("writeout", {"iDetectColor": -2}, "`iDetectColor` must be -1 or more"),
-        ("monitor1d", {"eParX": 0}, "`eParX` cannot be `NO_PAR` (0)"),
-        ("monitor2d", {"xParam": 0}, "`xParam` cannot be `NO_PAR` (0)"),
-        ("monitor2d", {"yParam": 0}, "`yParam` cannot be `NO_PAR` (0)"),
+        (
+            "writeout",
+            {"iDetectColor": -2},
+            "`iDetectColor` must be an integer of -1 or more",
+        ),
+        ("monitor1d", {"eParX": 0}, "`eParX` must be set and cannot be `NO_PAR` (0)"),
+        (
+            "monitor2d",
+            {"xParam": 0},
+            "`xParam` and `yParam` must be set and cannot be `NO_PAR` (0)",
+        ),
+        (
+            "monitor2d",
+            {"yParam": 0},
+            "`xParam` and `yParam` must be set and cannot be `NO_PAR` (0)",
+        ),
         ("monitor2d", {"format": -1}, "`format` cannot be `NO_2D_FORMAT` (-1)"),
+        (
+            "monitor1d",
+            {"filterVarMin1": -1.0, "filterVarMax1": 1.0},
+            "or complete (a real parameter and both limits)",
+        ),
+        (
+            "monitor2d",
+            {"lambdaMin": 4.0},
+            'A missing limit is read as `0`, not as "no limit"',
+        ),
+        (
+            "monitor1d",
+            {
+                "filterParam1": 1,
+                "filterVarMin1": -1.0,
+                "filterVarMax1": 1.0,
+                "filterParam2": 5,
+                "filterVarMin2": 4.0,
+                "filterVarMax2": 12.0,
+            },
+            "left at `NO_FCOMB` it keeps every neutron passing **either** filter",
+        ),
     ],
 )
 def test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces(
@@ -959,6 +1204,12 @@ def test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces(
         }
         if module == "readin"
         else {}
+    )
+
+    assert claimed_by_the_prompt in _prompt_text(module), (
+        f"{module}/AGENT.md no longer says: {claimed_by_the_prompt}. The claim is "
+        "half of this test -- without it the parameters below prove nothing about "
+        "what the prompt promises."
     )
 
     command = _validate(
@@ -1045,8 +1296,9 @@ def test_every_prompt_carries_the_same_order_of_work_word_for_word() -> None:
         "1. **Collect**",
         "2. **Build**",
         "3. **Present**",
-        "4. **Validate**",
-        "5. **Then stop.**",
+        "4. **Confirm**",
+        "5. **Validate**",
+        "6. **Then stop.**",
     ):
         assert step in canonical
 
@@ -1064,8 +1316,18 @@ def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) ->
     ):
         assert contradiction not in text, f"{module}/AGENT.md still says: {contradiction}"
 
-    present = text.index("Present it to the user, formatted")
-    assert present < text.index(f"Validate it using the `{tool}` tool")
+    canonical = _order_of_work(module)
+    present = canonical.index("3. **Present**")
+    confirm = canonical.index("4. **Confirm**")
+    validate = canonical.index("5. **Validate**")
+
+    assert present < confirm < validate
+    assert "Call `ask_user` with one direct question" in canonical
+    assert "Do not validate in the same turn" in canonical
+    assert "as the presentation" in canonical
+    assert text.count(
+        "Ask for confirmation with `ask_user`; do not validate until the user confirms."
+    ) == 2
 
 
 @pytest.mark.parametrize("module", execution_order())
