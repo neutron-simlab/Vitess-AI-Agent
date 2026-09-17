@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any
@@ -19,8 +20,12 @@ from vitess_ai.agents.delegation import (
 )
 from vitess_ai.agents.specialists import compile_module_specialists
 from vitess_ai.agents.specialists.guide.tools import build_tools as guide_tools
-from vitess_ai.agents.specialists.module_specialist import build_module_prompt
+from vitess_ai.agents.specialists.module_specialist import (
+    FILESYSTEM_TOOLS,
+    build_module_prompt,
+)
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
+from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
 from vitess_ai.agents.specialists.readin.tools import build_tools as readin_tools
 from vitess_ai.agents.specialists.writeout.tools import build_tools as writeout_tools
 from vitess_ai.cli.arguments import (
@@ -531,6 +536,82 @@ def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
     for other in execution_order():
         if other != module:
             assert parameter_model(other).__name__ not in prompt
+
+
+def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
+    builders = {
+        "readin": lambda: readin_tools(project_root=tmp_path, gateway=None),
+        "guide": lambda: guide_tools(project_root=tmp_path, gateway=None),
+        "writeout": lambda: writeout_tools(project_root=tmp_path),
+        "monitor1d": lambda: monitor1d_tools(project_root=tmp_path),
+        "monitor2d": lambda: monitor2d_tools(project_root=tmp_path),
+    }
+    return builders[module]()
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_each_prompt_names_exactly_the_tools_that_specialist_has(
+    module: str, tmp_path: Path
+) -> None:
+    """A prompt that names a tool which is not there is how a model gets stuck.
+
+    The first-generation prompts did exactly this: read-in's told the model to
+    call `get_instrument_file` and `instrument_file_status`, neither of which
+    was in the list its builder returned. A weaker model follows the prompt,
+    the call fails, and it has no instruction for what to do instead.
+
+    Checked in both directions, because the opposite mistake -- a tool the
+    specialist has and the prompt never mentions -- is a capability the model
+    will not discover.
+    """
+    prompt = build_module_prompt(
+        f"vitess_ai.agents.specialists.{module}", parameter_model(module)
+    )
+    named = set(
+        re.findall(
+            r"`(validate_[a-z0-9_]+|list_staged_files|ask_user|read_file|write_file"
+            r"|edit_file|delete|execute|glob|grep|ls)`",
+            prompt,
+        )
+    )
+    available = {tool.name for tool in _specialist_tools(module, tmp_path)} | set(
+        FILESYSTEM_TOOLS
+    )
+
+    assert named == available
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
+    module: str, offline_model: Any, tmp_path: Path
+) -> None:
+    """`FilesystemMiddleware` binds eight tools unless it is told not to.
+
+    A module specialist configuring one set of parameters was reaching a
+    conversation with eleven tools, `execute` and `delete` among them. That is
+    context spent on tools it will never use, and on a weaker model it is an
+    invitation to use them. The allowlist is core's, so this pins what v2 asks
+    for rather than what the upstream default happens to be.
+    """
+    specialist = next(
+        spec
+        for spec in compile_module_specialists(
+            project_root=tmp_path,
+            gateway=None,
+            summarizer_model=offline_model,
+            fallback_models=[],
+        )
+        if spec["module"] == module
+    )
+    bound = set(specialist["runnable"].nodes["tools"].bound._tools_by_name)
+
+    expected = {f"validate_{module}_parameters", "ask_user", "read_file"}
+    if module in {"readin", "guide"}:
+        expected.add("list_staged_files")
+
+    assert bound == expected
+    assert "execute" not in bound
+    assert "delete" not in bound
 
 
 def test_only_the_modules_that_read_a_file_can_list_staged_files(

@@ -57,6 +57,7 @@ from vitess_ai.state import VitessBridgeState
 __all__ = [
     "SPECIALIST_PROVIDER",
     "SPECIALIST_MODEL",
+    "FILESYSTEM_TOOLS",
     "FILESYSTEM_TOOL_DESCRIPTIONS",
     "build_module_prompt",
     "build_module_specialist",
@@ -72,14 +73,21 @@ __all__ = [
 SPECIALIST_PROVIDER = Provider.BLABLADOR.value
 SPECIALIST_MODEL = BlabladorModelName.GPT_OSS.value
 
+#: A module specialist's whole job is a conversation and one validation call.
+#: `FilesystemMiddleware` otherwise binds eight tools -- `ls`, `read_file`,
+#: `write_file`, `edit_file`, `delete`, `glob`, `grep` and **`execute`** -- and
+#: a specialist bound to ten tools it will never use spends context on them and,
+#: on a weaker model, reaches for them. `read_file` is the one the middleware
+#: requires in any allowlist, and it is the one that earns its place: the
+#: delegation boundary carries `/findings/` in, so a later module can read what
+#: an earlier one recorded.
+FILESYSTEM_TOOLS = ("read_file",)
+
 FILESYSTEM_TOOL_DESCRIPTIONS = {
-    "ls": "List `/findings` to see what an earlier module specialist established.",
-    "read_file": "Read a finding an earlier module specialist wrote.",
-    "grep": "Search findings for an exact term or value.",
-    "glob": "Find a findings file by name.",
-    "write_file": (
-        "Write to `/findings/<module>.md` only when the objective asks you to "
-        "record something the next module needs. Your report is the result."
+    "read_file": (
+        "Read a finding an earlier module specialist recorded under `/findings/`. "
+        "There is nothing else to read; the parameters you need come from the "
+        "user, and the files the user uploaded are listed by `list_staged_files`."
     ),
 }
 
@@ -403,6 +411,7 @@ def build_module_specialist(
             fallback_models=fallback_models,
             filesystem_tool_descriptions=FILESYSTEM_TOOL_DESCRIPTIONS,
             specialist_name=name,
+            filesystem_tools=FILESYSTEM_TOOLS,
         ),
         response_format=ToolStrategy(SpecialistReport),
         context_schema=RuntimeModelContext,
