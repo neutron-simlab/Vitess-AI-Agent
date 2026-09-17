@@ -26,8 +26,11 @@ from juena_core.artifacts import (
     get_artifact_store,
 )
 from juena_core.schema.interrupts import ExecutionEvidence
+from vitess_ai.cli.arguments import ParameterConversionError, parameters_to_arguments
 from vitess_ai.mcp.payloads import PlotResult, RunFile, SimulationResult
 from vitess_ai.modules.catalog import execution_order
+from vitess_ai.modules.parameters import parameter_model
+from vitess_ai.schema.module_result import ModuleConfigurationResult
 from vitess_ai.run import (
     InternalSimulationRequest,
     SimulationOutcome,
@@ -36,7 +39,11 @@ from vitess_ai.run import (
 )
 from vitess_ai.state import SimulationRunReference
 
-__all__ = ["build_vitess_tools", "vitess_supervisor_middleware"]
+__all__ = [
+    "build_vitess_tools",
+    "plan_simulation",
+    "vitess_supervisor_middleware",
+]
 
 
 class _FacadeArguments(BaseModel):
@@ -57,6 +64,10 @@ class _RunArguments(_FacadeArguments):
 
 
 class _InspectArguments(_FacadeArguments):
+    pass
+
+
+class _PlanArguments(_FacadeArguments):
     pass
 
 
@@ -121,6 +132,69 @@ def _run_references(runtime: ToolRuntime[Any, Any]) -> list[SimulationRunReferen
         except ValidationError:
             continue
     return references
+
+
+def _planned_order(runtime: ToolRuntime[Any, Any]) -> tuple[str, ...]:
+    """The pipeline `plan_simulation` recorded, or nothing.
+
+    Read from state rather than from the catalog, even though
+    `plan_simulation` fills it from the catalog. Reading the catalog here would
+    make the plan decorative: a supervisor that never planned would still run,
+    and "the modules were delegated in the planned order" would be a claim
+    about two copies of the same constant rather than about what happened.
+    """
+    planned = _state_mapping(runtime).get("planned_execution_order")
+    if not isinstance(planned, (list, tuple)) or not planned:
+        return ()
+    return tuple(str(module) for module in planned)
+
+
+def _configured_arguments(
+    runtime: ToolRuntime[Any, Any],
+    planned: tuple[str, ...],
+) -> dict[str, dict[str, Any]]:
+    """Rebuild each planned module's VITESS arguments from its stored result.
+
+    The arguments are derived here rather than stored by the validation tool,
+    so a configuration and the command it runs as cannot disagree: there is
+    one converter and it is called once, at the moment of execution, against
+    the module's own model. Re-validating also means a result checkpointed
+    under an older schema fails loudly instead of running as something else.
+    """
+    stored = _state_mapping(runtime).get("module_results")
+    if not isinstance(stored, Mapping):
+        raise ValueError(
+            "No VITESS module has been configured yet. Delegate to the module "
+            "specialists first."
+        )
+
+    missing = [module for module in planned if module not in stored]
+    if missing:
+        raise ValueError(
+            "These planned modules have no validated configuration: "
+            + ", ".join(missing)
+            + ". Delegate to their specialists before running the simulation."
+        )
+    unplanned = sorted(set(stored) - set(planned))
+    if unplanned:
+        raise ValueError(
+            "These configurations belong to no planned module: "
+            + ", ".join(unplanned)
+        )
+
+    arguments: dict[str, dict[str, Any]] = {}
+    for module in planned:
+        result = ModuleConfigurationResult.model_validate(stored[module])
+        if result.module != module:
+            raise ValueError(
+                f"The configuration stored for {module!r} says it is for "
+                f"{result.module!r}"
+            )
+        model = parameter_model(module)
+        arguments[module] = {
+            "cli_parameters": parameters_to_arguments(model(**result.parameters))
+        }
+    return arguments
 
 
 def _failed_run_command(
@@ -249,14 +323,59 @@ def _select_run(
     return matches[-1]
 
 
+PLAN_DESCRIPTION = (
+    "Return the VITESS modules this simulation needs, in the order they must be "
+    "configured and run. Call this before delegating to any module specialist. "
+    "run_simulation will not run a pipeline that was never planned."
+)
+
+
+@tool("plan_simulation", args_schema=_PlanArguments, description=PLAN_DESCRIPTION)
+def plan_simulation(runtime: ToolRuntime[Any, Any]) -> Command:
+    """Record the pipeline order, from the catalog, as a checked precondition.
+
+    The first-generation simulator held this order in graph edges, and losing
+    them was the one real risk in rebuilding on a free-form supervisor: a
+    supervisor that configures the monitor before the guide produces a
+    simulation that runs, completes, and is wrong.
+
+    So the order is neither an edge nor a sentence in a prompt. It is written
+    into state here, by a tool, from `execution_order()` -- and `run_simulation`
+    reads it back from state. **Both ends are server-owned**, which is the only
+    reason comparing them proves anything: a model that skipped this call gets a
+    refusal rather than a pipeline in whatever order it happened to delegate.
+    """
+    planned = list(execution_order())
+    return Command(
+        update={
+            "planned_execution_order": planned,
+            "messages": [
+                _tool_message(
+                    runtime,
+                    "Configure and run these VITESS modules in this order: "
+                    + " -> ".join(planned)
+                    + ". Delegate to one module specialist at a time, in this "
+                    "order, and run the simulation only once all of them have "
+                    "reported.",
+                )
+            ],
+        }
+    )
+
+
 def build_vitess_tools(
-    raw_tools: Sequence[BaseTool],
+    gateway: VitessGateway,
     *,
     project_root: str | Path | None = None,
 ) -> list[BaseTool]:
-    """Wrap discovered MCP tools in schemas containing no trusted arguments."""
+    """Wrap the MCP gateway in tool schemas containing no trusted arguments.
 
-    gateway = VitessGateway(raw_tools)
+    Takes the gateway rather than the raw tools so that one process holds one
+    gateway. The module specialists need it too -- read-in and guide ask it
+    what the user has staged -- and two gateways over the same four tools would
+    be two places to change a rule that has to hold in both.
+    """
+
     root = Path(project_root or "/data/projects").expanduser().resolve()
 
     @tool(
@@ -286,12 +405,24 @@ def build_vitess_tools(
                 message=f"A VITESS simulation is already named {display_name!r}",
             )
 
-        module_results = _state_mapping(runtime).get("module_results")
-        if not isinstance(module_results, Mapping):
+        planned = _planned_order(runtime)
+        if not planned:
             return _failed_run_command(
                 runtime,
                 graph_run_id=graph_run_id,
-                message="No validated VITESS module configuration is available",
+                message=(
+                    "This simulation has no plan. Call plan_simulation first, "
+                    "then delegate to each module specialist in the order it "
+                    "returns."
+                ),
+            )
+        try:
+            module_results = _configured_arguments(runtime, planned)
+        except (ValidationError, ValueError, ParameterConversionError, KeyError) as exc:
+            return _failed_run_command(
+                runtime,
+                graph_run_id=graph_run_id,
+                message=f"The VITESS configuration is not runnable: {exc}",
             )
 
         simulation_run_id = uuid4()
@@ -300,8 +431,8 @@ def build_vitess_tools(
                 thread_id=thread_id,
                 simulation_run_id=simulation_run_id,
                 graph_run_id=graph_run_id,
-                module_results=dict(module_results),
-                execution_order=execution_order(),
+                module_results=module_results,
+                execution_order=planned,
             )
         except ValidationError as exc:
             return _failed_run_command(

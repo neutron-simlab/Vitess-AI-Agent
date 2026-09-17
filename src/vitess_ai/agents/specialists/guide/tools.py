@@ -1,0 +1,38 @@
+"""What the guide specialist may do."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from langchain_core.tools import BaseTool
+
+from juena_core.agents.ask_user import build_ask_user_tool
+from vitess_ai.agents.specialists.module_specialist import (
+    build_staged_files_tool,
+    build_validation_tool,
+)
+from vitess_ai.schema import GuideParameters
+
+MODULE = "guide"
+SPECIALIST_NAME = "guide-specialist"
+
+#: Optional: an empty `ShapeFileName` means "no guide file, use the dimensions",
+#: and the converter omits `-S` entirely. Only a value that is set has to name a
+#: staged upload.
+UPLOAD_FIELDS = ("ShapeFileName",)
+
+
+def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
+    return [
+        build_validation_tool(
+            module=MODULE,
+            model=GuideParameters,
+            project_root=project_root,
+            upload_fields=UPLOAD_FIELDS,
+        ),
+        build_staged_files_tool(
+            module=MODULE, gateway=gateway, project_root=project_root
+        ),
+        build_ask_user_tool(SPECIALIST_NAME),
+    ]
