@@ -1995,7 +1995,95 @@ tools rather than by the model, both runs land under
 
 ### What actually landed
 
-*(Fill in after the work.)*
+Completed 2026-09-17 in `Vitess-AI-Agent-v2` `5fb0253`, merged to `main` as `437cd75`.
+
+```text
+uv run pytest -q (v2)            332 passed  (was 308; 24 of them new)
+thirteen deliberate breaks       13 caught, after two of the breaks were rewritten
+                                 because they were no-ops rather than breaks
+live two-run sweep               2 of 2 runs, 10 exit codes of 0, 7 files each,
+                                 two directories, two different monitored totals
+```
+
+The sweep ran against the rebuilt image and the real VITESS 3.8 build. Its variants
+came from the five real sweep tools, its plan from `write_simulation_matrix`, its runs
+from `run_batch_from_matrix` over the MCP gateway, and the guide width was the only
+thing that differed:
+
+```text
+guide 3.0 cm   -> 07eff75c-…  7 files   monitored total 5.86628e10
+guide 7.0 cm   -> 09d58bc0-…  7 files   monitored total 5.91706e10
+```
+
+**Two totals, not one.** A sweep whose runs come out identical is the failure mode
+that looks like success, and it is what every one of the design decisions below is
+guarding against, so it is the number worth reading.
+
+#### The batch path's own channel, as planned
+
+`module_variants` (`{module: [ModuleConfigurationResult, …]}`) and `simulation_plan`
+(a list of `SimulationPlanEntry`) landed as designed, written only by tools. The
+deliverable is stated as an absence and asserted as one:
+`run_batch_from_matrix.args_schema` has **exactly one field, `runtime`**, and
+`write_simulation_matrix` has `combination` and `run_names`. `run_specs`,
+`module_results`, `execution_order` and `thread_id` are not validated more carefully
+than before — there is no argument left through which a model can describe a run.
+
+`run_name` and `simulation_run_id` stayed apart, and the test that pins it is not the
+obvious one. Asserting "the id is not the name" passes for any function of the name,
+so the test **plans the same sweep twice and asserts the two id sets are disjoint**: an
+id derived from the run name would be stable, and the second sweep would write into the
+first one's directories with both reporting success.
+
+#### Three things found by writing the tests
+
+- **`vitess_supervisor_middleware()` hard-coded `agent_name="vitess"`.** The sweep's
+  `<verified_by_server>` block would have been signed by the guided agent, sending
+  anyone who read it to the wrong thread for the run it described. It takes the name
+  now, defaulting to `vitess`.
+- **`build_sweep_backend` was dead code that made a claim.** The module docstring said
+  the filesystem was scoped to one thread's directory; nothing called the function.
+  Rather than build a per-invocation backend swap for one of the two agents, the
+  function is gone and the docstring now says what is true: no filesystem route is
+  mounted, the sweep reads its inputs through `inspect_thread_folders`, which the MCP
+  server already scopes to a thread, and the guided agent mounts none either. *A
+  docstring that describes an intention is the same defect as a prompt that claims a
+  rule the validator does not enforce.*
+- **Two of the thirteen deliberate breaks were not breaks.** One wrote
+  `X if False else Y`, which evaluates `Y`; the other derived the run id from
+  `hash(run_name)`, which still yields two distinct ids and so passed the distinctness
+  test. Both were rewritten until they genuinely broke something. A break that does
+  nothing reports a guarantee that was never tested.
+
+#### `swept_modules`, beside `configured_modules`
+
+The sweep tests build their variants with the **five real variant tools**, the same
+way CP4's tests build `module_results` with the five real validation tools. A plan
+built from hand-written variants would prove nothing about what a sweep specialist can
+record, and the two helpers now fail together if either layer breaks.
+
+#### The sweep specialists are the guided ones, twice compiled
+
+`compile_sweep_specialists` is `compile_module_specialists(unattended=True)`. The
+difference is exactly two things — the validation tool takes a list, and there is no
+`ask_user` — and a test asserts the sweep prompt **starts with the guided prompt byte
+for byte** before its two notices. A shortened "sweep version" of a VITESS prompt is
+how a weaker model loses the ranges and file rules it cannot infer, and it would never
+show up as a failure, only as worse physics.
+
+`validate_X_variants` is all-or-nothing: a partly recorded list runs fewer simulations
+than the objective asked for, and the missing runs are invisible — the results look
+like a complete sweep on a coarser grid.
+
+#### What CP5 deliberately left
+
+- **No `configure()` call yet.** Nothing in v2 installs `CoreSettings`; the tests do it
+  in `conftest.py` and the live script does it itself. The application-level call
+  belongs with the service module in CP6.
+- **`register_agent_factory` runs on import, and nothing imports `advanced_mode` yet.**
+  Both agents register when the module is imported — the test does it explicitly — but
+  the one-line side-effect import with its `# noqa: F401` lands in CP6's service, which
+  is the file that has the transplanted comment explaining the trap.
 
 ---
 
