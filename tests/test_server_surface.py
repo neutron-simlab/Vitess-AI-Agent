@@ -165,6 +165,18 @@ def test_importing_the_service_registers_both_agents(tmp_path: Path) -> None:
             {"VITESS_API_PUBLISHED": "treu"},
             "must be one of 1/0",
         ),
+        # A lookup bounded by zero seconds cannot succeed, and a negative retry
+        # count is not a number of retries. Both are silent: the documentation
+        # tools would answer RAG_UNAVAILABLE forever and look like a missing
+        # index rather than a misconfigured one.
+        (
+            {"VITESS_RAG_QUERY_TIMEOUT_SECONDS": "0"},
+            "must be greater than 0",
+        ),
+        (
+            {"VITESS_RAG_MAX_RETRIES": "-1"},
+            "must be 0 or greater",
+        ),
     ],
 )
 def test_the_service_refuses_to_start_on_a_configuration_that_cannot_work(

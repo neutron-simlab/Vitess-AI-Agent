@@ -488,3 +488,82 @@ def test_the_guided_factory_passes_the_gateway_to_the_facade_builder(
         "generate_monitor1d_plot",
         "generate_monitor2d_plot",
     ]
+
+
+def test_the_guided_graph_adds_documentation_tools_and_the_matching_policy(
+    offline_model: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Direct graph construction must exercise the RAG boundary the factory uses."""
+    captured: dict[str, Any] = {}
+
+    from langchain_core.tools import tool
+
+    @tool("documentation_probe", description="A documentation test tool.")
+    def documentation_probe(query: str) -> str:
+        return query
+
+    def documentation(*, unattended: bool) -> tuple[list[Any], str]:
+        captured["unattended"] = unattended
+        return [documentation_probe], "GUIDED_DOCUMENTATION_POLICY"
+
+    class _Graph:
+        def with_config(self, config: dict[str, Any]) -> "_Graph":
+            captured["config"] = config
+            return self
+
+    def capture_agent(**kwargs: Any) -> _Graph:
+        captured.update(kwargs)
+        return _Graph()
+
+    monkeypatch.setattr(agent_module, "orchestrator_documentation", documentation)
+    monkeypatch.setattr(agent_module, "create_agent", capture_agent)
+
+    agent_module.build_vitess_graph(
+        supervisor_model=_ScriptedSupervisor(responses=[AIMessage("done")]),
+        summarizer_model=offline_model,
+        fallback_models=[],
+        specialists=[
+            {
+                "name": "guide-specialist",
+                "description": "Configure the guide.",
+                "runnable": _RecordingSpecialist("guide", {}, []),
+                "module": "guide",
+            }
+        ],
+        tools=[],
+        store=InMemoryStore(),
+    )
+
+    assert captured["unattended"] is False
+    assert [item.name for item in captured["tools"]] == ["documentation_probe"]
+    assert str(captured["system_prompt"]).endswith("GUIDED_DOCUMENTATION_POLICY")
+
+
+def test_supervisor_markdown_names_every_production_tool() -> None:
+    """A weaker model cannot discover a capability the prompt never names."""
+    prompt = (
+        Path(__file__).parents[1] / "src/vitess_ai/agents/SUPERVISOR.md"
+    ).read_text(encoding="utf-8")
+    expected = {
+        "ask_user",
+        "plan_simulation",
+        "task",
+        "run_simulation",
+        "inspect_thread_folders",
+        "generate_monitor1d_plot",
+        "generate_monitor2d_plot",
+        "vitess_search",
+        "vitess_option_lookup",
+        "vitess_module_lookup",
+        "vitess_debug_retrieval",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "ls",
+        "glob",
+        "grep",
+    }
+
+    for name in expected:
+        assert f"`{name}`" in prompt
+    assert "There is no `execute` and no `delete`." in prompt

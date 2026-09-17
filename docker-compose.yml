@@ -124,6 +124,8 @@ services:
       - BLABLADOR_API_KEY=${BLABLADOR_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - VITESS_RAG_PERSIST_PATH=/data/chroma
+      - VITESS_RAG_QUERY_TIMEOUT_SECONDS=${VITESS_RAG_QUERY_TIMEOUT_SECONDS:-20}
+      - VITESS_RAG_MAX_RETRIES=${VITESS_RAG_MAX_RETRIES:-1}
     volumes:
       - vitess-projects:/data/projects
       # Delivered plots and their audit log. Separate from the project volume

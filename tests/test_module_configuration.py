@@ -866,8 +866,11 @@ def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     `execute`, `delete`, `glob`, `grep` and `ls` invisible -- exactly the former
     filesystem capabilities this test must catch if a prompt invents them.
     """
+    documentation = specialist_rag_tools()
     prompt = build_module_prompt(
-        f"vitess_ai.agents.specialists.{module}", parameter_model(module)
+        f"vitess_ai.agents.specialists.{module}",
+        parameter_model(module),
+        documentation_tools=documentation,
     )
     not_tools = (
         _field_names(parameter_model(module))
@@ -883,6 +886,25 @@ def test_each_prompt_names_exactly_the_tools_that_specialist_has(
         available |= set(FILESYSTEM_TOOLS)
 
     assert named == available
+
+
+def test_a_specialist_prompt_mentions_documentation_only_when_it_is_bound() -> None:
+    """The previous builder appended the RAG note even with an empty tool list.
+
+    A direct graph-builder test then told a weaker model to call three tools it
+    did not have. One argument now governs both halves of that contract.
+    """
+    package = "vitess_ai.agents.specialists.guide"
+    without = build_module_prompt(package, parameter_model("guide"))
+    documentation = specialist_rag_tools()
+    with_tools = build_module_prompt(
+        package,
+        parameter_model("guide"),
+        documentation_tools=documentation,
+    )
+
+    assert all(f"`{name}`" not in without for name in SPECIALIST_RAG_TOOLS)
+    assert all(f"`{name}`" in with_tools for name in SPECIALIST_RAG_TOOLS)
 
 
 @pytest.mark.parametrize(

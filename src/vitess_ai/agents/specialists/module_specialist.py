@@ -23,7 +23,7 @@ channel in the first place.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, get_args
@@ -623,6 +623,7 @@ def build_module_specialist(
     prompt_package: str,
     model: type[BaseModel],
     tools: list[BaseTool],
+    documentation_tools: Sequence[BaseTool] = (),
     summarizer_model: Any,
     fallback_models: list[Any],
     unattended: bool = False,
@@ -645,7 +646,10 @@ def build_module_specialist(
         ),
         tools=tools,
         system_prompt=build_module_prompt(
-            prompt_package, model, unattended=unattended
+            prompt_package,
+            model,
+            documentation_tools=documentation_tools,
+            unattended=unattended,
         ),
         middleware=build_specialist_middleware(
             backend=build_specialist_backend(),
@@ -715,6 +719,7 @@ def build_module_prompt(
     prompt_package: str,
     model: type[BaseModel],
     *,
+    documentation_tools: Sequence[BaseTool] = (),
     unattended: bool = False,
 ) -> str:
     """The authored prompt, followed by the module's own parameter schema.
@@ -726,11 +731,11 @@ def build_module_prompt(
     one the validation tool will enforce.
     """
     authored = load_markdown(prompt_package, "AGENT.md")
-    # Appended rather than pasted into each AGENT.md: it describes tools every
-    # specialist is bound identically, so five copies would be five chances to
-    # disagree about which tool decides what is legal -- and the answer, "not
-    # these", is the sentence that matters.
-    authored = f"{authored}\n{MODULE_RAG_CONTEXT_NOTE}"
+    # One argument governs both the bound tools and the matching policy. A
+    # direct builder call with no documentation tools therefore cannot produce
+    # a prompt that tells the model to call something absent.
+    if documentation_tools:
+        authored = f"{authored}\n{MODULE_RAG_CONTEXT_NOTE}"
     if unattended:
         module = prompt_package.rsplit(".", 1)[-1]
         authored = (

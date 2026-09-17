@@ -46,10 +46,15 @@ def build_monitor1d_specialist(
         prompt_package="vitess_ai.agents.specialists.monitor1d",
         model=Monitor1DParameters,
         tools=(
-            build_sweep_tools(project_root=project_root, documentation_tools=documentation)
+            build_sweep_tools(
+                project_root=project_root, documentation_tools=documentation
+            )
             if unattended
-            else build_tools(project_root=project_root, documentation_tools=documentation)
+            else build_tools(
+                project_root=project_root, documentation_tools=documentation
+            )
         ),
+        documentation_tools=documentation,
         summarizer_model=summarizer_model,
         fallback_models=fallback_models,
         unattended=unattended,

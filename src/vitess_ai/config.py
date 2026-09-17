@@ -103,6 +103,14 @@ class Config:
     RAG_PERSIST_PATH = Path(os.getenv("VITESS_RAG_PERSIST_PATH", "rag/chroma_db"))
     RAG_COLLECTION = os.getenv("VITESS_RAG_COLLECTION", "vitess_docs")
     RAG_EMBEDDING_MODEL = os.getenv("VITESS_RAG_EMBEDDING_MODEL", "alias-embeddings")
+    #: Retrieval is on the conversational path, so the embedding client's
+    #: ten-minute SDK default is not an acceptable failure mode. These are
+    #: deliberately separate from the chat-model limits above: a short lookup
+    #: may fail without cancelling the simulation conversation around it.
+    RAG_QUERY_TIMEOUT_SECONDS = float(
+        os.getenv("VITESS_RAG_QUERY_TIMEOUT_SECONDS", "20")
+    )
+    RAG_MAX_RETRIES = int(os.getenv("VITESS_RAG_MAX_RETRIES", "1"))
     RAG_REINDEX = _flag("VITESS_RAG_REINDEX", False)
 
     # -- serving ------------------------------------------------------------
@@ -152,6 +160,10 @@ class Config:
                 "IPv4 loopback; binding the API elsewhere would either expose it or "
                 "make the application disagree with its own client."
             )
+        if cls.RAG_QUERY_TIMEOUT_SECONDS <= 0:
+            raise RuntimeError("VITESS_RAG_QUERY_TIMEOUT_SECONDS must be greater than 0")
+        if cls.RAG_MAX_RETRIES < 0:
+            raise RuntimeError("VITESS_RAG_MAX_RETRIES must be 0 or greater")
 
 
 def configure_core() -> None:

@@ -51,6 +51,30 @@ manual. This spends embedding quota and therefore is never done implicitly at
 startup. If it has not been run, the documentation tools remain present and
 answer `RAG_UNAVAILABLE` instead of silently disappearing.
 
+Documentation queries specifically require `BLABLADOR_API_KEY`: the persisted
+index was built with the configured Blablador embedding model. An OpenAI key
+may run the chat model, but it cannot embed a query against this collection.
+
+To reuse the first-generation checkout's existing index instead, migrate it
+once while the v2 application is stopped. The destination must be empty; do
+not merge two Chroma databases. SQLite needs to create journal files even for
+queries, so the copied files must belong to the image's uid 10001.
+
+```sh
+docker compose stop vitess-app
+docker run --rm \
+  -v vitess-ai-agent_vitess-rag:/src:ro \
+  -v vitess-ai-chroma:/dst \
+  alpine sh -c 'test -f /src/chroma_db/chroma.sqlite3 && test -z "$(find /dst -mindepth 1 -maxdepth 1 -print -quit)" && cp -a /src/chroma_db/. /dst/ && chown -R 10001:10001 /dst'
+docker compose up -d vitess-app
+```
+
+The source volume name is the default Compose name from `Vitess-AI-Agent`; if
+that stack used a different project name, substitute its actual volume from
+`docker volume ls`. After a future re-index, `collections.config_json_str` in
+`chroma.sqlite3` must remain `{}`: Chroma 1.5.9 cannot reopen this copied index
+when that field names an embedding function unknown to its registry.
+
 `GET /health` on the MCP service answers 200 only when the five VITESS
 executables resolve and the project volume is writable, and Compose holds the
 application back until it does.

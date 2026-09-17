@@ -866,14 +866,59 @@ def test_the_factory_selects_its_facade_through_the_allowlist(
     assert set(names) == set(_ADVANCED_FACADE_TOOL_NAMES) | {
         "write_simulation_matrix",
         "run_batch_from_matrix",
-        # All four documentation tools, where a module specialist gets three:
-        # `vitess_debug_retrieval` is for noticing that retrieval is answering
-        # badly, and this is the agent that would notice.
-        "vitess_search",
-        "vitess_option_lookup",
-        "vitess_module_lookup",
-        "vitess_debug_retrieval",
     }
+
+
+def test_the_sweep_graph_adds_documentation_tools_and_the_matching_policy(
+    offline_model: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The graph builder, not only the production factory, owns both halves.
+
+    Every existing golden graph is built directly. Wiring RAG only in the
+    factory made those tests incapable of seeing a prompt that named four
+    absent tools.
+    """
+    captured: dict[str, Any] = {}
+
+    @tool("documentation_probe", description="A documentation test tool.")
+    def documentation_probe(query: str) -> str:
+        return query
+
+    def documentation(*, unattended: bool) -> tuple[list[Any], str]:
+        captured["unattended"] = unattended
+        return [documentation_probe], "SWEEP_DOCUMENTATION_POLICY"
+
+    class _Graph:
+        def with_config(self, config: dict[str, Any]) -> "_Graph":
+            captured["config"] = config
+            return self
+
+    def capture_agent(**kwargs: Any) -> _Graph:
+        captured.update(kwargs)
+        return _Graph()
+
+    monkeypatch.setattr(agent_module, "orchestrator_documentation", documentation)
+    monkeypatch.setattr(agent_module, "create_agent", capture_agent)
+
+    agent_module.build_advanced_mode_graph(
+        supervisor_model=_ScriptedSupervisor(responses=[AIMessage("done")]),
+        summarizer_model=offline_model,
+        fallback_models=[],
+        specialists=[
+            {
+                "name": "guide-specialist",
+                "description": "Configure the guide.",
+                "runnable": _Nothing(),
+                "module": "guide",
+            }
+        ],
+        tools=[],
+        store=InMemoryStore(),
+    )
+
+    assert captured["unattended"] is True
+    assert [item.name for item in captured["tools"]] == ["documentation_probe"]
+    assert str(captured["system_prompt"]).endswith("SWEEP_DOCUMENTATION_POLICY")
 
 
 def test_advanced_prompt_describes_the_actual_filesystem_boundary() -> None:
@@ -883,6 +928,13 @@ def test_advanced_prompt_describes_the_actual_filesystem_boundary() -> None:
     ).read_text(encoding="utf-8")
 
     assert "`read_file`" in prompt
+    for name in (
+        "vitess_search",
+        "vitess_option_lookup",
+        "vitess_module_lookup",
+        "vitess_debug_retrieval",
+    ):
+        assert f"`{name}`" in prompt
     assert "no `ask_user` tool, project-filesystem access or shell" in prompt
     assert "`/data/projects` included, is refused with a message saying so" in prompt
 

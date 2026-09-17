@@ -49,6 +49,7 @@ from juena_core.server.database.store import get_store
 from vitess_ai.agents.delegation import with_module_delegation_boundary
 from vitess_ai.agents.specialists import compile_module_specialists
 from vitess_ai.mcp.connection import discover_vitess_tools, probe_server_health
+from vitess_ai.retrieval import orchestrator_documentation
 from vitess_ai.run import VitessGateway
 from vitess_ai.state import VitessBridgeState
 from vitess_ai.tools import (
@@ -144,10 +145,17 @@ def build_vitess_graph(
         # failure mode worth naming because it looks like success.
         extra=tuple(vitess_supervisor_middleware()),
     )
+    documentation_tools, documentation_policy = orchestrator_documentation(
+        unattended=False
+    )
     return create_agent(
         model=supervisor_model,
-        tools=tools,
-        system_prompt=load_markdown("vitess_ai.agents", "SUPERVISOR.md"),
+        tools=[*tools, *documentation_tools],
+        system_prompt=(
+            load_markdown("vitess_ai.agents", "SUPERVISOR.md")
+            + "\n"
+            + documentation_policy
+        ),
         middleware=middleware,
         context_schema=RuntimeModelContext,
         state_schema=VitessBridgeState,

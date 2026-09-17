@@ -16,13 +16,28 @@ from functools import lru_cache
 from typing import Any
 
 from langchain.tools import tool
+from langchain_core.tools import BaseTool
 
 from juena_core.log import get_logger
+from vitess_ai.retrieval.prompts import SUPERVISOR_RAG_POLICY, SWEEP_RAG_POLICY
 from vitess_ai.retrieval.runtime import RagUnavailable, get_rag_collection, rag_enabled
 
 logger = get_logger(__name__)
 
-__all__ = ["SPECIALIST_RAG_TOOLS", "get_rag_tools", "specialist_rag_tools"]
+__all__ = [
+    "RAG_TOOL_NAMES",
+    "SPECIALIST_RAG_TOOLS",
+    "get_rag_tools",
+    "orchestrator_documentation",
+    "specialist_rag_tools",
+]
+
+RAG_TOOL_NAMES = (
+    "vitess_search",
+    "vitess_option_lookup",
+    "vitess_module_lookup",
+    "vitess_debug_retrieval",
+)
 
 #: What a module specialist gets. `vitess_debug_retrieval` is deliberately not
 #: here: it exists to inspect retrieval when retrieval looks wrong, which is the
@@ -34,10 +49,14 @@ SPECIALIST_RAG_TOOLS = ("vitess_search", "vitess_option_lookup", "vitess_module_
 
 
 def _unavailable_message(reason: str) -> str:
+    compact_reason = " ".join(reason.split())
+    if len(compact_reason) > 500:
+        compact_reason = compact_reason[:497] + "..."
     return (
-        f"RAG_UNAVAILABLE: VITESS documentation retrieval is unavailable. {reason} "
-        "Answer from the parameter schema you were given, and say that the "
-        "documentation could not be consulted."
+        "RAG_UNAVAILABLE: VITESS documentation retrieval is unavailable. "
+        f"{compact_reason} Do not invent what the manual says. Use only any "
+        "parameter schema already in your prompt and other server-owned facts, "
+        "and say that the documentation could not be consulted."
     )
 
 
@@ -69,6 +88,47 @@ def _unavailable_tools(reason: str) -> list[Any]:
     return [vitess_search, vitess_option_lookup, vitess_module_lookup, vitess_debug_retrieval]
 
 
+def _guard_query_tool(source: BaseTool) -> BaseTool:
+    """Keep one provider failure inside the documentation tool boundary.
+
+    Construction-time degradation is not enough: Chroma embeds every query,
+    so an expired key or unavailable endpoint first appears when the model
+    invokes an already-bound tool. The wrapper is per call -- one 429 must not
+    replace the process-cached real tools with stubs for every later request.
+    """
+
+    @tool(source.name, description=source.description)
+    def guarded(query: str) -> str:
+        try:
+            return str(source.invoke({"query": query}))
+        except Exception as exc:  # noqa: BLE001 -- provider/Chroma types vary
+            logger.warning(
+                "VITESS documentation query via %s failed: %s",
+                source.name,
+                exc,
+                exc_info=True,
+            )
+            # The type name matters: a bad key reaches this as the OpenAI
+            # SDK's `AttributeError: 'str' object has no attribute 'data'`
+            # from parsing an error body as an embedding response. Unqualified
+            # that reads as a bug in this application rather than a credential
+            # to check, and it is the failure a new deployment actually hits.
+            return _unavailable_message(f"{type(exc).__name__}: {exc}")
+
+    return guarded
+
+
+def _validated_rag_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    """Require the embedded package to provide the surface every prompt names."""
+    names = tuple(item.name for item in tools)
+    if names != RAG_TOOL_NAMES:
+        raise RagUnavailable(
+            "The documentation package exposed an unexpected tool set: "
+            + ", ".join(names or ("none",))
+        )
+    return tools
+
+
 @lru_cache(maxsize=1)
 def get_rag_tools() -> list[Any]:
     """The four documentation tools, or four that explain why they cannot answer.
@@ -85,7 +145,8 @@ def get_rag_tools() -> list[Any]:
         collection = get_rag_collection(recreate=False)
         if collection.count() == 0:
             return _unavailable_tools("The documentation index is empty.")
-        return list(create_vitess_tools(collection))
+        real_tools = _validated_rag_tools(list(create_vitess_tools(collection)))
+        return [_guard_query_tool(item) for item in real_tools]
     except RagUnavailable as exc:
         logger.warning("VITESS documentation retrieval is unavailable: %s", exc)
         return _unavailable_tools(str(exc))
@@ -103,3 +164,16 @@ def specialist_rag_tools() -> list[Any]:
 
     available = {item.name: item for item in get_rag_tools()}
     return [available[name] for name in SPECIALIST_RAG_TOOLS if name in available]
+
+
+def orchestrator_documentation(*, unattended: bool) -> tuple[list[BaseTool], str]:
+    """Return an inseparable documentation tool surface and its policy.
+
+    Both graph builders call this themselves. A caller can still build a graph
+    while retrieval is unavailable -- it gets the four explanatory stubs --
+    but cannot accidentally bind the tools without their return protocol or
+    append a prompt that names tools the graph does not have.
+    """
+
+    policy = SWEEP_RAG_POLICY if unattended else SUPERVISOR_RAG_POLICY
+    return list(get_rag_tools()), policy

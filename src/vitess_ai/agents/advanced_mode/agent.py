@@ -57,7 +57,7 @@ from vitess_ai.agents.delegation import with_module_delegation_boundary
 from vitess_ai.agents.specialists import compile_sweep_specialists
 from vitess_ai.agents.vitess_agent import VITESS_FILESYSTEM_TOOLS, project_root
 from vitess_ai.mcp.connection import discover_vitess_tools, probe_server_health
-from vitess_ai.retrieval import ORCHESTRATOR_RAG_POLICY, get_rag_tools
+from vitess_ai.retrieval import orchestrator_documentation
 from vitess_ai.run import VitessGateway
 from vitess_ai.state import VitessBridgeState
 from vitess_ai.tools import build_vitess_tools, vitess_supervisor_middleware
@@ -144,13 +144,16 @@ def build_advanced_mode_graph(
         task_description=SWEEP_TASK_DESCRIPTION,
         extra=tuple(vitess_supervisor_middleware(agent_name=ADVANCED_MODE_AGENT_ID)),
     )
+    documentation_tools, documentation_policy = orchestrator_documentation(
+        unattended=True
+    )
     return create_agent(
         model=supervisor_model,
-        tools=tools,
+        tools=[*tools, *documentation_tools],
         system_prompt=(
             load_markdown("vitess_ai.agents.advanced_mode", "AGENT.md")
             + "\n"
-            + ORCHESTRATOR_RAG_POLICY
+            + documentation_policy
         ),
         middleware=middleware,
         context_schema=RuntimeModelContext,
@@ -197,10 +200,6 @@ async def create_advanced_mode_agent(
             # time, through `run_batch_from_matrix`.
             *_advanced_facade_tools(facade),
             *build_batch_tools(gateway, project_root=root),
-            # All four, unlike the specialists: `vitess_debug_retrieval` is for
-            # noticing that retrieval itself is answering badly, and this is the
-            # agent that would notice.
-            *get_rag_tools(),
         ],
         store=store,
         checkpointer=get_checkpointer(),

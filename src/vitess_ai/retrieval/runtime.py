@@ -16,7 +16,13 @@ from typing import Any
 
 from vitess_ai.config import Config
 
-__all__ = ["RagUnavailable", "build_embedding_function", "get_rag_collection", "rag_enabled"]
+__all__ = [
+    "RagUnavailable",
+    "build_embedding_client",
+    "build_embedding_function",
+    "get_rag_collection",
+    "rag_enabled",
+]
 
 
 class RagUnavailable(RuntimeError):
@@ -27,14 +33,39 @@ def rag_enabled() -> bool:
     return bool(Config.RAG_ENABLED)
 
 
+def build_embedding_client() -> Any:
+    """Build the query client with a conversational, bounded failure time.
+
+    The embedded package uses the OpenAI SDK default timeout (ten minutes) and
+    no explicit retry limit. A documentation lookup happens inside an agent
+    turn, where that is indistinguishable from a hung agent.
+    """
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=Config.BLABLADOR_API_KEY,
+        base_url=Config.BLABLADOR_BASE_URL,
+        timeout=Config.RAG_QUERY_TIMEOUT_SECONDS,
+        max_retries=Config.RAG_MAX_RETRIES,
+    )
+
+
 def build_embedding_function() -> Any:
     from vitess_rag.embeddings import BlabladorEmbeddingFunction
 
-    return BlabladorEmbeddingFunction(
+    embedding_function = BlabladorEmbeddingFunction(
         model_name=Config.RAG_EMBEDDING_MODEL,
         api_key=Config.BLABLADOR_API_KEY,
         base_url=Config.BLABLADOR_BASE_URL,
     )
+    # `vitess-rag` is a retained submodule, so keep the deployment policy here
+    # rather than changing the reusable package. Close the client its
+    # constructor made before replacing it, otherwise every graph construction
+    # leaks an idle HTTP transport.
+    original_client = embedding_function.client
+    embedding_function.client = build_embedding_client()
+    original_client.close()
+    return embedding_function
 
 
 def get_rag_collection(recreate: bool = False) -> Any:

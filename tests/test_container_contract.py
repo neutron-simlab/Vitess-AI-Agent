@@ -41,3 +41,14 @@ def test_mcp_startup_does_not_depend_on_an_external_update_check() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "FASTMCP_CHECK_FOR_UPDATES=off" in compose
+
+
+def test_rag_query_limits_from_dotenv_reach_the_application_container() -> None:
+    """A documented Compose setting that is not forwarded is a false control."""
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert (
+        "VITESS_RAG_QUERY_TIMEOUT_SECONDS=${VITESS_RAG_QUERY_TIMEOUT_SECONDS:-20}"
+        in compose
+    )
+    assert "VITESS_RAG_MAX_RETRIES=${VITESS_RAG_MAX_RETRIES:-1}" in compose
