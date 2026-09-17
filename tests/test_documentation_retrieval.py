@@ -24,6 +24,7 @@ from vitess_ai.retrieval import (
 )
 from vitess_ai.retrieval.prompts import MODULE_RAG_CONTEXT_NOTE, ORCHESTRATOR_RAG_POLICY
 from vitess_ai.retrieval.tools import _unavailable_tools
+import vitess_ai.retrieval.bootstrap as bootstrap
 
 ALL_FOUR = (
     "vitess_search",
@@ -163,3 +164,27 @@ def test_the_unavailable_tools_carry_the_reason_they_were_built_with() -> None:
     tools = _unavailable_tools("The documentation index is empty.")
 
     assert "The documentation index is empty." in tools[0].invoke({"query": "x"})
+
+
+def test_the_explicit_indexing_command_fails_when_indexing_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Graceful serving without RAG must not turn a failed build command green."""
+
+    def fail() -> None:
+        raise RuntimeError("embedding endpoint refused the request")
+
+    monkeypatch.setattr(bootstrap, "bootstrap_rag_index", fail)
+
+    assert bootstrap.main() == 1
+    assert "embedding endpoint refused" in capsys.readouterr().out
+
+
+def test_indexing_restarts_the_app_so_cached_unavailable_tools_are_replaced() -> None:
+    launcher = (Path(__file__).resolve().parents[1] / "vitess").read_text(
+        encoding="utf-8"
+    )
+    body = launcher.split("cmd_index_docs()", maxsplit=1)[1].split("\n}", maxsplit=1)[0]
+
+    assert "python -m vitess_ai.retrieval.bootstrap" in body
+    assert 'restart vitess-app' in body

@@ -87,8 +87,8 @@ def render_chat_interface() -> None:
     # Deliberately no `accept_file`: a VITESS input file is a real path on the
     # shared volume that a compiled binary opens, and the composer's attachment
     # path decodes uploads as text into graph state. A trajectory file sent that
-    # way would be mangled into the transcript. Files go through the sidebar or
-    # through the agent's own question, both of which post to `/files`.
+    # way would be mangled into the transcript. Files go through the sidebar;
+    # the agent's question keeps this turn paused while the user uploads there.
     user_message = ChatMessage(type="human", content=prompt)
     st.session_state.messages.append(user_message)
     render_message(user_message)

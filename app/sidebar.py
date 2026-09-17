@@ -17,6 +17,7 @@ from juena_core.llms_providers import get_available_providers, get_default_model
 from juena_core.schema.llm_models import Provider
 
 from app.file_management import render_file_manifest
+from app.session_state import start_new_thread
 
 __all__ = ["AGENTS", "render_sidebar"]
 
@@ -36,6 +37,8 @@ def _render_agent_picker() -> None:
         options=list(AGENTS),
         format_func=lambda key: AGENTS[key][0],
         key="selected_agent",
+        on_change=start_new_thread,
+        args=(st.session_state,),
         help="Each mode keeps its own conversations.",
     )
     st.caption(AGENTS[chosen][1])

@@ -27,18 +27,18 @@ generation, and not one to reintroduce at the upload step.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from vitess_ai.modules.catalog import upload_modules
+from vitess_ai.modules.catalog import UploadSchema, module_spec, upload_modules
 
 __all__ = [
     "MAGIC_NUMBERS",
     "StagedFile",
     "UploadRefused",
     "UploadStore",
+    "upload_module_manifest",
     "upload_module_names",
 ]
 
@@ -66,6 +66,22 @@ def upload_module_names() -> tuple[str, ...]:
     than a condition to degrade through.
     """
     return tuple(spec.name for spec in upload_modules())
+
+
+def upload_module_manifest() -> tuple[dict[str, Any], ...]:
+    """The sidebar contract, projected directly from the catalog rows."""
+
+    return tuple(
+        {
+            "name": spec.name,
+            "label": spec.accepts_upload.label,
+            "help": spec.accepts_upload.help,
+            "extensions": list(spec.accepts_upload.extensions),
+            "max_files": spec.accepts_upload.max_files,
+        }
+        for spec in upload_modules()
+        if spec.accepts_upload is not None
+    )
 
 
 @dataclass(frozen=True)
@@ -101,12 +117,25 @@ class UploadStore:
         allowed_extensions: tuple[str, ...],
     ) -> None:
         self._root = Path(project_root)
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be at least 1")
         self._max_bytes = max_bytes
-        self._allowed = tuple(extension.lower() for extension in allowed_extensions)
+        self._allowed = tuple(
+            extension.lower() if extension.startswith(".") else f".{extension.lower()}"
+            for extension in allowed_extensions
+        )
+        if not self._allowed:
+            raise ValueError("allowed_extensions must not be empty")
 
     @property
     def root(self) -> Path:
         return self._root
+
+    @property
+    def max_bytes(self) -> int:
+        """The largest body the HTTP layer should read for this store."""
+
+        return self._max_bytes
 
     def directory(self, thread_id: UUID, module: str) -> Path:
         """Where this module's files for this thread live.
@@ -123,13 +152,18 @@ class UploadStore:
     ) -> StagedFile:
         """Write one file, or refuse and write nothing."""
 
-        self._require_upload_module(module)
+        schema = self._require_upload_module(module)
         name = self._safe_name(filename)
         suffix = Path(name).suffix.lower()
-        if suffix not in self._allowed:
+        module_extensions = {f".{extension.lower().lstrip('.')}" for extension in schema.extensions}
+        accepted = tuple(
+            extension for extension in self._allowed if extension in module_extensions
+        )
+        if suffix not in accepted:
             raise UploadRefused(
-                f"{suffix or 'a file with no extension'} is not an input format "
-                f"this deployment accepts; it takes {', '.join(self._allowed)}"
+                f"{module} does not accept {suffix or 'a file with no extension'}; "
+                f"this deployment allows {', '.join(accepted) or 'no file formats'} "
+                "in that slot"
             )
         if len(content) > self._max_bytes:
             raise UploadRefused(
@@ -147,14 +181,13 @@ class UploadStore:
 
         directory = self.directory(thread_id, module)
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / self._unused_name(directory, name)
-        # Belt and braces: `_safe_name` already reduced the name to its last
-        # component, so this cannot fail. It is here because the cost of being
-        # wrong is a write outside the thread's directory.
-        resolved = path.resolve()
-        if not resolved.is_relative_to(directory.resolve()):
-            raise UploadRefused(f"{filename!r} does not name a file in this slot")
-        resolved.write_bytes(content)
+        existing = [path for path in directory.iterdir() if self._visible_file(path)]
+        if len(existing) >= schema.max_files:
+            raise UploadRefused(
+                f"{module} accepts at most {schema.max_files} staged "
+                f"file{'s' if schema.max_files != 1 else ''}; remove one before uploading another"
+            )
+        resolved = self._write_unused(directory, name, content, original=filename)
         return StagedFile(
             thread_id=thread_id,
             module=module,
@@ -173,7 +206,7 @@ class UploadStore:
             if not directory.is_dir():
                 continue
             for path in sorted(directory.iterdir()):
-                if path.is_file():
+                if self._visible_file(path):
                     found.append(
                         StagedFile(
                             thread_id=thread_id,
@@ -194,12 +227,25 @@ class UploadStore:
         path.unlink()
         return True
 
-    def _require_upload_module(self, module: str) -> None:
-        if module not in upload_module_names():
+    def _require_upload_module(self, module: str) -> UploadSchema:
+        try:
+            upload = module_spec(module).accepts_upload
+        except KeyError:
+            upload = None
+        if upload is None:
             known = ", ".join(upload_module_names())
             raise UploadRefused(
                 f"{module!r} does not accept an uploaded file. The slots are: {known}"
             )
+        return upload
+
+    @staticmethod
+    def _visible_file(path: Path) -> bool:
+        """A staged input, excluding an interrupted atomic-upload temporary."""
+
+        return path.is_file() and not (
+            path.name.startswith(".upload-") and path.name.endswith(".tmp")
+        )
 
     @staticmethod
     def _safe_name(filename: str) -> str:
@@ -222,3 +268,36 @@ class UploadStore:
             candidate = f"{stem}_{index}{suffix}"
             index += 1
         return candidate
+
+    def _write_unused(
+        self, directory: Path, name: str, content: bytes, *, original: str
+    ) -> Path:
+        """Publish a complete file under a name no concurrent upload owns.
+
+        Choosing an unused name and then calling ``write_bytes`` is a race: two
+        requests can both choose ``beam.dat`` and the second silently replaces
+        the first. Write to a hidden file first, then create the visible name
+        with an exclusive hard link. A competing request either wins that one
+        name or retries with ``beam_1.dat``; neither can overwrite the other.
+        """
+
+        temporary = directory / f".upload-{uuid4().hex}.tmp"
+        try:
+            with temporary.open("xb") as handle:
+                handle.write(content)
+                handle.flush()
+
+            while True:
+                candidate = directory / self._unused_name(directory, name)
+                resolved = candidate.resolve()
+                if not resolved.is_relative_to(directory.resolve()):
+                    raise UploadRefused(
+                        f"{original!r} does not name a file in this slot"
+                    )
+                try:
+                    candidate.hardlink_to(temporary)
+                except FileExistsError:
+                    continue
+                return resolved
+        finally:
+            temporary.unlink(missing_ok=True)

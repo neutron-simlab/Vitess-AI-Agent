@@ -4,8 +4,9 @@
 
 Separate from serving on purpose. Indexing sends every documentation chunk to
 the embedding endpoint, which costs time and quota, and a server that did it at
-startup would do it on every restart. `main` therefore reports a failure and
-returns 0: a deployment with no index still answers, with tools that say so.
+startup would do it on every restart. The serving process degrades gracefully
+without an index; this explicit indexing command still exits non-zero when the
+requested work fails so automation cannot record a failed build as successful.
 """
 
 from __future__ import annotations
@@ -72,6 +73,7 @@ def main() -> int:
         logger.warning("VITESS documentation indexing failed: %s", exc, exc_info=True)
         print(f"Could not index the VITESS documentation: {exc}")
         print("The application still runs; its documentation tools will say so.")
+        return 1
     return 0
 
 

@@ -1,9 +1,10 @@
 """The one HTTP route staged VITESS inputs arrive through.
 
-Both ways in post here: the sidebar's per-module upload control, and the answer
-to an `ask_user` card when a specialist asks for a file in the chat. One route
-means one place where the module is named, the extension is checked and the
-bytes are written, so the two ways in cannot diverge in what they accept.
+The sidebar's per-module control posts here. When a specialist needs a file,
+`ask_user` pauses the conversation while the user uploads through that same
+sidebar and then answers the waiting card. Core's clarification reply is text;
+pretending the card itself carries binary bytes would create a second upload
+protocol with no structured module destination.
 
 Ownership is checked against the chat rather than against the directory. A
 thread id the caller does not own must 404 whether or not anything is staged on
@@ -22,9 +23,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from juena_core.server.chat.repository import ChatNotFoundError, get_owned_chat
 from juena_core.server.database.connection import get_db_session
 from juena_core.server.identity import Principal, PrincipalDependency
-from vitess_ai.server.uploads import UploadRefused, UploadStore, upload_module_names
+from vitess_ai.server.uploads import UploadRefused, UploadStore, upload_module_manifest
 
 __all__ = ["build_file_router"]
+
+
+async def _read_upload_bytes(upload: UploadFile, max_bytes: int) -> bytes:
+    """Read at most one byte beyond the limit, then release the spool file.
+
+    The store is still the authority that accepts or refuses the body. This
+    boundary only prevents a client from making the API allocate an unbounded
+    body before the store gets a chance to enforce its 100 MB policy.
+    """
+
+    try:
+        return await upload.read(max_bytes + 1)
+    finally:
+        await upload.close()
 
 
 def build_file_router(
@@ -45,9 +60,9 @@ def build_file_router(
 
     @router.get("/modules")
     async def list_modules() -> dict[str, Any]:
-        """The slots that exist. The sidebar renders exactly these."""
+        """The slots and limits that exist. The sidebar renders exactly these."""
 
-        return {"modules": list(upload_module_names())}
+        return {"modules": list(upload_module_manifest())}
 
     @router.post("/{thread_id}/{module}")
     async def stage_file(
@@ -60,7 +75,7 @@ def build_file_router(
         """Write one input file into a thread's slot on the shared volume."""
 
         await _owned(session, user, thread_id)
-        content = await upload.read()
+        content = await _read_upload_bytes(upload, store.max_bytes)
         try:
             staged = store.stage(
                 content,

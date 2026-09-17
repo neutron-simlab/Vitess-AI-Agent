@@ -26,12 +26,12 @@ __all__ = ["VitessClient"]
 class VitessClient(BaseAgentClient):
     """Everything core's client does, and the staged-file routes."""
 
-    def upload_modules(self) -> list[str]:
-        """The slots the server will accept a file for, in catalog order."""
+    def upload_modules(self) -> list[dict[str, Any]]:
+        """The server-owned slot manifest, in catalog order."""
 
-        response = self._client.get(f"{self.base_url}/files/modules", headers=self._headers())
+        response = self._client.get(f"{self.base_url}/files/modules", headers=self._headers)
         response.raise_for_status()
-        return list(response.json().get("modules", []))
+        return [dict(item) for item in response.json().get("modules", [])]
 
     def list_staged(self, thread_id: str, module: str | None = None) -> list[dict[str, Any]]:
         """What is staged for one conversation. This is what the manifest shows."""
@@ -39,7 +39,7 @@ class VitessClient(BaseAgentClient):
         response = self._client.get(
             f"{self.base_url}/files/{thread_id}",
             params={"module": module} if module else None,
-            headers=self._headers(),
+            headers=self._headers,
         )
         if response.status_code == 404:
             # An unsent conversation has no chat row yet, which is not an error
@@ -60,7 +60,7 @@ class VitessClient(BaseAgentClient):
         response = self._client.post(
             f"{self.base_url}/files/{thread_id}/{module}",
             files={"upload": (filename, content)},
-            headers=self._headers(),
+            headers=self._headers,
         )
         response.raise_for_status()
         return dict(response.json())
@@ -70,6 +70,6 @@ class VitessClient(BaseAgentClient):
 
         response = self._client.delete(
             f"{self.base_url}/files/{thread_id}/{module}/{filename}",
-            headers=self._headers(),
+            headers=self._headers,
         )
         response.raise_for_status()

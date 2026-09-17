@@ -29,7 +29,14 @@ def _flag(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"{name} must be one of 1/0, true/false, yes/no or on/off; got {value!r}"
+    )
 
 
 def _csv(name: str, default: str) -> tuple[str, ...]:
@@ -137,6 +144,13 @@ class Config:
                 "VITESS_API_PUBLISHED is set, but this deployment authenticates "
                 "nobody: every request is the same local principal. Publishing "
                 "the API would let anyone on the network act as that user."
+            )
+        if cls.BIND_HOST.strip() != "127.0.0.1":
+            raise RuntimeError(
+                "VITESS_BIND_HOST must be 127.0.0.1 because this deployment "
+                "authenticates nobody and its UI and health checks use container "
+                "IPv4 loopback; binding the API elsewhere would either expose it or "
+                "make the application disagree with its own client."
             )
 
 

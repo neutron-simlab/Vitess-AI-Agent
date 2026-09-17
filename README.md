@@ -37,7 +37,7 @@ server-authored `<verified_by_server>` block to the root answer.
 
 ```sh
 git submodule update --init --recursive   # rag/vitess-rag is a path dependency
-cp env.example .env                       # then set POSTGRES_PASSWORD
+cp env.example .env                       # then set POSTGRES_PASSWORD and a model key
 docker compose up -d
 docker compose exec vitess-app curl -fsS http://vitess-mcp:9005/health
 ```
@@ -45,6 +45,11 @@ docker compose exec vitess-app curl -fsS http://vitess-mcp:9005/health
 The first build compiles the same pinned VITESS source revision on every
 architecture (a few minutes). This keeps the binaries aligned with the monitor
 formats exercised by the test fixtures.
+
+Use `./vitess index-docs` once, after the stack is running, to embed the bundled
+manual. This spends embedding quota and therefore is never done implicitly at
+startup. If it has not been run, the documentation tools remain present and
+answer `RAG_UNAVAILABLE` instead of silently disappearing.
 
 `GET /health` on the MCP service answers 200 only when the five VITESS
 executables resolve and the project volume is writable, and Compose holds the

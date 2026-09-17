@@ -115,6 +115,11 @@ cmd_health() { ## Check the UI, the API and the MCP server
 cmd_index_docs() { ## Build the VITESS documentation index (embeds the manual)
     echo "This sends the VITESS documentation to the embedding endpoint."
     "${COMPOSE[@]}" exec -T vitess-app python -m vitess_ai.retrieval.bootstrap
+    # Agent graphs cache their bound tool objects. Restart after a successful
+    # build so a graph first opened while the index was absent cannot keep the
+    # old RAG_UNAVAILABLE tools for the lifetime of the container.
+    "${COMPOSE[@]}" restart vitess-app
+    echo "Documentation indexed; restarted vitess-app to load it."
 }
 
 # ---------------------------------------------------------------------------

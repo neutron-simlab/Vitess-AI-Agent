@@ -27,6 +27,7 @@ from juena_core.ui.client_setup import initialize_client  # noqa: E402
 
 from app.chat_interface import render_chat_interface  # noqa: E402
 from app.sidebar import AGENTS, render_sidebar  # noqa: E402
+from app.session_state import adopt_thread_agent  # noqa: E402
 from app.ui_components import logo_path  # noqa: E402
 from vitess_ai.clients import VitessClient  # noqa: E402
 from vitess_ai.config import Config  # noqa: E402
@@ -96,7 +97,16 @@ if "chat_initialized" not in st.session_state:
         st.session_state.thread_id
     )
     if loaded is not None:
-        _, st.session_state.messages = loaded
+        chat, st.session_state.messages = loaded
+        if adopt_thread_agent(
+            st.session_state,
+            chat.agent_id,
+            known_agents=set(AGENTS),
+        ):
+            # The client above was built for the previously selected agent.
+            # Re-enter from the top so no request can reach the wrong graph.
+            st.session_state.chat_initialized = True
+            st.rerun()
     st.session_state.chat_initialized = True
 
 if st.query_params.get("thread") != st.session_state.thread_id:
