@@ -2447,7 +2447,7 @@ during the copy. Afterward the destination SQLite file was owned by uid 10001, c
 complete v2 suite                               438 passed
 uv sync --frozen                                187 packages audited
 import direction                                ok
-image                                           sha256:2d7a5d4cb039…
+image                                           sha256:b55a9fe64059…
 live guided factory                             built; 17 tools, 4 of them RAG
 live advanced factory                           built; 16 tools, 4 of them RAG
 live prompt/tool agreement                      0 live tools unnamed, either agent
@@ -2480,13 +2480,16 @@ Degradation works — an invalid key produced `RAG_UNAVAILABLE` rather than an e
 but the reason handed to the model was `'str' object has no attribute 'data'`, the
 OpenAI SDK parsing an error body as an embedding response. The existing contract for
 these messages is "a message a user can act on, not a generic failure", and on the
-failure a new deployment actually hits it was neither. The guard now names the exception
-type.
+failure a new deployment actually hits it was neither. The raw exception and traceback
+stay in the server log; the tool result tells the user to verify `BLABLADOR_API_KEY`,
+`BLABLADOR_BASE_URL` and index readability, then retry.
 
 Two claims in the review's own report did not hold. `juena-core` was reported clean but
-carries a modified `.gitignore`; and both repositories gained an ignored `DOCS/`
-directory, which in this one was left empty despite the note that is meant to accompany
-each feature. The note is now written.
+carried an unrelated modified `.gitignore`; and both repositories gained an ignored
+`DOCS/` directory, which meant the note intended to accompany this feature would never
+reach another clone. Core's tracked ignore file is restored, local `*_claude.md` review
+notes use `.git/info/exclude`, and `DOCS/retrieval-in-both-supervisors.md` is versioned
+with the feature.
 
 #### The sidebar became a manifest
 
