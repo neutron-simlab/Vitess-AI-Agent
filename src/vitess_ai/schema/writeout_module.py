@@ -1,9 +1,9 @@
 from typing import Annotated, Optional, Literal
-from pydantic import BaseModel, Field
-from vitess_ai.schema.base import VtDataFormat, VtPrgFormat, VtSeparator
+from pydantic import BaseModel, Field, model_validator
+from vitess_ai.schema.base import VitessParameterModel, VtDataFormat, VtPrgFormat, VtSeparator
 
 
-class VtOutputFlags(BaseModel):
+class VtOutputFlags(VitessParameterModel):
     """Flags to determine which neutron parameters are written to output."""
     
     bF_cID: Annotated[bool, Field(
@@ -61,7 +61,7 @@ class VtOutputFlags(BaseModel):
     )]
 
 
-class VtFilterLimits(BaseModel):
+class VtFilterLimits(VitessParameterModel):
     """Filtering limits for neutron selection based on physical parameters."""
     
     # Wavelength filtering
@@ -140,8 +140,22 @@ class VtFilterLimits(BaseModel):
         json_schema_extra={"flag": "-G"}
     )]
 
+    @model_validator(mode="after")
+    def ranges_are_ordered(self) -> "VtFilterLimits":
+        for label, lower, upper in (
+            ("wavelength", self.filtLambdaMin, self.filtLambdaMax),
+            ("horizontal position", self.filtYMin, self.filtYMax),
+            ("vertical position", self.filtZMin, self.filtZMax),
+            ("horizontal divergence", self.filtYDivMin, self.filtYDivMax),
+            ("vertical divergence", self.filtZDivMin, self.filtZDivMax),
+            ("divergence", self.filtDivMin, self.filtDivMax),
+        ):
+            if lower >= upper:
+                raise ValueError(f"{label} minimum must be smaller than its maximum")
+        return self
 
-class WriteoutParameters(BaseModel):
+
+class WriteoutParameters(VitessParameterModel):
     """Main configuration model for neutron transport data processing."""
     
     # Output file configuration

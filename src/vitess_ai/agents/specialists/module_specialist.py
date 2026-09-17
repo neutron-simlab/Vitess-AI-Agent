@@ -23,6 +23,7 @@ channel in the first place.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
@@ -89,6 +90,7 @@ def staged_upload_path(
     field_name: str,
     project_root: Path,
     thread_id: str,
+    upload_module: str,
 ) -> str:
     """Require a parameter that names a file to name a staged upload.
 
@@ -99,7 +101,7 @@ def staged_upload_path(
     does not exist, and the module would fail with an error nobody can read
     back to a cause.
     """
-    uploads_root = (project_root / thread_id / "uploads").resolve()
+    uploads_root = (project_root / thread_id / "uploads" / upload_module).resolve()
     candidate = Path(value)
     if not candidate.is_absolute():
         raise ValueError(
@@ -112,8 +114,12 @@ def staged_upload_path(
     except ValueError as exc:
         raise ValueError(
             f"{field_name} must name a file beneath {uploads_root}; "
-            f"{value!r} is outside this conversation's uploads."
+            f"{value!r} is outside this conversation's uploads/{upload_module} slot."
         ) from exc
+    if not resolved.is_file():
+        raise ValueError(
+            f"{field_name} names {resolved}, but that staged upload does not exist."
+        )
     return str(resolved)
 
 
@@ -127,7 +133,14 @@ def plain_filename(value: str, *, field_name: str) -> str:
     the plot tools (03/CP3), which accept a plain name only, would have rejected
     what the prompt asked for.
     """
-    if not value.strip() or Path(value).name != value or value in {".", ".."}:
+    if (
+        not value.strip()
+        or len(value) > 240
+        or Path(value).name != value
+        or "\\" in value
+        or any(ord(character) < 32 for character in value)
+        or value in {".", ".."}
+    ):
         raise ValueError(
             f"{field_name} must be a plain file name such as 'monitor1D.dat', "
             f"not a path. Got {value!r}."
@@ -183,7 +196,7 @@ def build_validation_tool(
     module: str,
     model: type[BaseModel],
     project_root: Path,
-    upload_fields: tuple[str, ...] = (),
+    upload_fields: Mapping[str, str] | None = None,
     output_filename_fields: tuple[str, ...] = (),
 ) -> BaseTool:
     """Build the one tool that may write this module's configuration.
@@ -192,7 +205,7 @@ def build_validation_tool(
         module: The catalog row this specialist configures.
         model: That module's parameter model, which does the real validating.
         project_root: Where uploads live, so a file parameter can be checked.
-        upload_fields: Fields whose value must name a staged upload.
+        upload_fields: Mapping from each file field to its catalog upload slot.
         output_filename_fields: Fields whose value must be a plain file name.
     """
 
@@ -242,7 +255,7 @@ def build_validation_tool(
         try:
             thread_id = _thread_id(runtime)
             validated = model(**parameters)
-            for field_name in upload_fields:
+            for field_name, upload_module in (upload_fields or {}).items():
                 value = getattr(validated, field_name, None)
                 values = value if isinstance(value, list) else [value]
                 for item in values:
@@ -252,6 +265,7 @@ def build_validation_tool(
                             field_name=field_name,
                             project_root=project_root,
                             thread_id=thread_id,
+                            upload_module=upload_module,
                         )
             for field_name in output_filename_fields:
                 value = getattr(validated, field_name, None)
@@ -293,7 +307,13 @@ def build_validation_tool(
     return validate
 
 
-def build_staged_files_tool(*, module: str, gateway: Any, project_root: Path) -> BaseTool:
+def build_staged_files_tool(
+    *,
+    module: str,
+    gateway: Any,
+    project_root: Path,
+    upload_modules: tuple[str, ...] | None = None,
+) -> BaseTool:
     """Build a read-only view of what the user has staged for one module.
 
     The store is the authority, not the transcript: a file can be uploaded or
@@ -301,12 +321,15 @@ def build_staged_files_tool(*, module: str, gateway: Any, project_root: Path) ->
     will build a command against a file that is no longer there.
     """
 
+    visible_modules = upload_modules or (module,)
+
     @tool(
         "list_staged_files",
         args_schema=_StagedFilesArguments,
         description=(
-            f"List the files the user has uploaded for the {module} module in "
-            "this conversation, with the full path each parameter needs."
+            f"List the files the user has uploaded for the {module} configuration "
+            f"in this conversation ({', '.join(visible_modules)} slots), with "
+            "the full path each parameter needs."
         ),
     )
     async def list_staged_files(runtime: ToolRuntime[Any, Any]) -> ToolMessage:
@@ -324,10 +347,11 @@ def build_staged_files_tool(*, module: str, gateway: Any, project_root: Path) ->
         staged = [
             upload
             for upload in response.value.uploads
-            if upload.module == module
+            if upload.module in visible_modules
         ]
         files = [
             {
+                "module": upload.module,
                 "path": str(project_root / thread_id / item.path),
                 "size_bytes": item.size_bytes,
             }

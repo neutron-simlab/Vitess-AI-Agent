@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 from langchain.agents import create_agent
+from langchain.tools import ToolRuntime, tool
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
@@ -28,7 +29,7 @@ from juena_core.artifacts import (
 from vitess_ai.mcp.connection import TOOL_NAMES
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.run import InternalSimulationRequest, VitessGateway, safe_run_file
-from vitess_ai.state import VitessBridgeState
+from vitess_ai.state import SimulationOrderEvent, VitessBridgeState
 from vitess_ai.tools import (
     build_vitess_tools,
     plan_simulation,
@@ -65,6 +66,17 @@ def _configured_state(project_root: Path) -> dict[str, Any]:
     """
     return {
         "planned_execution_order": list(execution_order()),
+        "simulation_order_events": [
+            SimulationOrderEvent(
+                kind="plan", execution_order=execution_order()
+            ).model_dump(mode="json"),
+            *[
+                SimulationOrderEvent(kind="configured", module=module).model_dump(
+                    mode="json"
+                )
+                for module in execution_order()
+            ],
+        ],
         "module_results": configured_modules(project_root),
     }
 
@@ -418,6 +430,24 @@ class _ToolModel(FakeMessagesListChatModel):
         return self
 
 
+@tool("record_test_configuration_sequence")
+def _record_test_configuration_sequence(runtime: ToolRuntime) -> Command:
+    """Stand in for the five real delegation boundaries in this middleware test."""
+    return Command(
+        update={
+            "messages": [
+                ToolMessage("Configured", tool_call_id=runtime.tool_call_id)
+            ],
+            "simulation_order_events": [
+                SimulationOrderEvent(kind="configured", module=module).model_dump(
+                    mode="json"
+                )
+                for module in execution_order()
+            ],
+        }
+    )
+
+
 def test_real_agent_writes_verified_block_and_attaches_artifact(
     tmp_path: Path,
     artifact_store: ArtifactStore,
@@ -459,6 +489,17 @@ def test_real_agent_writes_verified_block_and_attaches_artifact(
                 content="",
                 tool_calls=[
                     {
+                        "name": "record_test_configuration_sequence",
+                        "args": {},
+                        "id": "configuration-call",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
                         "name": "run_simulation",
                         "args": {"run_name": "agent-run"},
                         "id": "model-call",
@@ -471,7 +512,7 @@ def test_real_agent_writes_verified_block_and_attaches_artifact(
     )
     agent = create_agent(
         model=model,
-        tools=[plan_simulation, *facade],
+        tools=[plan_simulation, _record_test_configuration_sequence, *facade],
         middleware=vitess_supervisor_middleware(),
         state_schema=_ApplicationState,
         context_schema=_Context,

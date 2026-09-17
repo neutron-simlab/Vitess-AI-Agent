@@ -300,6 +300,23 @@ def test_a_simulation_that_was_never_planned_is_refused(
     ), harness.tool_errors(result)
 
 
+def test_a_plan_called_after_delegation_does_not_retroactively_order_it(
+    tmp_path: Path, offline_model: Any, artifact_store: ArtifactStore
+) -> None:
+    script = [
+        *_delegations(list(execution_order()), start=0),
+        _call("plan_simulation", {}, 6),
+        _call("run_simulation", {"run_name": "late-plan"}, 7),
+        AIMessage(content="Done."),
+    ]
+    harness = _Harness(tmp_path, offline_model, script)
+
+    result = harness.run()
+
+    assert harness.executed == []
+    assert any("after the latest plan" in error for error in harness.tool_errors(result))
+
+
 def test_a_missing_module_stops_the_pipeline_and_names_it(
     tmp_path: Path, offline_model: Any, artifact_store: ArtifactStore
 ) -> None:
@@ -318,6 +335,26 @@ def test_a_missing_module_stops_the_pipeline_and_names_it(
     assert harness.executed == []
     errors = harness.tool_errors(result)
     assert any("guide" in error for error in errors), errors
+
+
+def test_delegating_all_modules_out_of_order_is_refused(
+    tmp_path: Path, offline_model: Any, artifact_store: ArtifactStore
+) -> None:
+    """Completeness is a set check; this pins the separate sequence check."""
+    reversed_order = list(reversed(execution_order()))
+    script = [
+        _call("plan_simulation", {}, 0),
+        *_delegations(reversed_order),
+        _call("run_simulation", {"run_name": "reversed"}, 9),
+        AIMessage(content="Done."),
+    ]
+    harness = _Harness(tmp_path, offline_model, script)
+
+    result = harness.run()
+
+    assert harness.delegated == reversed_order
+    assert harness.executed == []
+    assert any("configured in order" in error for error in harness.tool_errors(result))
 
 
 def test_delegating_the_same_module_twice_replaces_only_its_own_entry(
@@ -373,6 +410,30 @@ def test_a_configuration_for_an_unplanned_module_is_refused(
     assert harness.executed == []
     errors = harness.tool_errors(result)
     assert any("belong to no planned module" in error for error in errors), errors
+
+
+def test_a_configuration_from_an_older_schema_is_refused(
+    tmp_path: Path, offline_model: Any, artifact_store: ArtifactStore
+) -> None:
+    configured = configured_modules(tmp_path)
+    stale_guide = {**configured["guide"], "schema_version": "old-schema"}
+    script = [
+        _call("plan_simulation", {}, 0),
+        *_delegations(list(execution_order())),
+        _call("run_simulation", {"run_name": "stale"}, 9),
+        AIMessage(content="Done."),
+    ]
+    harness = _Harness(
+        tmp_path,
+        offline_model,
+        script,
+        extra_entries={"guide": stale_guide},
+    )
+
+    result = harness.run()
+
+    assert harness.executed == []
+    assert any("schema has changed" in error for error in harness.tool_errors(result))
 
 
 def test_importing_the_agent_module_registers_exactly_the_vitess_agent() -> None:

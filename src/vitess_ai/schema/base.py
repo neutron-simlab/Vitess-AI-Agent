@@ -1,6 +1,17 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Literal
 from enum import IntEnum
+
+
+class VitessParameterModel(BaseModel):
+    """Strict base for every object that becomes a VITESS command line.
+
+    Pydantic ignores unknown fields by default.  That is unsafe here: a model
+    typo would be discarded and the schema default would then be recorded as
+    though the requested value had passed validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 class VtPrgFormat(IntEnum):
     VT_VITESS_FMT = 1

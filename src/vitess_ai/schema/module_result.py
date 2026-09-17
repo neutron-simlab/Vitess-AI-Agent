@@ -20,27 +20,30 @@ own parameters.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from vitess_ai.schema.base import get_field_flag
-
 __all__ = ["ModuleConfigurationResult", "module_schema_version"]
 
 
 def module_schema_version(model: type[BaseModel]) -> str:
-    """A short fingerprint of one parameter model's fields and CLI flags.
+    """A short fingerprint of one parameter model's complete JSON schema.
 
     Recorded with each validated configuration so that a result checkpointed
     days ago can be recognised as belonging to a schema that has since changed.
     It is computed rather than hand-maintained because a hand-maintained
-    version number is one nobody remembers to raise.
+    version number is one nobody remembers to raise.  Hashing only names and
+    flags is insufficient: changing a type, constraint, nested field or default
+    changes what "validated" means even when the command-line flag stays put.
     """
 
-    material = "\n".join(
-        f"{name}={get_field_flag(model, name)}" for name in model.model_fields
+    material = json.dumps(
+        model.model_json_schema(),
+        sort_keys=True,
+        separators=(",", ":"),
     )
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
     return digest[:12]

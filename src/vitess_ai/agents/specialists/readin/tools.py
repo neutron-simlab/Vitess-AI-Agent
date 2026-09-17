@@ -23,7 +23,11 @@ SPECIALIST_NAME = "readin-specialist"
 #: bare name ``instrument.inf``, which VITESS would resolve against the run
 #: directory, where no such file exists. Requiring a staged path turns a
 #: confusing runtime failure into a validation error the specialist can act on.
-UPLOAD_FIELDS = ("sInputFileName", "sInstrInfIn")
+UPLOAD_FIELDS = {
+    "sInputFileName": "readin",
+    "sInstrInfIn": "instrument",
+    "sTraceFileName": "readin",
+}
 
 
 def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
@@ -35,7 +39,10 @@ def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:
             upload_fields=UPLOAD_FIELDS,
         ),
         build_staged_files_tool(
-            module=MODULE, gateway=gateway, project_root=project_root
+            module=MODULE,
+            gateway=gateway,
+            project_root=project_root,
+            upload_modules=("readin", "instrument"),
         ),
         build_ask_user_tool(SPECIALIST_NAME),
     ]

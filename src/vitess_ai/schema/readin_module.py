@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Annotated, Literal
-from vitess_ai.schema.base import VtPrgFormat, VtDataFormat, VtTrace
+from vitess_ai.schema.base import VitessParameterModel, VtPrgFormat, VtDataFormat, VtTrace
 
 # Constants for array size
 NF_MAX = 3  # Assumed based on usage pattern
@@ -8,7 +8,7 @@ NF_MAX = 3  # Assumed based on usage pattern
 # Constants
 MISSING = -1
 
-class ReadInParameters(BaseModel):
+class ReadInParameters(VitessParameterModel):
     """Pydantic model for the Vitess Read-in module parameters"""
     
     # Program format
@@ -101,6 +101,15 @@ class ReadInParameters(BaseModel):
         description="-t [-] Tracing mode: NO_TRACING (no tracing), WRITE_TRC_FILES (write trace files for traj. of interest), ONLY_TRC_TRAJ (simulation only with traj. of interest)",
         json_schema_extra={"flag": "-t"}
     )]
+
+    @model_validator(mode="after")
+    def input_files_have_weights(self) -> "ReadInParameters":
+        """Every input trajectory needs the weight in the matching slot."""
+        if not self.sInputFileName:
+            raise ValueError("at least one input file is required")
+        if len(self.sInputFileName) != len(self.Weight):
+            raise ValueError("read_in requires one weight per input file")
+        return self
 
 
 class InitialResponseReadIn(BaseModel): 

@@ -20,7 +20,7 @@ SPECIALIST_NAME = "guide-specialist"
 #: Optional: an empty `ShapeFileName` means "no guide file, use the dimensions",
 #: and the converter omits `-S` entirely. Only a value that is set has to name a
 #: staged upload.
-UPLOAD_FIELDS = ("ShapeFileName",)
+UPLOAD_FIELDS = {"ShapeFileName": "guide"}
 
 
 def build_tools(*, project_root: Path, gateway: Any) -> list[BaseTool]:

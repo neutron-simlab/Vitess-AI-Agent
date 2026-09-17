@@ -27,6 +27,7 @@ from typing import Any
 from langchain_core.runnables import Runnable
 
 from juena_core.agents.delegation import SpecialistDelegate
+from vitess_ai.state import SimulationOrderEvent
 
 __all__ = ["ModuleSpecialistDelegate", "with_module_delegation_boundary"]
 
@@ -49,6 +50,11 @@ class ModuleSpecialistDelegate(SpecialistDelegate):
         )
         if own is not None:
             crossing["module_results"] = {self._module: own}
+            crossing["simulation_order_events"] = [
+                SimulationOrderEvent(
+                    kind="configured", module=self._module
+                ).model_dump(mode="json")
+            ]
         return crossing
 
 

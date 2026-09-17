@@ -47,10 +47,14 @@ def _scalar(value: object) -> str:
     if isinstance(value, bool):
         # Checked before int, because bool is a subclass of int in Python and
         # `str(True)` would otherwise put the word "True" on the command line.
-        return "1" if value else "0"
-    if isinstance(value, Enum):
-        return str(value.value)
-    return str(value)
+        rendered = "1" if value else "0"
+    elif isinstance(value, Enum):
+        rendered = str(value.value)
+    else:
+        rendered = str(value)
+    if "\x00" in rendered:
+        raise ParameterConversionError("VITESS arguments cannot contain a NUL byte")
+    return rendered
 
 
 def _require_flag(model: type[BaseModel] | BaseModel, field_name: str) -> str:

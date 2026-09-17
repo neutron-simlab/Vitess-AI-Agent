@@ -43,7 +43,8 @@ make them upload a file to get a default guide.
 
 ## Values that stay at their defaults
 
-`eGuideShapeY`, `eGuideShapeZ` (both constant cross-section), `nPieces` (1),
+`eGuideShapeY`, `eGuideShapeZ` (both linear, with equal entrance and exit
+dimensions so the default cross-section stays constant), `nPieces` (1),
 `Radius`, `D_Foc2Y` and `D_Foc2Z` (all 0.0) describe curved and focusing guides
 this configuration does not build. Leave them alone unless the user explicitly
 asks for a curved or focusing guide, and if they do, say plainly that this

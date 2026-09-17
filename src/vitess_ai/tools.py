@@ -30,14 +30,17 @@ from vitess_ai.cli.arguments import ParameterConversionError, parameters_to_argu
 from vitess_ai.mcp.payloads import PlotResult, RunFile, SimulationResult
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import parameter_model
-from vitess_ai.schema.module_result import ModuleConfigurationResult
+from vitess_ai.schema.module_result import (
+    ModuleConfigurationResult,
+    module_schema_version,
+)
 from vitess_ai.run import (
     InternalSimulationRequest,
     SimulationOutcome,
     VitessGateway,
     safe_run_file,
 )
-from vitess_ai.state import SimulationRunReference
+from vitess_ai.state import SimulationOrderEvent, SimulationRunReference
 
 __all__ = [
     "build_vitess_tools",
@@ -191,10 +194,57 @@ def _configured_arguments(
                 f"{result.module!r}"
             )
         model = parameter_model(module)
+        current_version = module_schema_version(model)
+        if result.schema_version != current_version:
+            raise ValueError(
+                f"The {module!r} parameter schema has changed since this "
+                "configuration was validated. Delegate to its specialist again."
+            )
         arguments[module] = {
             "cli_parameters": parameters_to_arguments(model(**result.parameters))
         }
     return arguments
+
+
+def _require_configuration_order(
+    runtime: ToolRuntime[Any, Any], planned: tuple[str, ...]
+) -> None:
+    """Require first-time configurations after the latest plan to match it.
+
+    `module_results` is keyed by module and therefore proves completeness only.
+    These append-only events retain the sequence. Reconfiguring a module after
+    the complete first pass is intentionally allowed; its first occurrence is
+    the one that establishes the pipeline.
+    """
+    raw_events = _state_mapping(runtime).get("simulation_order_events")
+    if not isinstance(raw_events, (list, tuple)):
+        raise ValueError(
+            "No server-owned module configuration sequence is recorded. Call "
+            "plan_simulation and delegate to every specialist in its order."
+        )
+
+    events = [SimulationOrderEvent.model_validate(value) for value in raw_events]
+    plan_indexes = [index for index, event in enumerate(events) if event.kind == "plan"]
+    if not plan_indexes:
+        raise ValueError("The configuration sequence contains no plan event")
+    latest_plan = plan_indexes[-1]
+    plan_event = events[latest_plan]
+    if tuple(plan_event.execution_order or ()) != planned:
+        raise ValueError("The recorded plan and planned execution order disagree")
+
+    configured: list[str] = []
+    for event in events[latest_plan + 1 :]:
+        if event.kind == "configured" and event.module not in configured:
+            assert event.module is not None
+            configured.append(event.module)
+    if tuple(configured) != planned:
+        expected = " -> ".join(planned)
+        observed = " -> ".join(configured) or "none"
+        raise ValueError(
+            "Modules were not configured in order after the latest plan. "
+            f"Expected {expected}; observed {observed}. Call plan_simulation "
+            "again and delegate in the returned order."
+        )
 
 
 def _failed_run_command(
@@ -346,9 +396,13 @@ def plan_simulation(runtime: ToolRuntime[Any, Any]) -> Command:
     refusal rather than a pipeline in whatever order it happened to delegate.
     """
     planned = list(execution_order())
+    plan_event = SimulationOrderEvent(
+        kind="plan", execution_order=tuple(planned)
+    ).model_dump(mode="json")
     return Command(
         update={
             "planned_execution_order": planned,
+            "simulation_order_events": [plan_event],
             "messages": [
                 _tool_message(
                     runtime,
@@ -418,6 +472,7 @@ def build_vitess_tools(
             )
         try:
             module_results = _configured_arguments(runtime, planned)
+            _require_configuration_order(runtime, planned)
         except (ValidationError, ValueError, ParameterConversionError, KeyError) as exc:
             return _failed_run_command(
                 runtime,

@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Mapping
-from typing import Annotated, Any, NotRequired
+from typing import Annotated, Any, Literal, NotRequired
 from uuid import UUID
 
 from langchain.agents.middleware.types import PrivateStateAttr
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from juena_core.agents.specialist_outcome import SpecialistOutcomeState
 
 __all__ = [
     "SimulationRunReference",
+    "SimulationOrderEvent",
     "VitessBridgeState",
     "merge_module_results",
 ]
@@ -26,6 +27,25 @@ class SimulationRunReference(BaseModel):
 
     run_name: str = Field(min_length=1, max_length=120)
     simulation_run_id: UUID
+
+
+class SimulationOrderEvent(BaseModel):
+    """One server-owned observation in a simulation's configuration sequence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["plan", "configured"]
+    execution_order: tuple[str, ...] | None = None
+    module: str | None = None
+
+    @model_validator(mode="after")
+    def fields_match_kind(self) -> "SimulationOrderEvent":
+        if self.kind == "plan":
+            if not self.execution_order or self.module is not None:
+                raise ValueError("a plan event requires only a non-empty execution_order")
+        elif self.module is None or self.execution_order is not None:
+            raise ValueError("a configured event requires only a module")
+        return self
 
 
 def merge_module_results(
@@ -57,6 +77,14 @@ class VitessBridgeState(SpecialistOutcomeState):
     #: Both ends are server-owned, which is the only reason comparing them
     #: proves anything. Last write wins: re-planning replaces the plan.
     planned_execution_order: NotRequired[Annotated[list[str], PrivateStateAttr]]
+    #: Append-only server observations used to prove the configuration sequence,
+    #: not merely the set of results. This cannot be private: like
+    #: `module_results`, it must cross from the application delegation boundary
+    #: back into the supervisor. The boundary constructs the event itself and
+    #: never accepts one from the specialist.
+    simulation_order_events: NotRequired[
+        Annotated[list[SimulationOrderEvent], operator.add]
+    ]
     #: One `ModuleConfigurationResult`, dumped to JSON, per configured module.
     #:
     #: **Not `PrivateStateAttr`, and that is load-bearing.** This channel is the

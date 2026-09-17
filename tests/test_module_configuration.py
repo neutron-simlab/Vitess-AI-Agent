@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated, Any
 
 import pytest
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from vitess_ai.agents.delegation import (
     ModuleSpecialistDelegate,
@@ -27,7 +29,13 @@ from vitess_ai.cli.arguments import (
 )
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import PARAMETER_MODELS, parameter_model
-from vitess_ai.schema import GuideParameters, WriteoutParameters
+from vitess_ai.schema import (
+    GuideParameters,
+    Monitor1DParameters,
+    Monitor2DParameters,
+    ReadInParameters,
+    WriteoutParameters,
+)
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
@@ -123,6 +131,14 @@ def test_more_list_values_than_flags_is_refused() -> None:
         parameters_to_arguments(_TwoSlots(files=["a", "b", "c"]))
 
 
+def test_an_argument_with_a_nul_byte_is_refused_before_process_execution() -> None:
+    class _StringArgument(BaseModel):
+        value: Annotated[str, Field(json_schema_extra={"flag": "-x"})]
+
+    with pytest.raises(ParameterConversionError, match="NUL byte"):
+        parameters_to_arguments(_StringArgument(value="bad\x00value"))
+
+
 def test_an_empty_shape_filename_omits_its_flag_entirely() -> None:
     """Empty means "no guide file", and a bare `-S` would eat the next argument."""
     arguments = parameters_to_arguments(GuideParameters())
@@ -187,6 +203,65 @@ def test_a_json_string_is_accepted_because_models_send_one(tmp_path: Path) -> No
     assert command.update["module_results"]["monitor1d"]["parameters"]["nBinsX"] == 50
 
 
+@pytest.mark.parametrize("model", PARAMETER_MODELS.values(), ids=lambda model: model.__name__)
+def test_parameter_models_reject_unknown_fields(model: type[BaseModel]) -> None:
+    """A typo must not be recorded as the default value it failed to replace."""
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        model(this_field_does_not_exist=1)
+
+
+def test_nested_parameter_models_reject_unknown_fields() -> None:
+    """Strictness must continue below the top-level writeout object."""
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        WriteoutParameters(output_flags={"bF_cID": False, "bF_typo": False})
+
+
+def test_readin_requires_one_weight_per_input_file(tmp_path: Path) -> None:
+    staged = stage_uploads(tmp_path)
+    second = tmp_path / THREAD_ID / "uploads/readin/second.dat"
+    second.write_text("second beam\n", encoding="utf-8")
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=None), "validate_readin_parameters"
+    )
+
+    command = _validate(
+        tool,
+        {
+            "sInputFileName": [staged["readin"], str(second)],
+            "Weight": [1.0],
+            "sInstrInfIn": None,
+        },
+    )
+
+    assert "module_results" not in command.update
+    assert "one weight per input file" in command.update["messages"][0].text
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: ReadInParameters(sInputFileName=[], Weight=[]), "input file"),
+        (lambda: GuideParameters(GuideEntrWidth=0), "greater than 0"),
+        (lambda: GuideParameters(MValGenL=6.1), "less than or equal to 6"),
+        (lambda: Monitor1DParameters(nBinsX=0), "greater than 0"),
+        (lambda: Monitor1DParameters(xMin=2, xMax=1), "xMin"),
+        (lambda: Monitor2DParameters(nBinsY=-1), "greater than 0"),
+        (lambda: Monitor2DParameters(yMin=2, yMax=1), "yMin"),
+        (
+            lambda: WriteoutParameters(
+                filter_limits={"filtLambdaMin": 5, "filtLambdaMax": 1}
+            ),
+            "wavelength minimum",
+        ),
+    ],
+)
+def test_physical_constraints_promised_by_the_schema_are_enforced(
+    build: Any, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        build()
+
+
 def test_the_bare_instrument_file_default_is_refused(tmp_path: Path) -> None:
     """`ReadInParameters.sInstrInfIn` defaults to the bare name `instrument.inf`.
 
@@ -234,9 +309,54 @@ def test_another_conversations_upload_is_refused(tmp_path: Path) -> None:
     assert "outside this conversation's uploads" in command.update["messages"][0].text
 
 
+def test_a_file_from_the_wrong_upload_slot_is_refused(tmp_path: Path) -> None:
+    """A same-thread instrument file is not a neutron trajectory file."""
+    staged = stage_uploads(tmp_path)
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=None), "validate_readin_parameters"
+    )
+
+    command = _validate(
+        tool,
+        {
+            "sInputFileName": [staged["instrument"]],
+            "Weight": [1.0],
+            "sInstrInfIn": None,
+        },
+    )
+
+    assert "module_results" not in command.update
+    assert "uploads/readin" in command.update["messages"][0].text
+
+
+def test_a_nonexistent_file_under_the_right_slot_is_refused(tmp_path: Path) -> None:
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=None), "validate_readin_parameters"
+    )
+    missing = tmp_path / THREAD_ID / "uploads/readin/missing.dat"
+
+    command = _validate(
+        tool,
+        {
+            "sInputFileName": [str(missing)],
+            "Weight": [1.0],
+            "sInstrInfIn": None,
+        },
+    )
+
+    assert "module_results" not in command.update
+    assert "does not exist" in command.update["messages"][0].text
+
+
 @pytest.mark.parametrize(
     "filename",
-    ["outputs/monitor1D.dat", "/data/projects/x/monitor1D.dat", "../escape.dat"],
+    [
+        "outputs/monitor1D.dat",
+        "/data/projects/x/monitor1D.dat",
+        "../escape.dat",
+        "outputs\\monitor1D.dat",
+        "bad\x00name.dat",
+    ],
 )
 def test_a_monitor_filename_that_is_a_path_is_refused(
     tmp_path: Path, filename: str
@@ -318,6 +438,28 @@ def test_a_specialist_cannot_return_another_modules_configuration() -> None:
     crossing = delegate.invoke({"messages": [], "files": {}})
 
     assert crossing["module_results"] == {"guide": {"module": "guide"}}
+
+
+def test_a_specialist_cannot_invent_the_recorded_configuration_order() -> None:
+    class _InventsOrder(_Returns):
+        def invoke(self, state: Any, config: Any = None, **kwargs: Any) -> dict[str, Any]:
+            result = super().invoke(state, config, **kwargs)
+            result["simulation_order_events"] = [
+                {"kind": "configured", "module": "monitor2d"}
+            ]
+            return result
+
+    delegate = ModuleSpecialistDelegate(
+        _InventsOrder({"guide": {"module": "guide"}}),
+        name="guide-specialist",
+        module="guide",
+    )
+
+    crossing = delegate.invoke({"messages": [], "files": {}})
+
+    assert crossing["simulation_order_events"] == [
+        {"kind": "configured", "execution_order": None, "module": "guide"}
+    ]
 
 
 def test_a_specialist_that_validated_nothing_writes_nothing() -> None:
@@ -407,3 +549,46 @@ def test_only_the_modules_that_read_a_file_can_list_staged_files(
     }
 
     assert with_uploads == {"readin", "guide"}
+
+
+def test_readin_lists_both_trajectory_and_instrument_upload_slots(tmp_path: Path) -> None:
+    """Its instrument field is fed by the catalog's separate instrument row."""
+
+    class _Gateway:
+        async def inspect_thread(self, _thread_id: str) -> Any:
+            return SimpleNamespace(
+                failure=None,
+                value=SimpleNamespace(
+                    uploads=[
+                        SimpleNamespace(
+                            module="readin",
+                            files=[SimpleNamespace(path="uploads/readin/beam.dat", size_bytes=4)],
+                        ),
+                        SimpleNamespace(
+                            module="instrument",
+                            files=[
+                                SimpleNamespace(
+                                    path="uploads/instrument/instrument.inf",
+                                    size_bytes=8,
+                                )
+                            ],
+                        ),
+                        SimpleNamespace(
+                            module="guide",
+                            files=[SimpleNamespace(path="uploads/guide/shape.dat", size_bytes=2)],
+                        ),
+                    ]
+                ),
+            )
+
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=_Gateway()), "list_staged_files"
+    )
+
+    message = asyncio.run(tool.coroutine(runtime=runtime()))
+    listed = json.loads(message.text)
+
+    assert [Path(item["path"]).parent.name for item in listed] == [
+        "readin",
+        "instrument",
+    ]
