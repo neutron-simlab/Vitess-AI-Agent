@@ -10,11 +10,20 @@ from types import SimpleNamespace
 from typing import Annotated, Any
 
 import pytest
-from juena_core.schema.agents import SpecialistReport
-from langchain_core.messages import AIMessage
+from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field, ValidationError
 
+from juena_core.agents.ask_user import build_ask_user_tool
+from juena_core.agents.specialist_outcome import (
+    SpecialistOutcomeMiddleware,
+    outcome_verified,
+)
+from juena_core.artifacts import ArtifactStore, set_artifact_store_for_tests
+from juena_core.schema.agents import SpecialistReport
 from vitess_ai.agents.delegation import (
     ModuleSpecialistDelegate,
     with_module_delegation_boundary,
@@ -23,6 +32,8 @@ from vitess_ai.agents.specialists import compile_module_specialists
 from vitess_ai.agents.specialists.guide.tools import build_tools as guide_tools
 from vitess_ai.agents.specialists.module_specialist import (
     FILESYSTEM_TOOLS,
+    GuidedAskUserMiddleware,
+    ModuleReportMiddleware,
     build_module_prompt,
     omitted_file_value,
 )
@@ -48,9 +59,16 @@ from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
 )
-from vitess_ai.state import merge_module_results
+from vitess_ai.state import VitessBridgeState, merge_module_results
 
-from doubles import THREAD_ID, named_tool, runtime, stage_uploads
+from doubles import (
+    THREAD_ID,
+    configured_modules,
+    named_tool,
+    runtime,
+    stage_uploads,
+    swept_modules,
+)
 
 OTHER_THREAD_ID = "44444444-4444-4444-8444-444444444444"
 
@@ -687,6 +705,274 @@ def test_reconfiguring_one_module_disturbs_no_other() -> None:
 # ---------------------------------------------------------------------------
 # The five specialists
 # ---------------------------------------------------------------------------
+
+
+def test_guided_specialist_plain_question_is_routed_through_ask_user() -> None:
+    """Plain prose is an invalid exit until this module has been validated."""
+    middleware = GuidedAskUserMiddleware(module="readin")
+    question = AIMessage(
+        content="Here is the complete configuration. Is this correct?",
+        id="confirmation",
+    )
+
+    update = middleware.after_model({"messages": [question]}, runtime=None)
+
+    assert update is not None
+    assert update["jump_to"] == "tools"
+    redirected = update["messages"][0]
+    assert redirected.id == question.id
+    assert redirected.tool_calls == [
+        {
+            "name": "ask_user",
+            "args": {"question": question.text, "options": []},
+            "id": redirected.tool_calls[0]["id"],
+            "type": "tool_call",
+        }
+    ]
+
+
+def test_guided_specialist_plain_question_reaches_a_graph_interrupt() -> None:
+    """The guard must produce a user-visible pause, not merely reshape state."""
+
+    class _IgnoresRequiredToolChoice(FakeMessagesListChatModel):
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+            return self
+
+    question = "Here is the complete configuration. Is this correct?"
+    agent = create_agent(
+        model=_IgnoresRequiredToolChoice(responses=[AIMessage(content=question)]),
+        tools=[build_ask_user_tool("readin-specialist")],
+        middleware=[GuidedAskUserMiddleware(module="readin")],
+    )
+
+    result = asyncio.run(
+        agent.ainvoke({"messages": [HumanMessage(content="Configure read-in.")]})
+    )
+
+    interrupts = result["__interrupt__"]
+    assert len(interrupts) == 1
+    assert interrupts[0].value == {
+        "kind": "clarification",
+        "asked_by": "readin-specialist",
+        "question": question,
+        "options": [],
+    }
+
+
+def test_guided_specialist_guard_leaves_real_tool_calls_unchanged() -> None:
+    middleware = GuidedAskUserMiddleware(module="readin")
+    tool_call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "list_staged_files",
+                "args": {},
+                "id": "list-files",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+    assert middleware.after_model({"messages": [tool_call]}, runtime=None) is None
+
+
+def test_guided_specialist_guard_stops_after_this_module_is_validated() -> None:
+    middleware = GuidedAskUserMiddleware(module="readin")
+    final_report = AIMessage(content="Configuration recorded.")
+
+    update = middleware.after_model(
+        {
+            "messages": [final_report],
+            "module_results": {"readin": {"module": "readin"}},
+        },
+        runtime=None,
+    )
+
+    assert update is None
+
+
+# ---------------------------------------------------------------------------
+# The report the server writes when the model does not
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def artifact_store(tmp_path: Path):
+    """`SpecialistOutcomeMiddleware` reads the store to list what was delivered."""
+    store = ArtifactStore(tmp_path / "artifacts", tmp_path / "audit.jsonl")
+    set_artifact_store_for_tests(store)
+    yield store
+    set_artifact_store_for_tests(None)
+
+
+def _package(state: dict[str, Any]) -> Any:
+    """The hand-off `SpecialistOutcomeMiddleware` builds from this state."""
+    update = SpecialistOutcomeMiddleware(
+        specialist_name="readin-specialist"
+    ).after_agent(state, runtime())
+    return update["messages"][0]
+
+
+def _readin_report_middleware() -> ModuleReportMiddleware:
+    return ModuleReportMiddleware(
+        module="readin", model=parameter_model("readin"), unattended=False
+    )
+
+
+def test_a_prose_exit_after_a_successful_validation_is_still_verified(
+    artifact_store: Any, tmp_path: Path
+) -> None:
+    """The reported incident: validation succeeded, the model signed off in prose.
+
+    `create_agent` ends the loop at the first message without tool calls,
+    before structured output is considered, so `structured_response` was never
+    set and the supervisor was told to tell the user the attempt had failed --
+    while `module_results[readin]` held the configuration all along.
+    """
+    state = {
+        "messages": [AIMessage("✅ Configuration validated and recorded.")],
+        "structured_response": None,
+        "module_results": configured_modules(tmp_path, only=("readin",)),
+    }
+
+    filled = _readin_report_middleware().after_agent(state, runtime())
+    message = _package({**state, **filled})
+
+    assert "STATUS: VERIFIED" in message.text
+    assert outcome_verified(message)
+    # The staged file the real validation tool recorded, and the one canonical
+    # rendering of what it runs as.
+    assert "beam.dat" in message.text
+    assert "VITESS will run it as: " in message.text
+    assert "The server wrote this report" in message.text
+
+
+def test_the_specialists_own_report_is_left_alone(tmp_path: Path) -> None:
+    """A report the model did return is its own work; this only fills a gap."""
+    state = {
+        "messages": [AIMessage("")],
+        "structured_response": SpecialistReport(
+            status="completed", finding="read_in will read beam.dat in VITESS format."
+        ),
+        "module_results": configured_modules(tmp_path, only=("readin",)),
+    }
+
+    assert _readin_report_middleware().after_agent(state, runtime()) is None
+
+
+def test_a_specialist_that_recorded_nothing_stays_unverified(
+    artifact_store: Any, tmp_path: Path
+) -> None:
+    """The fail-closed guarantee. A failed validation must stay a failed attempt."""
+    staged = stage_uploads(tmp_path)
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=None),
+        "validate_readin_parameters",
+    )
+
+    # The real tool, refusing: two input files and one weight.
+    command = _validate(
+        tool, {"sInputFileName": [staged["readin"], staged["readin"]], "Weight": [1.0]}
+    )
+    assert "module_results" not in command.update
+
+    state = {"messages": [AIMessage("I could not settle the weights.")]}
+    assert _readin_report_middleware().after_agent(state, runtime()) is None
+    message = _package(state)
+
+    assert "STATUS: UNVERIFIED" in message.text
+    assert not outcome_verified(message)
+
+
+def test_a_sweep_that_recorded_variants_reports_how_many(tmp_path: Path) -> None:
+    """The sweep path writes a list, and has no `ask_user` to fall back on."""
+    middleware = ModuleReportMiddleware(
+        module="guide", model=parameter_model("guide"), unattended=True
+    )
+    state = {
+        "messages": [AIMessage("Recorded both widths.")],
+        "module_variants": swept_modules(tmp_path, guide_widths=(3.0, 5.0)),
+    }
+
+    filled = middleware.after_agent(state, runtime())
+    report = filled["structured_response"]
+
+    assert report.status == "completed"
+    assert "2 variants" in report.finding
+    assert sum("VITESS will run it as: " in item for item in report.evidence) == 2
+
+
+def test_a_real_prose_exit_reaches_the_filled_report(
+    artifact_store: Any, tmp_path: Path
+) -> None:
+    """End to end, in the real mounting order, over the real validation tool.
+
+    Middleware `after_agent` hooks run in reverse list order, so the outcome
+    middleware mounted first by `build_specialist_middleware` runs last and
+    sees what this one wrote. Asserting on the final message is what proves
+    that, rather than the two hooks being called in a convenient order here.
+    """
+
+    class _EndsInProse(FakeMessagesListChatModel):
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+            return self
+
+    staged = stage_uploads(tmp_path)
+    agent = create_agent(
+        model=_EndsInProse(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "validate_readin_parameters",
+                            "args": {
+                                "parameters": {
+                                    "sInputFileName": [staged["readin"]],
+                                    "Weight": [1.0],
+                                    # The schema default is the bare name
+                                    # `instrument.inf`, which validation refuses.
+                                    "sInstrInfIn": None,
+                                }
+                            },
+                            "id": "validate-call",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(
+                    "✅ Configuration validated and recorded."
+                    "\n**Finding**\nDone."
+                ),
+            ]
+        ),
+        tools=[
+            named_tool(
+                readin_tools(project_root=tmp_path, gateway=None),
+                "validate_readin_parameters",
+            )
+        ],
+        response_format=ToolStrategy(SpecialistReport),
+        middleware=[
+            SpecialistOutcomeMiddleware(specialist_name="readin-specialist"),
+            _readin_report_middleware(),
+        ],
+        state_schema=VitessBridgeState,
+        context_schema=dict,
+    )
+
+    result = asyncio.run(
+        agent.ainvoke(
+            {"messages": [HumanMessage("Configure read-in from the staged file.")]},
+            {"configurable": {"thread_id": THREAD_ID}},
+            context={"user_id": "user-a", "thread_id": THREAD_ID},
+        )
+    )
+
+    final = result["messages"][-1]
+    assert "STATUS: VERIFIED" in final.text
+    assert outcome_verified(final)
+    assert "beam.dat" in final.text
 
 
 def test_the_five_specialists_are_the_five_executable_modules(
