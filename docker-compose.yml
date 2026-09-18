@@ -123,6 +123,11 @@ services:
       - VITESS_AUDIT_FILE=/data/artifacts/audit.jsonl
       - BLABLADOR_API_KEY=${BLABLADOR_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # LangSmith observes the agent/model process, not the VITESS MCP server.
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vitess-ai}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
       - VITESS_RAG_PERSIST_PATH=/data/chroma
       - VITESS_RAG_QUERY_TIMEOUT_SECONDS=${VITESS_RAG_QUERY_TIMEOUT_SECONDS:-20}
       - VITESS_RAG_MAX_RETRIES=${VITESS_RAG_MAX_RETRIES:-1}

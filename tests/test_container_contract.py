@@ -52,3 +52,17 @@ def test_rag_query_limits_from_dotenv_reach_the_application_container() -> None:
         in compose
     )
     assert "VITESS_RAG_MAX_RETRIES=${VITESS_RAG_MAX_RETRIES:-1}" in compose
+
+
+def test_langsmith_settings_from_dotenv_reach_the_application_container() -> None:
+    """Tracing configured in `.env` must cross the Compose boundary."""
+
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}" in compose
+    assert "LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}" in compose
+    assert "LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vitess-ai}" in compose
+    assert (
+        "LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}"
+        in compose
+    )
