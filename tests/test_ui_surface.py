@@ -21,6 +21,7 @@ import app.file_management as file_management
 from app.sidebar import AGENTS
 from app.session_state import adopt_thread_agent, start_new_thread
 from app.starters import build_starter_prompts
+from app.ui_components import logo_path
 from vitess_ai.clients import VitessClient
 from vitess_ai.modules.catalog import MODULES, upload_modules
 from vitess_ai.server.uploads import upload_module_manifest
@@ -32,6 +33,10 @@ from vitess_ai.schema import (
 
 APP = Path(__file__).resolve().parents[1] / "app"
 SOURCE = "\n".join(path.read_text(encoding="utf-8") for path in sorted(APP.glob("*.py")))
+
+
+def test_the_juena_logo_is_packaged_for_the_page_and_header() -> None:
+    assert logo_path() == APP / "assets" / "logo.png"
 
 
 def test_the_sidebar_offers_three_slots_and_the_catalog_decides_which() -> None:
