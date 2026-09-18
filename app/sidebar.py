@@ -9,13 +9,13 @@ is navigation: the agent, the model, the conversation list.
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 import streamlit as st
 
 from juena_core.llms_providers import get_available_providers, get_default_model
 from juena_core.schema.llm_models import Provider
 
+from app.chat_list import render_chat_list
 from app.file_management import render_file_manifest
 from app.session_state import start_new_thread
 
@@ -63,34 +63,6 @@ def _render_model_picker() -> None:
     st.text_input("Model", key="selected_model", help="The model the agent runs on.")
 
 
-def _render_chat_list(client: Any, agent: str) -> None:
-    storage = st.session_state.chat_storage
-    if st.button("New conversation", width="stretch"):
-        st.session_state.thread_id = str(uuid4())
-        st.session_state.messages = []
-        st.session_state.chat_initialized = True
-        st.rerun()
-
-    try:
-        chats = storage.list_chats(limit=25, agent_id=agent)
-    except Exception as error:  # noqa: BLE001 -- the list is not worth a crash
-        st.caption(f"Could not list conversations: {error}")
-        return
-
-    for chat in chats:
-        active = chat.thread_id == st.session_state.thread_id
-        if st.button(
-            ("• " if active else "") + (chat.title or f"Chat {chat.thread_id[:8]}"),
-            key=f"chat:{chat.thread_id}",
-            width="stretch",
-        ):
-            loaded = storage.load_chat_with_messages(chat.thread_id)
-            st.session_state.thread_id = chat.thread_id
-            st.session_state.messages = loaded[1] if loaded else []
-            st.session_state.chat_initialized = True
-            st.rerun()
-
-
 def render_sidebar(client: Any) -> None:
     with st.sidebar:
         _render_agent_picker()
@@ -101,7 +73,7 @@ def render_sidebar(client: Any) -> None:
         render_file_manifest(client, st.session_state.thread_id)
         st.divider()
 
-        _render_chat_list(client, st.session_state.selected_agent)
+        render_chat_list(client, st.session_state.selected_agent)
         st.divider()
 
         with st.expander("Model", expanded=False):

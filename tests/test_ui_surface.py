@@ -18,8 +18,13 @@ import httpx
 import pytest
 
 import app.file_management as file_management
+from app.chat_list import DEFAULT_CHAT_TITLE, chat_label, title_key
 from app.sidebar import AGENTS
-from app.session_state import adopt_thread_agent, start_new_thread
+from app.session_state import (
+    adopt_thread_agent,
+    leave_deleted_thread,
+    start_new_thread,
+)
 from app.starters import build_starter_prompts
 from app.ui_components import logo_path
 from vitess_ai.clients import VitessClient
@@ -169,6 +174,81 @@ def test_switching_mode_starts_a_new_thread_instead_of_showing_the_old_transcrip
         "messages": [],
         "chat_initialized": True,
     }
+
+
+class _Chat:
+    """Only the two fields the sidebar label reads."""
+
+    def __init__(self, thread_id: str, title: str) -> None:
+        self.thread_id = thread_id
+        self.title = title
+
+
+def test_deleting_the_open_conversation_enters_the_newest_survivor() -> None:
+    state = {"thread_id": "gone", "messages": ["stale"], "chat_initialized": True}
+
+    entering = leave_deleted_thread(state, deleted="gone", remaining=["kept", "older"])
+
+    assert entering == "kept"
+    assert state["thread_id"] == "kept"
+    assert state["messages"] == []
+
+
+def test_deleting_the_last_conversation_starts_a_fresh_thread() -> None:
+    replacement = UUID("22222222-2222-4222-8222-222222222222")
+    state = {"thread_id": "gone", "messages": ["stale"], "chat_initialized": True}
+
+    entering = leave_deleted_thread(
+        state, deleted="gone", remaining=[], make_id=lambda: replacement
+    )
+
+    # None means there is nothing to load, not that nothing happened.
+    assert entering is None
+    assert state["thread_id"] == str(replacement)
+    assert state["messages"] == []
+
+
+def test_a_just_deleted_thread_is_never_re_entered() -> None:
+    """The server listing can still hold the row that was just removed.
+
+    Landing back on it is the one outcome that must not happen: the page would
+    go on sending messages to a conversation the sidebar no longer lists.
+    """
+    replacement = UUID("33333333-3333-4333-8333-333333333333")
+    state = {"thread_id": "gone"}
+
+    entering = leave_deleted_thread(
+        state, deleted="gone", remaining=["gone"], make_id=lambda: replacement
+    )
+
+    assert entering is None
+    assert state["thread_id"] == str(replacement)
+
+
+def test_the_name_field_is_keyed_per_conversation() -> None:
+    """One shared key would rename the wrong conversation.
+
+    Streamlit binds widget state to the key and ignores `value=` once that key
+    exists. Opening Rename on B while A's editor is still open leaves the text
+    typed for A in the field, and Save writes it to B -- confirmed against a
+    shared key with Streamlit's own `AppTest`.
+    """
+    assert title_key("thread-a") != title_key("thread-b")
+
+
+def test_an_unrenamed_conversation_is_labelled_by_its_thread_rather_than_alike() -> None:
+    """Four rows all reading "New Chat" cannot be navigated."""
+    label, full_title = chat_label(_Chat("abcdef1234567890", DEFAULT_CHAT_TITLE))
+
+    assert label == "Chat abcdef12" == full_title
+
+
+def test_a_long_conversation_name_is_shortened_but_kept_whole_for_the_tooltip() -> None:
+    name = "Guide sweep over eGuideShapeY with eight widths"
+    label, full_title = chat_label(_Chat("abcdef1234567890", name))
+
+    assert full_title == name
+    assert label.endswith("...") and len(label) <= 22
 
 
 def test_reloading_a_thread_restores_the_agent_that_owns_it() -> None:
