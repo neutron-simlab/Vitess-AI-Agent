@@ -62,12 +62,22 @@ both paths as `options` so it can be answered with one click:
 >
 > Choose your setup approach:
 >
-> 1. **Default Setup**: use optimal default values for the 2D monitor.
+> 1. **Default Setup**: measure intensity against POS_Y (horizontal) by POS_Z
+>    (vertical), each from -2.0 to 2.0 cm in 100 bins, written to
+>    `monitor2D.dat`. Nothing else to decide.
 > 2. **Customize**: modify the monitor parameters step by step.
 >
 > Which would you prefer?
 
 Pass `options`: `["Default setup", "Customize"]`.
+
+**Say what Default Setup would actually use.** Put the values from
+**DEFAULT CONFIGURATION** below into the question, in plain words — the quantity
+measured, the range, the bin count, the file name, whichever of those this module has.
+"Optimal default values" names nothing: a choice between two things the user cannot see
+is not a choice they can make, and this is the question where they are least able to
+scroll back for it. Take the values from that block, which is checked against the
+schema; do not recall them from memory.
 
 Do not write this choice as an ordinary message. Written that way it is not shown to
 the user, so they see nothing and have nothing to answer — and carrying on without

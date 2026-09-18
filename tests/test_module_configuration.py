@@ -1124,6 +1124,85 @@ def test_every_prompt_puts_the_setup_choice_through_ask_user(module: str) -> Non
     assert "Open with a short greeting" not in text
 
 
+def _setup_choice(module: str) -> str:
+    """The STEP 0 section, which is the whole of what the user sees first."""
+    return _agent_md(module).split("## STEP 0")[1].split("## PATH A")[0]
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_the_setup_choice_says_what_the_defaults_actually_are(module: str) -> None:
+    """"Optimal default values" is not a thing anyone can choose.
+
+    Both monitors offered exactly that and nothing else, which is how a user
+    who picked Default Setup still had no idea what they had picked -- and how
+    a user who picked Customize got asked about every field in the schema
+    because that seemed like the only way to find out.
+
+    The values are read from the schema here, not from a list kept in this
+    test, so a default that changes fails this until the choice is updated.
+    """
+    choice = _setup_choice(module)
+    model = parameter_model(module)
+
+    assert "Say what Default Setup would actually use." in choice
+
+    for field_name in ("fMonitorFilename", "sOutFileName"):
+        if field_name in model.model_fields:
+            default = model.model_fields[field_name].get_default(
+                call_default_factory=True
+            )
+            assert str(default) in choice, (
+                f"{module}/AGENT.md's choice never names the default file {default!r}"
+            )
+
+    for field_name in ("nBinsX", "xMin", "xMax"):
+        if field_name in model.model_fields:
+            default = model.model_fields[field_name].get_default(
+                call_default_factory=True
+            )
+            assert str(default) in choice, (
+                f"{module}/AGENT.md's choice never names {field_name}={default!r}"
+            )
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_the_setup_choice_names_no_enum_value_the_default_is_not(module: str) -> None:
+    """The drift that already happened once, in the place no test was looking.
+
+    `guide`'s choice described "a 3 x 3 cm constant guide" while
+    `eGuideShapeY`/`eGuideShapeZ` default to `VT_LINEAR` -- `VT_CONSTANT` is
+    the value they are not. The JSON-block test caught precisely this pairing
+    once before; the prose copy of it was not covered by anything, so it
+    survived. A default that is a named choice must not be described by the
+    name of a different choice.
+    """
+    choice = _setup_choice(module).lower()
+    model = parameter_model(module)
+
+    # Grouped by enum type, because one enum serves several fields and each
+    # brings its own default: monitor2d measures POS_Y *by* POS_Z, so neither
+    # is a value it "would not use" even though each is only one field's.
+    in_use: dict[Any, set[Any]] = {}
+    for field in model.model_fields.values():
+        if getattr(field.annotation, "__members__", None):
+            default = field.get_default(call_default_factory=True)
+            in_use.setdefault(field.annotation, set()).add(
+                getattr(default, "value", default)
+            )
+
+    for annotation, defaults in in_use.items():
+        for member_name, member in annotation.__members__.items():
+            if member.value in defaults:
+                continue
+            word = member_name.removeprefix("VT_").removeprefix("NO_").lower()
+            if len(word) < 5:  # too short to be distinctive in prose
+                continue
+            assert word not in choice, (
+                f"{module}/AGENT.md's choice says {word!r}, but no "
+                f"{annotation.__name__} field defaults to it"
+            )
+
+
 @pytest.mark.parametrize("module", execution_order())
 def test_every_prompt_keeps_the_configuration_inside_the_question(module: str) -> None:
     """Nothing may tell the model to show the configuration on its own."""

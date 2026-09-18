@@ -89,6 +89,14 @@ both paths as `options` so it can be answered with one click:
 
 Pass `options`: `["Default setup", "Customize"]`.
 
+**Say what Default Setup would actually use.** Put the values from
+**DEFAULT CONFIGURATION** below into the question, in plain words — the quantity
+measured, the range, the bin count, the file name, whichever of those this module has.
+"Optimal default values" names nothing: a choice between two things the user cannot see
+is not a choice they can make, and this is the question where they are least able to
+scroll back for it. Take the values from that block, which is checked against the
+schema; do not recall them from memory.
+
 Do not write this choice as an ordinary message. Written that way it is not shown to
 the user, so they see nothing and have nothing to answer — and carrying on without
 their answer is how someone who wanted the defaults ends up being asked about every
