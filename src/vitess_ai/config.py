@@ -7,10 +7,11 @@ and its `validate_required()` — because what has to be validated here is not w
 has to be validated in juena-chatbot's deployment: there is no SAML, no Podman,
 and there is a VITESS project volume two containers have to agree about.
 
-`validate_required()` is called by `service.py`, not at import. 01/CP1 exists
-because the first-generation `juena` package ran `Config.initialize()` at module
-scope, so importing *any* module loaded `.env` and could raise — and `get_logger`,
-imported nearly everywhere, imported `Config`. Nothing here runs on import.
+`validate_required()` is called by the API and UI process entrypoints, not at
+import. 01/CP1 exists because the first-generation `juena` package ran
+`Config.initialize()` at module scope, so importing *any* module loaded `.env`
+and could raise — and `get_logger`, imported nearly everywhere, imported
+`Config`. Nothing here runs on import.
 """
 
 from __future__ import annotations

@@ -325,3 +325,16 @@ def test_reloading_a_thread_adopts_the_agent_that_owns_it_at_the_call_site() -> 
     assert "if adopt_thread_agent(" in source
     assert "chat.agent_id" in source
     assert "st.rerun()" in source.split("adopt_thread_agent(")[1]
+
+
+def test_the_ui_configures_core_before_reading_provider_availability() -> None:
+    """The API and Streamlit are separate processes with separate globals."""
+
+    source = (APP / "streamlit_app.py").read_text(encoding="utf-8")
+
+    assert source.index("Config.validate_required()") < source.index(
+        "get_available_providers()"
+    )
+    assert source.index("configure_core()") < source.index(
+        "get_available_providers()"
+    )

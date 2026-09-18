@@ -20,6 +20,15 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from vitess_ai.config import Config, configure_core  # noqa: E402
+
+# The API and Streamlit are separate processes, so configuring core in the API
+# process does not configure this one. Do it before any UI helper reads core's
+# provider settings. Repeating the same configuration on a Streamlit rerun is
+# explicitly harmless.
+Config.validate_required()
+configure_core()
+
 from juena_core.llms_providers import get_available_providers, get_default_model  # noqa: E402
 from juena_core.schema.llm_models import Provider  # noqa: E402
 from juena_core.ui.chat_storage import get_chat_storage  # noqa: E402
@@ -30,7 +39,6 @@ from app.sidebar import AGENTS, render_sidebar  # noqa: E402
 from app.session_state import adopt_thread_agent  # noqa: E402
 from app.ui_components import logo_path  # noqa: E402
 from vitess_ai.clients import VitessClient  # noqa: E402
-from vitess_ai.config import Config  # noqa: E402
 
 API_URL = f"http://{Config.BIND_HOST}:{Config.API_PORT}"
 
