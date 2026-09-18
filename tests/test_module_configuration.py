@@ -18,6 +18,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field, ValidationError
 
 from juena_core.agents.ask_user import build_ask_user_tool
+from juena_core.server.streaming.processor import StreamEventProcessor
 from juena_core.agents.specialist_outcome import (
     SpecialistOutcomeMiddleware,
     outcome_verified,
@@ -1054,6 +1055,91 @@ def test_the_default_configuration_in_each_prompt_is_the_schema_default(
     assert not missing, f"{module}/AGENT.md's default block omits {missing}"
 
 
+# ---------------------------------------------------------------------------
+# What the user can actually see of a specialist
+# ---------------------------------------------------------------------------
+
+
+def _agent_md(module: str) -> str:
+    return (
+        Path(__file__).parents[1]
+        / "src/vitess_ai/agents/specialists"
+        / module
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_a_specialists_own_messages_never_reach_the_user() -> None:
+    """The fact every module prompt is written around.
+
+    A specialist that "presents the configuration, then asks" presents it into
+    a message the server drops, so the confirmation question arrives with
+    nothing to confirm. This is the behaviour that makes that true, asserted
+    here so the prompts and the stream cannot part company: if this ever
+    starts letting specialist messages through, the instruction to put the
+    configuration inside the question becomes unnecessary rather than wrong,
+    and someone should know.
+    """
+    processor = StreamEventProcessor(
+        agent=None, config=None, run_id="run-1", user_input_message="configure monitor1d"
+    )
+    presented = AIMessage(
+        'Here is the configuration:\n```json\n{"nBinsX": 100}\n```', id="presented"
+    )
+
+    async def collect(node_path: tuple, message: AIMessage) -> list:
+        return [
+            event
+            async for event in processor.process_event(
+                (node_path, "updates", {"model": {"messages": [message]}})
+            )
+        ]
+
+    from_specialist = asyncio.run(collect(("tools:a-task-id",), presented))
+    from_supervisor = asyncio.run(
+        collect((), AIMessage("The monitor is configured.", id="answer"))
+    )
+
+    assert from_specialist == []
+    assert from_supervisor != []
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_every_prompt_puts_the_setup_choice_through_ask_user(module: str) -> None:
+    """Default-or-custom is the first question, and it has to be askable.
+
+    Ported from the first generation, where it was the opening message of each
+    module agent. Here an opening message is invisible, so a prompt that only
+    says "open with this choice" produces a specialist that appears to skip
+    straight to interrogating the user about every field in the schema.
+    """
+    text = _agent_md(module)
+
+    assert "## STEP 0 — ASK WHICH SETUP THE USER WANTS" in text
+    choice = text.split("## STEP 0")[1].split("## PATH A")[0]
+    assert "`ask_user`" in choice
+    assert '`options`: `["Default setup", "Customize"]`' in choice
+    assert "your very first action" in choice
+    # The instruction it replaced, which a later edit must not restore.
+    assert "Open with a short greeting" not in text
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_every_prompt_keeps_the_configuration_inside_the_question(module: str) -> None:
+    """Nothing may tell the model to show the configuration on its own."""
+    text = _agent_md(module)
+
+    assert "The user only ever sees your `ask_user` questions." in text
+    assert text.count("inside the question text") >= 2
+    for banned in (
+        "Present it to the user, formatted",
+        "Present the complete configuration",
+        "Present the complete default configuration",
+        "Do not validate in the same turn",
+    ):
+        assert banned not in text, f"{module}/AGENT.md still says: {banned}"
+
+
 @pytest.mark.parametrize("module", execution_order())
 def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
     module: str,
@@ -1112,6 +1198,8 @@ PROSE_WORDS_THAT_LOOK_LIKE_TOOLS = frozenset(
         "matrix_compact",
         "matrix_integer",
         "null",
+        # `ask_user`'s own argument, named where STEP 0 says what to pass it.
+        "options",
         "xyz",
         "xyz_compact",
     }
@@ -1624,10 +1712,10 @@ def test_every_prompt_carries_the_same_order_of_work_word_for_word() -> None:
     )
     canonical = distinct.pop()
     for step in (
-        "1. **Collect**",
-        "2. **Build**",
-        "3. **Present**",
-        "4. **Confirm**",
+        "1. **Ask which setup the user wants**",
+        "2. **Collect**",
+        "3. **Build**",
+        "4. **Show it and confirm it in one `ask_user` call**",
         "5. **Validate**",
         "6. **Then stop.**",
     ):
@@ -1675,16 +1763,18 @@ def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) ->
         assert contradiction not in text, f"{module}/AGENT.md still says: {contradiction}"
 
     canonical = _order_of_work(module)
-    present = canonical.index("3. **Present**")
-    confirm = canonical.index("4. **Confirm**")
+    confirm = canonical.index("4. **Show it and confirm it in one `ask_user` call**")
     validate = canonical.index("5. **Validate**")
 
-    assert present < confirm < validate
-    assert "Call `ask_user` with one direct question" in canonical
-    assert "Do not validate in the same turn" in canonical
-    assert "as the presentation" in canonical
+    # Showing and confirming are now one call, because a specialist's own
+    # messages are never displayed -- so "present, then ask" presented into
+    # nothing. What must still hold is that neither happens after validation.
+    assert confirm < validate
+    assert "inside the question text" in canonical
+    assert "is never displayed" in canonical
     assert text.count(
-        "Ask for confirmation with `ask_user`; do not validate until the user confirms."
+        "Show it and confirm it in a single `ask_user` call, with the complete formatted\n"
+        "   configuration inside the question text; do not validate until the user confirms."
     ) == 2
 
 
