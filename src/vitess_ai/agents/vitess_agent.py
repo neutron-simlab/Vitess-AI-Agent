@@ -73,6 +73,8 @@ DEFAULT_PROJECT_ROOT = "/data/projects"
 SUPERVISOR_TASK_DESCRIPTION = """Delegate one VITESS module's configuration to its specialist.
 Give the specialist a self-contained objective: what the user wants from this module, in
 your own words, with the relevant context. It cannot see the conversation.
+Pass on what the user has already said about the module; do not ask them about it first.
+The specialist greets them and asks for what it needs itself.
 
 Delegate in the order `plan_simulation` returned, one specialist at a time, and wait for
 each report before starting the next. A specialist records its module's validated

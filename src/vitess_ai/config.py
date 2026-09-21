@@ -103,7 +103,9 @@ class Config:
     RAG_DATA_DIR = Path(os.getenv("VITESS_RAG_DATA_DIR", "rag/vitess-rag/data"))
     RAG_PERSIST_PATH = Path(os.getenv("VITESS_RAG_PERSIST_PATH", "rag/chroma_db"))
     RAG_COLLECTION = os.getenv("VITESS_RAG_COLLECTION", "vitess_docs")
-    RAG_EMBEDDING_MODEL = os.getenv("VITESS_RAG_EMBEDDING_MODEL", "alias-embeddings")
+    RAG_EMBEDDING_MODEL = os.getenv(
+        "VITESS_RAG_EMBEDDING_MODEL", "alias-qwen3-8b-embeddings"
+    )
     #: Retrieval is on the conversational path, so the embedding client's
     #: ten-minute SDK default is not an acceptable failure mode. These are
     #: deliberately separate from the chat-model limits above: a short lookup

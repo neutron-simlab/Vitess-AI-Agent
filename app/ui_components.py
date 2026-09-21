@@ -37,11 +37,15 @@ def render_header(agent: str) -> None:
     """Name the product and, plainly, which of the two agents is answering."""
 
     logo = logo_path()
-    columns = st.columns([1, 12]) if logo else None
-    if columns is not None and logo is not None:
-        with columns[0]:
-            st.image(str(logo), width=48)
-        target = columns[1]
+    if logo is not None:
+        row = st.container(
+            horizontal=True,
+            vertical_alignment="center",
+            gap="small",
+        )
+        with row:
+            st.image(str(logo), width=64)
+            target = st.container()
     else:
         target = st.container()
     with target:

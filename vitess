@@ -180,8 +180,8 @@ cmd_clean() { ## Remove Python caches and test output
 cmd_install() { ## Symlink this script into ~/.local/bin
     local target="${1:-$HOME/.local/bin}"
     mkdir -p "$target"
-    ln -sf "$SCRIPT_PATH" "$target/vitess"
-    echo "Linked $target/vitess -> $SCRIPT_PATH"
+    ln -sf "$REPO_ROOT/vitess" "$target/vitess"
+    echo "Linked $target/vitess -> $REPO_ROOT/vitess"
     case ":$PATH:" in
         *":$target:"*) ;;
         *) echo "${DIM}Add $target to your PATH.${RESET}" ;;

@@ -38,9 +38,13 @@ server-authored `<verified_by_server>` block to the root answer.
 ```sh
 git submodule update --init --recursive   # rag/vitess-rag is a path dependency
 cp env.example .env                       # then set POSTGRES_PASSWORD and a model key
-docker compose up -d
-docker compose exec vitess-app curl -fsS http://vitess-mcp:9005/health
+./vitess install                          # once: add the launcher to ~/.local/bin
+vitess up                                 # build and start Postgres, MCP, API, and UI
+vitess health
 ```
+
+After installation, `vitess up`, `vitess down`, `vitess logs`, and
+`vitess health` work from any directory. Run `vitess help` for the full list.
 
 The first build compiles the same pinned VITESS source revision on every
 architecture (a few minutes). This keeps the binaries aligned with the monitor
