@@ -413,6 +413,18 @@ def render_plot(
         raise ToolError(
             f"{source.name} is a {data.kind} monitor file, not {kind}"
         )
+    if (
+        data.kind == "monitor2d"
+        and data.total_intensity is not None
+        and data.total_intensity > 0
+        and not data.intensity.any()
+    ):
+        raise ToolError(
+            f"{source.name} received {data.total_intensity:.6g} n/s, but its 2D "
+            "histogram contains zero intensity in every bin. Check that xParam "
+            "and yParam describe the intended quantities and that both configured "
+            "ranges cover those quantities."
+        )
 
     destination = source.with_suffix(".png")
     render_monitor_png(data, destination)

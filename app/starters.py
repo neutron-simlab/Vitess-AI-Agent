@@ -40,8 +40,8 @@ _STARTERS = (
     Starter(
         label="Sweep a parameter",
         prompt=(
-            "I want to sweep the guide's m-value over 2, 3 and 4 and compare the "
-            "monitored intensity."
+            "I want to sweep one or two parameters across several VITESS "
+            "simulations and compare the results."
         ),
         agent="advanced_mode",
     ),

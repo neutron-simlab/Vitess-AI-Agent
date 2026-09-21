@@ -80,8 +80,10 @@ over, in your own words, with the relevant context. It cannot see this conversat
 cannot ask the user anything, and it owns the interpretation of its own parameters --
 do not send it field names you invented or expect it to ask you for the rest.
 
-A module that does not vary still has to be delegated to: it records one configuration
-using the schema defaults. Delegate to all five before planning the sweep.
+Always delegate READIN because it must use the staged input path. Delegate another
+module only when the user varies or explicitly customizes it. Do not delegate guide,
+writeout, monitor1d, or monitor2d merely to obtain defaults: trusted matrix code creates
+their exact schema defaults without asking a model to copy parameter values.
 
 Every result arrives as a `<specialist_report>` block paired with a
 `<verified_by_server>` block. The second block is written by the server from the actual

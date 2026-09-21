@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.json_schema import SkipJsonSchema
 
 from juena_core.schema.interrupts import ExecutionEvidence
+from vitess_ai.agents.specialists.module_specialist import validate_module_parameters
 from vitess_ai.cli.arguments import parameters_to_arguments
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import parameter_model
@@ -59,6 +60,10 @@ from vitess_ai.tools import (
 __all__ = ["MAX_SWEEP_RUNS", "build_batch_tools"]
 
 MATRIX_FILENAME = "simulation_matrix.json"
+
+# READIN always needs a staged source path and therefore cannot be constructed
+# from its schema defaults. These four modules have complete, runnable defaults.
+AUTO_DEFAULT_MODULES = frozenset({"guide", "writeout", "monitor1d", "monitor2d"})
 
 
 class _SweepArguments(BaseModel):
@@ -113,24 +118,29 @@ def _current_result(module: str, value: Any) -> ModuleConfigurationResult:
     return result
 
 
-def _variants(runtime: ToolRuntime[Any, Any]) -> dict[str, list[ModuleConfigurationResult]]:
-    """Every module's validated variants, or a refusal naming what is missing."""
+def _variants(
+    runtime: ToolRuntime[Any, Any],
+    *,
+    project_root: Path,
+    thread_id: str,
+) -> dict[str, list[ModuleConfigurationResult]]:
+    """Recorded variants plus trusted schema defaults for untouched modules."""
 
     stored = state_mapping(runtime).get("module_variants")
-    if not isinstance(stored, dict) or not stored:
-        raise ValueError(
-            "No module has been validated for this sweep yet. Delegate to each "
-            "module's specialist first."
-        )
+    if stored is None:
+        stored = {}
+    if not isinstance(stored, dict):
+        raise ValueError("The recorded module variants are not a module mapping")
 
     planned = execution_order()
     missing = [module for module in planned if module not in stored]
-    if missing:
+    required = [module for module in missing if module not in AUTO_DEFAULT_MODULES]
+    if required:
         raise ValueError(
             "These modules have no validated variants: "
-            + ", ".join(missing)
-            + ". Every module of the pipeline must be validated, even one that "
-            "does not vary -- send it a single-element list of defaults."
+            + ", ".join(required)
+            + ". READIN must be delegated because its staged input path has no "
+            "runnable schema default."
         )
     unplanned = sorted(set(stored) - set(planned))
     if unplanned:
@@ -138,6 +148,19 @@ def _variants(runtime: ToolRuntime[Any, Any]) -> dict[str, list[ModuleConfigurat
 
     variants: dict[str, list[ModuleConfigurationResult]] = {}
     for module in planned:
+        if module not in stored:
+            model = parameter_model(module)
+            variants[module] = [
+                validate_module_parameters(
+                    {},
+                    module=module,
+                    model=model,
+                    schema_version=module_schema_version(model),
+                    project_root=project_root,
+                    thread_id=thread_id,
+                )
+            ]
+            continue
         entries = stored[module]
         if not isinstance(entries, list) or not entries:
             raise ValueError(f"The variants recorded for {module} are not a non-empty list")
@@ -259,8 +282,8 @@ def build_batch_tools(
         description=(
             "Expand the validated module variants into the runs of this sweep "
             "and record the plan. Say whether the variants combine as a "
-            "Cartesian product or as paired rows. Call this once every module "
-            "specialist has reported."
+            "Cartesian product or as paired rows. Untouched guide, writeout, and "
+            "monitor modules receive exact schema defaults in trusted code."
         ),
     )
     def write_simulation_matrix(
@@ -270,7 +293,11 @@ def build_batch_tools(
     ) -> Command:
         try:
             user_id, thread_id, graph_run_id = runtime_identity(runtime)
-            variants = _variants(runtime)
+            variants = _variants(
+                runtime,
+                project_root=root,
+                thread_id=thread_id,
+            )
             combination_size = _combination_size(variants, combination)
         except (ValidationError, ValueError) as exc:
             return Command(

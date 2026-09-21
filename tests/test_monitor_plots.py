@@ -168,6 +168,13 @@ def test_labels_and_title_come_from_the_file_header() -> None:
     assert data.y_label == "intensity [n/s]"
 
 
+def test_total_and_binned_intensity_come_from_the_file_header() -> None:
+    data = read_monitor_file(MONITOR_2D[VtFormat2D.MATRIX])
+
+    assert data.total_intensity == pytest.approx(8.099e10)
+    assert data.binned_intensity == pytest.approx(8.099e10)
+
+
 def test_a_1d_row_of_the_wrong_width_is_named_rather_than_skipped(tmp_path: Path) -> None:
     broken = tmp_path / "monitor1D.dat"
     lines = MONITOR_1D.read_text(encoding="utf-8").splitlines()

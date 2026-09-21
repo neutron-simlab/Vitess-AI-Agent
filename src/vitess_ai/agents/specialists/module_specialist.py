@@ -69,6 +69,7 @@ __all__ = [
     "ModuleReportMiddleware",
     "build_module_prompt",
     "build_module_specialist",
+    "build_defaults_tool",
     "build_staged_files_tool",
     "build_validation_tool",
     "build_variants_tool",
@@ -403,6 +404,18 @@ class _StagedFilesArguments(BaseModel):
     ]
 
 
+class _DefaultsArguments(BaseModel):
+    """Only trusted runtime context; default values are deliberately not arguments."""
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    runtime: Annotated[
+        ToolRuntime[Any, Any],
+        InjectedToolArg,
+        SkipJsonSchema(),
+    ]
+
+
 def _thread_id(runtime: ToolRuntime[Any, Any]) -> str:
     """The conversation, from the trusted invocation and from nowhere else."""
     execution_info = getattr(runtime, "execution_info", None)
@@ -575,14 +588,85 @@ def build_validation_tool(
     return validate
 
 
+def build_defaults_tool(
+    *,
+    module: str,
+    model: type[BaseModel],
+    project_root: Path,
+    upload_fields: Mapping[str, str] | None = None,
+    output_filename_fields: tuple[str, ...] = (),
+) -> BaseTool:
+    """Build a no-argument writer for the module's exact schema defaults.
+
+    The guided default path used to ask the model to copy a large JSON object.
+    That made "use defaults" model-authored configuration: one silently changed
+    field was still a valid object and therefore indistinguishable from an
+    intentional customization.  This tool accepts no parameter object at all;
+    trusted code constructs and validates ``model()``.
+    """
+
+    version = module_schema_version(model)
+
+    @tool(
+        f"use_{module}_defaults",
+        args_schema=_DefaultsArguments,
+        description=(
+            f"Record the exact {module} schema defaults. This tool accepts no "
+            "parameter object, so none of the defaults can be replaced. Call it "
+            "only after `ask_user` has returned affirmative confirmation of the "
+            "displayed default configuration."
+        ),
+    )
+    def use_defaults(runtime: ToolRuntime[Any, Any]) -> Command:
+        try:
+            result = validate_module_parameters(
+                {},
+                module=module,
+                model=model,
+                schema_version=version,
+                project_root=project_root,
+                thread_id=_thread_id(runtime),
+                upload_fields=upload_fields,
+                output_filename_fields=output_filename_fields,
+            )
+            arguments = parameters_to_arguments(model(**result.parameters))
+        except (ValidationError, ValueError, ParameterConversionError) as exc:
+            return Command(
+                update={
+                    "messages": [
+                        _message(
+                            runtime,
+                            f"{module} schema defaults are not valid:\n{exc}",
+                            error=True,
+                        )
+                    ]
+                }
+            )
+
+        return Command(
+            update={
+                "messages": [
+                    _message(
+                        runtime,
+                        f"Exact {module} schema defaults are valid and recorded. "
+                        f"VITESS will run them as: {' '.join(arguments)}",
+                    )
+                ],
+                "module_results": {module: result.model_dump(mode="json")},
+            }
+        )
+
+    return use_defaults
+
+
 class _VariantsArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     parameter_sets: list[dict[str, Any]] | dict[str, Any] | str = Field(
         description=(
-            "Every parameter object this module should sweep over, as a list. "
-            "Give one object per value of the parameter being varied; give a "
-            "single-element list when this module does not vary."
+            "The explicit parameter overrides this module should sweep over, as "
+            "a list. Omitted fields keep their schema defaults. Give one object "
+            "per requested value; use [{}] for exact defaults."
         )
     )
     runtime: Annotated[
@@ -618,9 +702,10 @@ def build_variants_tool(
         f"validate_{module}_variants",
         args_schema=_VariantsArguments,
         description=(
-            f"Validate every {module} parameter object this sweep should run and "
-            "record them together. Give a single-element list when this module "
-            "does not vary. Nothing is recorded unless every set is valid."
+            f"Validate every explicit {module} override set this sweep should run "
+            "and record them together. Omitted fields retain schema defaults; "
+            "[{{}}] means exact defaults. Nothing is recorded unless every set "
+            "is valid."
         ),
     )
     def validate_variants(
@@ -864,24 +949,24 @@ the user to provide" becomes, here: **use the schema default**, unless the objec
 you were given says otherwise. If the objective does not mention a parameter, it keeps
 its default. Do not stop to ask; there is nothing to stop for.
 
-**You own parameter interpretation and generation.** The objective gives you intent --
+**You own parameter interpretation.** The objective gives you intent --
 "vary FactInt with values [0.1, 0.5, 1, 2]", "the guide's eGuideShapeY should be
-linear" -- and it is your job to turn that into complete, valid parameter objects. Do
-not expect the orchestrator to fill anything in; it does not know this module's fields
-and must not guess at them. If the objective is genuinely ambiguous, choose the reading
-the schema supports, say which reading you chose in your report, and record it under
-`limitations`.
+linear" -- and it is your job to turn that into valid override objects. Include only
+values the objective explicitly requests or the workflow requires (such as the staged
+READIN path). Omit every other field so Pydantic supplies its schema default. Do not
+copy, restate, or improve omitted defaults. If the objective is genuinely ambiguous,
+choose the reading the schema supports, say which reading you chose in your report,
+and record it under `limitations`.
 
 **You validate a list, not one object.** Your validation tool is
 `validate_{module}_variants` and it takes `parameter_sets` -- every configuration this
 module should sweep over.
 
-- If the objective names values to vary, produce **one complete parameter object per
-  value**. The objects are identical apart from the field being varied: build the full
-  object once, then repeat it with each value substituted.
-- If the objective names no variation for this module, send a **single-element list**
-  holding the defaults. A module that does not vary still has to be validated; a module
-  with no variation is not a module with no configuration.
+- If the objective names values to vary, produce **one override object per value**.
+  Include the varied value and any explicit fixed customization; let omitted fields
+  retain their schema defaults.
+- If this specialist was invoked for exact defaults, send exactly `[{{}}]`. Never expand
+  the defaults into a model-authored object.
 
 **Either every set is valid or none are recorded.** A partly validated list would run
 the sets that happened to pass while the objective asked for more, and the missing runs

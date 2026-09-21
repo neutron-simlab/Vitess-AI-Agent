@@ -138,20 +138,18 @@ Here are the default values that work for most neutron simulations:
 }
 ```
 
-2. **ASK ABOUT THE OUTPUT FILE NAME.** The schema default is `output.dat` and it is a
-   good answer, but offer the choice rather than assuming:
-   *"What would you like to name your output file? The default is `output.dat`."*
-   Accept the default readily if the user says so.
-3. Set `sOutFileName` to the name the user chose. Read **THE OUTPUT FILE NAME** below
-   before you do — it must be a plain file name, never a path.
-4. Tell the user: *"The output file will be written into this simulation's run
+2. Do not ask for a different output file name on this path. A different name is a
+   customization; the exact schema default is `output.dat`.
+3. Tell the user: *"The output file will be written into this simulation's run
    directory, and you'll be able to download it from the chat once the simulation has
    run."*
-5. Format the complete configuration as JSON for the confirmation question
+4. Format the complete configuration as JSON for the confirmation question
    below — it goes inside that question, not into a message of your own.
-6. Show it and confirm it in a single `ask_user` call, with the complete formatted
+5. Show it and confirm it in a single `ask_user` call, with the complete formatted
    configuration inside the question text; do not validate until the user confirms.
-7. Validate the configuration using the `validate_writeout_parameters` tool.
+6. After confirmation, call `use_writeout_defaults`. It accepts no parameter object
+   and records the exact defaults directly from the schema. Do not call
+   `validate_writeout_parameters` on this path.
 
 ---
 

@@ -9,6 +9,7 @@ from langchain_core.tools import BaseTool
 
 from juena_core.agents.ask_user import build_ask_user_tool
 from vitess_ai.agents.specialists.module_specialist import (
+    build_defaults_tool,
     build_validation_tool,
     build_variants_tool,
 )
@@ -29,6 +30,12 @@ def build_tools(
 ) -> list[BaseTool]:
     """No staged-files tool: this module reads nothing the user uploaded."""
     return [
+        build_defaults_tool(
+            module=MODULE,
+            model=Monitor2DParameters,
+            project_root=project_root,
+            output_filename_fields=OUTPUT_FILENAME_FIELDS,
+        ),
         build_validation_tool(
             module=MODULE,
             model=Monitor2DParameters,

@@ -73,6 +73,8 @@ class MonitorData:
     intensity: np.ndarray
     error: np.ndarray | None
     trajectories: np.ndarray | None
+    total_intensity: float | None
+    binned_intensity: float | None
 
 
 def _header_value(header_lines: list[str], key: str) -> str | None:
@@ -88,6 +90,22 @@ def _header_value(header_lines: list[str], key: str) -> str | None:
         if separator and name.strip() == key:
             # Titles end in a colon of their own ("1D Monitor:").
             return value.strip().rstrip(":").strip()
+    return None
+
+
+def _header_number(header_lines: list[str], key: str) -> float | None:
+    """Return the leading number after a case-insensitive header key."""
+
+    wanted = key.casefold()
+    for line in header_lines:
+        body = line.lstrip("#").strip()
+        name, separator, value = body.partition(":")
+        if not separator or name.strip().casefold() != wanted:
+            continue
+        try:
+            return float(value.split()[0])
+        except (IndexError, ValueError):
+            return None
     return None
 
 
@@ -244,5 +262,7 @@ def read_monitor_file(path: str | Path) -> MonitorData:
         title=_header_value(header_lines, "title") or source.name,
         x_label=_header_value(header_lines, "x_label") or "x",
         y_label=_header_value(header_lines, "y_label") or "intensity",
+        total_intensity=_header_number(header_lines, "Total Intensity"),
+        binned_intensity=_header_number(header_lines, "Within binning"),
         **arrays,
     )

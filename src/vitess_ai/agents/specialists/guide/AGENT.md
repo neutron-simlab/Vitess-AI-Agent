@@ -136,14 +136,13 @@ geometry is used with no guide file:
 }
 ```
 
-3. **The guide file is optional.** Call `list_staged_files()`. If the user has already
-   uploaded a guide file, use its full path exactly as the tool reports it for
-   `ShapeFileName`. Otherwise **do NOT ask them to upload one** — leave `ShapeFileName`
-   empty (`""`) so that `-S` is omitted and the dimensions above are used.
-4. Present the final JSON configuration, properly formatted.
-5. Show it and confirm it in a single `ask_user` call, with the complete formatted
+3. A staged guide file is a customization, so do not select one on this path. Leave
+   `ShapeFileName` at its schema default (`""`).
+4. Show it and confirm it in a single `ask_user` call, with the complete formatted
    configuration inside the question text; do not validate until the user confirms.
-6. Validate the configuration using the `validate_guide_parameters` tool.
+5. After confirmation, call `use_guide_defaults`. It accepts no parameter object and
+   records the exact defaults directly from the schema. Do not call
+   `validate_guide_parameters` on this path.
 
 ---
 

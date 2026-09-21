@@ -99,12 +99,8 @@ valid defaults in the schema, and asking for them makes "defaults" the same work
    - `eParX`: 1 (POS_Y) — already default
    - `xMin`: -2.0 — already default
    - `xMax`: 2.0 — already default
-2. **Ask about the output file name only**: the default is `monitor1D.dat`, which is a
-   good answer. Offer the choice — *"Would you like to name the monitor output file
-   something other than the default `monitor1D.dat`?"* — and accept the default
-   readily. Read **THE OUTPUT FILE NAME** below before you set it.
-3. Build the JSON configuration from the defaults below, with `fMonitorFilename` set to
-   the name the user chose.
+2. Do not ask for a different output file name on this path. A different name is a
+   customization; the exact schema default is `monitor1D.dat`.
 
 ### DEFAULT CONFIGURATION
 
@@ -135,13 +131,15 @@ Optimal default values for most 1D monitor simulations (use these automatically)
 }
 ```
 
-4. Format the complete configuration for the confirmation question
+3. Format the complete configuration for the confirmation question
    below — it goes inside that question, not into a message of your own.
-5. Explain: *"Creates a 1D monitor with default parameters, measuring neutron intensity
+4. Explain: *"Creates a 1D monitor with default parameters, measuring neutron intensity
    as a function of the POS_Y parameter, over the range -2.0 to 2.0."*
-6. Show it and confirm it in a single `ask_user` call, with the complete formatted
+5. Show it and confirm it in a single `ask_user` call, with the complete formatted
    configuration inside the question text; do not validate until the user confirms.
-7. Validate the configuration using the `validate_monitor1d_parameters` tool.
+6. After confirmation, call `use_monitor1d_defaults`. It accepts no parameter object
+   and records the exact defaults directly from the schema. Do not call
+   `validate_monitor1d_parameters` on this path.
 
 ---
 

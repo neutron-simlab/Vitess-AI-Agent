@@ -316,6 +316,41 @@ def test_a_plot_is_rendered_from_the_filename_the_schema_owns(tmp_path: Path) ->
     assert plot.size_bytes == (run_directory / "monitor1D.png").stat().st_size
 
 
+def test_an_empty_2d_histogram_with_incoming_flux_is_not_rendered(
+    tmp_path: Path,
+) -> None:
+    """Wrong axes or ranges must not look like a valid all-black measurement."""
+    settings = _settings(tmp_path)
+    run_directory = _run_directory(settings)
+    run_directory.mkdir(parents=True)
+    source = run_directory / "monitor2D.dat"
+    source.write_text(
+        "\n".join(
+            (
+                "# title : 2D Monitor Intensity n/s:",
+                "# x_label : pos_y [cm]",
+                "# y_label : lambda [Ang]",
+                "# Total Intensity: 5.088e+10 n/s Trajectories: 904",
+                "# Within binning : 0.000e+00 n/s Trajectories: 0",
+                "-1.0 1.0",
+                "-1.0 0.0 0.0",
+                "1.0 0.0 0.0",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ToolError, match="zero intensity in every bin"):
+        render_plot(
+            settings,
+            kind="monitor2d",
+            thread_id=THREAD_ID,
+            simulation_run_id=RUN_ID,
+        )
+
+    assert not (run_directory / "monitor2D.png").exists()
+
+
 def test_asking_for_a_plot_of_a_run_that_produced_none_is_an_error(tmp_path: Path) -> None:
     """Not an empty plot. A monitor that did not run produced no data."""
     settings = _settings(tmp_path)

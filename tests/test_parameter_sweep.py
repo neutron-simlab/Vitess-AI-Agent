@@ -249,14 +249,36 @@ def test_run_names_are_checked_before_anything_is_planned(
     assert "simulation_plan" not in command.update
 
 
-def test_a_sweep_missing_a_module_is_refused_by_name(tmp_path: Path) -> None:
-    """A four-module pipeline is a different instrument, not a shorter run."""
-    variants = swept_modules(tmp_path)
-    del variants["writeout"]
+def test_a_guide_sweep_gets_exact_monitor_and_writeout_defaults(
+    tmp_path: Path, artifact_store
+) -> None:
+    """Untouched modules are filled by code, not by model-authored JSON."""
+    variants = swept_modules(tmp_path, guide_widths=(3.0, 1.0))
+    for module in ("writeout", "monitor1d", "monitor2d"):
+        del variants[module]
 
     command, _tools = _plan(tmp_path, variants=variants)
 
-    assert "writeout" in _errors(command)[0]
+    assert not _errors(command)
+    plan = command.update["simulation_plan"]
+    assert len(plan) == 2
+    for entry in plan:
+        for module in ("writeout", "monitor1d", "monitor2d"):
+            assert entry["modules"][module]["parameters"] == parameter_model(
+                module
+            )().model_dump(mode="json")
+        assert entry["modules"]["monitor2d"]["parameters"]["xParam"] == 1
+        assert entry["modules"]["monitor2d"]["parameters"]["yParam"] == 2
+
+
+def test_a_sweep_missing_readin_is_refused_by_name(tmp_path: Path) -> None:
+    """READIN has staged paths and therefore has no runnable server default."""
+    variants = swept_modules(tmp_path)
+    del variants["readin"]
+
+    command, _tools = _plan(tmp_path, variants=variants)
+
+    assert "readin" in _errors(command)[0]
     assert "simulation_plan" not in command.update
 
 

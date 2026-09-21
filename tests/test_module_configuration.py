@@ -1383,6 +1383,22 @@ def test_validation_tool_description_requires_confirmation(
     assert "affirmative confirmation" in tool.description
 
 
+@pytest.mark.parametrize("module", ("guide", "writeout", "monitor1d", "monitor2d"))
+def test_default_tool_accepts_no_parameters_and_records_exact_schema_defaults(
+    module: str, tmp_path: Path
+) -> None:
+    tool = named_tool(_specialist_tools(module, tmp_path), f"use_{module}_defaults")
+
+    assert set(tool.args_schema.model_fields) == {"runtime"}
+
+    command = tool.func(runtime=runtime())
+    recorded = ModuleConfigurationResult.model_validate(
+        command.update["module_results"][module]
+    )
+
+    assert recorded.parameters == parameter_model(module)().model_dump(mode="json")
+
+
 @pytest.mark.parametrize("module", execution_order())
 def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
     module: str, offline_model: Any, tmp_path: Path
@@ -1415,6 +1431,8 @@ def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
     bound = set(specialist["runnable"].nodes["tools"].bound._tools_by_name)
 
     expected = {f"validate_{module}_parameters", "ask_user", *SPECIALIST_RAG_TOOLS}
+    if module != "readin":
+        expected.add(f"use_{module}_defaults")
     if module in {"readin", "guide"}:
         expected.add("list_staged_files")
 

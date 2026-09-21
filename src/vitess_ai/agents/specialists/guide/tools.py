@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 
 from juena_core.agents.ask_user import build_ask_user_tool
 from vitess_ai.agents.specialists.module_specialist import (
+    build_defaults_tool,
     build_staged_files_tool,
     build_validation_tool,
     build_variants_tool,
@@ -29,6 +30,12 @@ def build_tools(
     *, project_root: Path, gateway: Any, documentation_tools: Sequence[BaseTool] = ()
 ) -> list[BaseTool]:
     return [
+        build_defaults_tool(
+            module=MODULE,
+            model=GuideParameters,
+            project_root=project_root,
+            upload_fields=UPLOAD_FIELDS,
+        ),
         build_validation_tool(
             module=MODULE,
             model=GuideParameters,
