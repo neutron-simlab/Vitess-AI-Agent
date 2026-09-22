@@ -117,6 +117,15 @@ def test_each_orchestrator_policy_names_all_four(policy: str) -> None:
         assert f"`{name}`" in policy
 
 
+def test_sweep_uses_schema_for_exact_parameter_facts() -> None:
+    """The manual explains physics; it does not own the executable schema."""
+
+    assert "`describe_module_parameters`" in SWEEP_RAG_POLICY
+    assert "enum name-to-number mappings" in SWEEP_RAG_POLICY
+    assert "never infer them from memory" in SWEEP_RAG_POLICY
+    assert "`describe_module_parameters`" not in SUPERVISOR_RAG_POLICY
+
+
 def test_guided_and_unattended_ambiguity_policies_do_not_conflict() -> None:
     """A sweep cannot follow a policy that tells it to call absent `ask_user`."""
 

@@ -52,7 +52,10 @@ from juena_core.server.agent.registry import register_agent_factory
 from juena_core.server.agent.runtime_model_middleware import RuntimeModelContext
 from juena_core.server.database.checkpointer import get_checkpointer
 from juena_core.server.database.store import get_store
-from vitess_ai.agents.advanced_mode.tools import build_batch_tools
+from vitess_ai.agents.advanced_mode.tools import (
+    build_batch_tools,
+    describe_module_parameters,
+)
 from vitess_ai.agents.delegation import with_module_delegation_boundary
 from vitess_ai.agents.specialists import compile_sweep_specialists
 from vitess_ai.agents.vitess_agent import VITESS_FILESYSTEM_TOOLS, project_root
@@ -151,7 +154,7 @@ def build_advanced_mode_graph(
     )
     return create_agent(
         model=supervisor_model,
-        tools=[*tools, *documentation_tools],
+        tools=[*tools, describe_module_parameters, *documentation_tools],
         system_prompt=(
             load_markdown("vitess_ai.agents.advanced_mode", "AGENT.md")
             + "\n"

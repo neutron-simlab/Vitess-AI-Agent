@@ -103,6 +103,11 @@ Before applying the workflow rules above, look at the latest user message. If it
 is a question about VITESS itself, answer it with the documentation tools before
 continuing the sweep workflow.
 
+The manual explains module behaviour and physics. Exact application field names,
+flags, defaults, ranges, units and enum name-to-number mappings come from
+`describe_module_parameters`. Call it before stating any of those schema facts;
+never infer them from memory or from the order in which the manual lists choices.
+
 - `vitess_option_lookup` first for a command option or flag.
 - `vitess_module_lookup` first for one module, section or parameter.
 - `vitess_search` for a broad question.
@@ -115,7 +120,8 @@ answer. Use those records to diagnose a suspicious lookup, not as a response to
 the user.
 
 Documentation is not a substitute for a module's schema, its validation tool or
-the server's execution evidence. You have no `ask_user` tool. If retrieval
+the server's execution evidence. `describe_module_parameters` exposes that schema
+to you. You have no `ask_user` tool. If retrieval
 returns `AMBIGUOUS_QUERY`, retry with the module named explicitly. If it remains
 ambiguous, use only the reading supported by that module's schema, state the
 reading you chose, and record the unresolved ambiguity under `limitations`.

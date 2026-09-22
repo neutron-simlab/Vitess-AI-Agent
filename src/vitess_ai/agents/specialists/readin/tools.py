@@ -9,7 +9,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from juena_core.agents.ask_user import build_ask_user_tool
-from vitess_ai.agents.specialists.module_specialist import (
+from vitess_ai.agents.specialists.module_tools import (
     build_staged_files_tool,
     build_validation_tool,
     build_variants_tool,

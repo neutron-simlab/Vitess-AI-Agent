@@ -50,7 +50,11 @@ from vitess_ai.agents.advanced_mode.agent import (
     _advanced_facade_tools,
     build_advanced_mode_graph,
 )
-from vitess_ai.agents.advanced_mode.tools import MAX_SWEEP_RUNS, build_batch_tools
+from vitess_ai.agents.advanced_mode.tools import (
+    MAX_SWEEP_RUNS,
+    build_batch_tools,
+    describe_module_parameters,
+)
 from vitess_ai.agents.delegation import ModuleSpecialistDelegate
 from vitess_ai.agents.vitess_agent import VITESS_FILESYSTEM_TOOLS
 from vitess_ai.agents.specialists.guide.tools import build_sweep_tools as guide_sweep
@@ -789,6 +793,74 @@ def test_the_registry_holds_two_agents_and_the_sweep_is_not_the_default() -> Non
     assert get_default_agent() != ADVANCED_MODE_AGENT_ID
 
 
+def test_the_guide_shape_conversation_uses_the_authoritative_schema(
+    offline_model: Any,
+) -> None:
+    """Regression for the run where the supervisor invented ``linear = 0``.
+
+    The advanced supervisor does not carry every module schema in its prompt.
+    This exact request therefore has a tool route to the live Pydantic model,
+    where linear is 1 and the exit dimensions are the ``-W``/``-H`` fields.
+    """
+
+    script = [
+        _call("describe_module_parameters", {"module": "guide"}, 0),
+        AIMessage(
+            "The schema says linear is 1. I will preserve that intent and vary "
+            "GuideExitWidth and GuideExitHeight over 2.0, 1.0, and 0.5 cm."
+        ),
+    ]
+    graph = build_advanced_mode_graph(
+        supervisor_model=_ScriptedSupervisor(responses=script),
+        summarizer_model=offline_model,
+        fallback_models=[],
+        specialists=[
+            {
+                "name": "guide-specialist",
+                "description": "Configure the guide.",
+                "runnable": _Nothing(),
+                "module": "guide",
+            }
+        ],
+        tools=[],
+        store=InMemoryStore(),
+    )
+    context = _Context(thread_id=THREAD_ID, user_id=str(uuid4()), run_id=str(uuid4()))
+
+    result = asyncio.run(
+        graph.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        "Set both guide shapes to linear and use outlet sizes "
+                        "[2.0, 1.0, 0.5] for three simulations."
+                    )
+                ]
+            },
+            {
+                "configurable": {"thread_id": THREAD_ID},
+                "run_id": context.run_id,
+            },
+            context=context,
+        )
+    )
+
+    schema_message = next(
+        message
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+        and message.name == "describe_module_parameters"
+    )
+    described = json.loads(schema_message.text)
+
+    assert described["enum_mappings"]["VtGdeShape"]["VT_CONSTANT"] == 0
+    assert described["enum_mappings"]["VtGdeShape"]["VT_LINEAR"] == 1
+    assert described["schema_defaults"]["eGuideShapeY"] == 1
+    assert described["schema_defaults"]["eGuideShapeZ"] == 1
+    assert described["json_schema"]["properties"]["GuideExitWidth"]["flag"] == "-W"
+    assert described["json_schema"]["properties"]["GuideExitHeight"]["flag"] == "-H"
+
+
 def test_the_sweep_signs_its_evidence_with_its_own_agent_id() -> None:
     """Both agents run the same root hooks; only one of them is `vitess`.
 
@@ -939,7 +1011,10 @@ def test_the_sweep_graph_adds_documentation_tools_and_the_matching_policy(
     )
 
     assert captured["unattended"] is True
-    assert [item.name for item in captured["tools"]] == ["documentation_probe"]
+    assert [item.name for item in captured["tools"]] == [
+        describe_module_parameters.name,
+        "documentation_probe",
+    ]
     assert str(captured["system_prompt"]).endswith("SWEEP_DOCUMENTATION_POLICY")
 
 
@@ -951,6 +1026,7 @@ def test_advanced_prompt_describes_the_actual_filesystem_boundary() -> None:
 
     assert "`read_file`" in prompt
     for name in (
+        "describe_module_parameters",
         "vitess_search",
         "vitess_option_lookup",
         "vitess_module_lookup",
@@ -959,6 +1035,8 @@ def test_advanced_prompt_describes_the_actual_filesystem_boundary() -> None:
         assert f"`{name}`" in prompt
     assert "no `ask_user` tool, project-filesystem access or shell" in prompt
     assert "`/data/projects` included, is refused with a message saying so" in prompt
+    assert "Do not invent a field name" in prompt
+    assert 'translate an enum label such as\n   "linear" into an integer from memory' in prompt
 
 
 def test_the_sweep_binds_only_the_filesystem_tools_its_prompt_names(

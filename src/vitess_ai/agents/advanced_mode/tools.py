@@ -1,4 +1,4 @@
-"""The two tools a parameter sweep runs on.
+"""The trusted schema, planning and execution tools for a parameter sweep.
 
 `write_simulation_matrix` expands the sweep and `run_batch_from_matrix` executes
 it. Between them sits the `simulation_plan` channel, and the point of the pair is
@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from enum import Enum
 from itertools import product
 from math import prod
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from uuid import UUID, uuid4
 
 from langchain.tools import ToolRuntime, tool
@@ -38,7 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic.json_schema import SkipJsonSchema
 
 from juena_core.schema.interrupts import ExecutionEvidence
-from vitess_ai.agents.specialists.module_specialist import validate_module_parameters
+from vitess_ai.agents.specialists.module_tools import validate_module_parameters
 from vitess_ai.cli.arguments import parameters_to_arguments
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import parameter_model
@@ -57,13 +58,65 @@ from vitess_ai.tools import (
     tool_message,
 )
 
-__all__ = ["MAX_SWEEP_RUNS", "build_batch_tools"]
+__all__ = ["MAX_SWEEP_RUNS", "build_batch_tools", "describe_module_parameters"]
 
 MATRIX_FILENAME = "simulation_matrix.json"
 
 # READIN always needs a staged source path and therefore cannot be constructed
 # from its schema defaults. These four modules have complete, runnable defaults.
 AUTO_DEFAULT_MODULES = frozenset({"guide", "writeout", "monitor1d", "monitor2d"})
+
+
+def _enum_type(annotation: Any) -> type[Enum] | None:
+    """Return an enum contained in one field annotation, if it has one."""
+
+    for candidate in (annotation, *get_args(annotation)):
+        if isinstance(candidate, type) and issubclass(candidate, Enum):
+            return candidate
+    return None
+
+
+@tool(
+    "describe_module_parameters",
+    description=(
+        "Return the authoritative Pydantic parameter schema for one runnable "
+        "VITESS module. Use this for exact field names, command-line flags, "
+        "defaults, units, ranges, and enum name-to-number mappings; do not "
+        "infer those facts from memory or from the manual."
+    ),
+)
+def describe_module_parameters(module: str) -> str:
+    """Render schema facts without maintaining a second parameter catalogue."""
+
+    known = execution_order()
+    if module not in known:
+        return json.dumps(
+            {
+                "error": f"Unknown runnable VITESS module: {module!r}",
+                "known_modules": list(known),
+            },
+            indent=2,
+        )
+
+    model = parameter_model(module)
+    enum_mappings: dict[str, dict[str, Any]] = {}
+    for field in model.model_fields.values():
+        enum_type = _enum_type(field.annotation)
+        if enum_type is not None:
+            enum_mappings[enum_type.__name__] = {
+                member.name: member.value for member in enum_type
+            }
+
+    return json.dumps(
+        {
+            "module": module,
+            "parameter_model": model.__name__,
+            "schema_defaults": model().model_dump(mode="json"),
+            "enum_mappings": enum_mappings,
+            "json_schema": model.model_json_schema(),
+        },
+        indent=2,
+    )
 
 
 class _SweepArguments(BaseModel):

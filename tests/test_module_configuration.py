@@ -31,13 +31,15 @@ from vitess_ai.agents.delegation import (
 )
 from vitess_ai.agents.specialists import compile_module_specialists
 from vitess_ai.agents.specialists.guide.tools import build_tools as guide_tools
-from vitess_ai.agents.specialists.module_specialist import (
-    FILESYSTEM_TOOLS,
+from vitess_ai.agents.specialists.module_middleware import (
     GuidedAskUserMiddleware,
     ModuleReportMiddleware,
-    build_module_prompt,
-    omitted_file_value,
 )
+from vitess_ai.agents.specialists.module_specialist import (
+    FILESYSTEM_TOOLS,
+    build_module_prompt,
+)
+from vitess_ai.agents.specialists.module_tools import omitted_file_value
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
 from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
 from vitess_ai.agents.specialists.readin.tools import build_tools as readin_tools
