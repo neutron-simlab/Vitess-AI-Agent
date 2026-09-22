@@ -3,7 +3,7 @@
 Kept out of `catalog.py` on purpose: the catalog imports pydantic and nothing
 else, and a test asserts it, because the whole reason the first-generation
 agent grew two copies of the executable mapping was that its catalog imported
-an agent class. This mapping imports the five parameter models, so it lives
+an agent class. This mapping imports the parameter models, so it lives
 beside the catalog rather than inside it.
 
 It is a second table keyed by module name, and the way two such tables drift is
@@ -16,6 +16,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from vitess_ai.schema import (
+    CaptureFluxParameters,
     GuideParameters,
     Monitor1DParameters,
     Monitor2DParameters,
@@ -31,6 +32,7 @@ PARAMETER_MODELS: dict[str, type[BaseModel]] = {
     "writeout": WriteoutParameters,
     "monitor1d": Monitor1DParameters,
     "monitor2d": Monitor2DParameters,
+    "capture_flux": CaptureFluxParameters,
 }
 
 

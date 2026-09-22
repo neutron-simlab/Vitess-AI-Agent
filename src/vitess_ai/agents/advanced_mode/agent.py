@@ -85,8 +85,8 @@ do not send it field names you invented or expect it to ask you for the rest.
 
 Always delegate READIN because it must use the staged input path. Delegate another
 module only when the user varies or explicitly customizes it. Do not delegate guide,
-writeout, monitor1d, or monitor2d merely to obtain defaults: trusted matrix code creates
-their exact schema defaults without asking a model to copy parameter values.
+writeout, monitor1d, monitor2d, or capture_flux merely to obtain defaults: trusted matrix
+code creates their exact schema defaults without asking a model to copy parameter values.
 
 Every result arrives as a `<specialist_report>` block paired with a
 `<verified_by_server>` block. The second block is written by the server from the actual

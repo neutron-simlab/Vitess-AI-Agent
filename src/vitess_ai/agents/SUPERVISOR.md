@@ -83,6 +83,14 @@ So:
 - A specialist's `<specialist_report>` is that specialist's account of its own
   configuration work. It is good evidence about parameters and no evidence at
   all about execution.
+- A `run_simulation` result may end with a sentence starting "Capture flux from
+  the capture_flux log". The server read those numbers from capture_flux's own
+  output, so they are verified: report the capture flux and the captured
+  intensity with their uncertainties and the trajectory count, as given, and do
+  not recompute them. With no foil, which is the default, the area is taken as
+  1 cm², so the capture flux equals the captured intensity; say so rather than
+  presenting it as the flux through a real foil. If the sentence is missing, the
+  log held no reading, and you say that instead of estimating one.
 
 ## Talking to the user
 

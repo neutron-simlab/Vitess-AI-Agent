@@ -401,6 +401,54 @@ def test_both_runs_execute_under_their_own_identifier(
     ]
 
 
+def test_each_run_delivers_one_separate_artifact_group(
+    tmp_path: Path, artifact_store: ArtifactStore
+) -> None:
+    def record(call: dict[str, Any]) -> dict[str, Any]:
+        arguments = call["args"]
+        run_root = (
+            tmp_path
+            / arguments["thread_id"]
+            / "outputs"
+            / arguments["simulation_run_id"]
+        )
+        run_root.mkdir(parents=True)
+        content = f"result for {arguments['simulation_run_id']}\n".encode()
+        (run_root / "result.txt").write_bytes(content)
+        return simulation_payload(
+            thread_id=arguments["thread_id"],
+            simulation_run_id=arguments["simulation_run_id"],
+            modules=list(arguments["execution_order"]),
+            files=[
+                {"path": "result.txt", "kind": "data", "size_bytes": len(content)}
+            ],
+        )
+
+    command, tools = _plan(
+        tmp_path,
+        variants=swept_modules(tmp_path, guide_widths=(3.0, 5.0)),
+        run_names=["narrow", "wide"],
+        run_simulation=record,
+    )
+    _run_batch(tools, command.update["simulation_plan"])
+
+    outputs = [
+        artifact
+        for artifact in artifact_store.peek_result_refs("user-a", THREAD_ID)
+        if artifact.filename == "result.txt"
+    ]
+    assert [(artifact.group_id, artifact.group_label) for artifact in outputs] == [
+        (
+            command.update["simulation_plan"][0]["simulation_run_id"],
+            "Simulation proof · narrow",
+        ),
+        (
+            command.update["simulation_plan"][1]["simulation_run_id"],
+            "Simulation proof · wide",
+        ),
+    ]
+
+
 def test_each_run_gets_the_arguments_its_own_variant_validated(
     tmp_path: Path, artifact_store
 ) -> None:
@@ -515,7 +563,7 @@ def test_a_failed_run_is_reported_and_not_recorded_as_a_result(
             simulation_run_id=call["args"]["simulation_run_id"],
             modules=list(call["args"]["execution_order"]),
             success=len(calls) == 1,
-            exit_codes=(0, 0, 0, 0, 0) if len(calls) == 1 else (0, 1, 0, 0, 0),
+            exit_codes=(0, 0, 0, 0, 0, 0) if len(calls) == 1 else (0, 1, 0, 0, 0, 0),
         )
 
     command, tools = _plan(

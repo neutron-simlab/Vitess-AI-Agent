@@ -23,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
+    "CaptureFluxReading",
     "FileKind",
     "ModuleExecution",
     "RunFile",
@@ -74,6 +75,25 @@ class RunFile(_Payload):
     size_bytes: int = Field(ge=0)
 
 
+class CaptureFluxReading(_Payload):
+    """What capture_flux printed to the simulation log, read back by the server.
+
+    The numbers are capture_flux's own (capture_flux.c:166,172-173), not a
+    recomputation: the application reports them, it does not derive them.
+    """
+
+    #: n/s, weighted by lambda / lambda_ref unless the reference wavelength is 0.
+    captured_intensity: float
+    captured_intensity_error: float
+    #: How many trajectories hit the foil and the wavelength window.
+    trajectories: int = Field(ge=0)
+    #: n/(s*cm^2): the captured intensity over the foil area (1 cm^2 with no foil).
+    capture_flux: float
+    capture_flux_error: float
+    #: Angstrom; 0 means no reference wavelength was used.
+    reference_wavelength: float
+
+
 class SimulationResult(_Payload):
     """The result of one VITESS pipeline, successful or not.
 
@@ -91,6 +111,9 @@ class SimulationResult(_Payload):
     modules: tuple[ModuleExecution, ...] = ()
     files: tuple[RunFile, ...] = ()
     message: str
+    #: ``None`` when the log holds no capture_flux result, e.g. the module failed
+    #: before printing one.
+    capture_flux: CaptureFluxReading | None = None
 
 
 class PlotResult(_Payload):

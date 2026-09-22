@@ -30,9 +30,17 @@ from vitess_ai.schema import (
 )
 
 
-EXECUTES = ("readin", "guide", "writeout", "monitor1d", "monitor2d")
+EXECUTES = ("readin", "guide", "writeout", "monitor1d", "monitor2d", "capture_flux")
 UPLOADS = ("readin", "instrument", "guide")
-CATALOG = ("readin", "instrument", "guide", "writeout", "monitor1d", "monitor2d")
+CATALOG = (
+    "readin",
+    "instrument",
+    "guide",
+    "writeout",
+    "monitor1d",
+    "monitor2d",
+    "capture_flux",
+)
 
 
 def test_pydantic_is_a_direct_runtime_dependency() -> None:
@@ -85,8 +93,8 @@ def test_importing_the_catalog_does_not_import_the_agent_framework() -> None:
     assert result.stdout.split() == ["False", "False"]
 
 
-def test_catalog_contains_exactly_the_six_known_modules() -> None:
-    """An inert seventh row must not disappear between the capability filters."""
+def test_catalog_contains_exactly_the_seven_known_modules() -> None:
+    """An inert eighth row must not disappear between the capability filters."""
     assert tuple(spec.name for spec in MODULES) == CATALOG
 
 
@@ -154,7 +162,7 @@ def test_executables_are_basenames_not_paths() -> None:
     assert not offenders, f"catalog rows carrying a path or a shell variable: {offenders}"
 
 
-def test_only_the_five_pipeline_modules_run_a_binary() -> None:
+def test_only_the_six_pipeline_modules_run_a_binary() -> None:
     """Named rather than blanket.
 
     "Every row has an executable" is false -- `instrument` uploads without

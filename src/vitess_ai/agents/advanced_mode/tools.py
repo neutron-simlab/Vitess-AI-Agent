@@ -52,6 +52,7 @@ from vitess_ai.schema.simulation_plan import MAX_SWEEP_RUNS, SimulationPlanEntry
 from vitess_ai.state import SimulationRunReference
 from vitess_ai.tools import (
     attach_artifacts,
+    capture_flux_summary,
     register_run_files,
     runtime_identity,
     state_mapping,
@@ -63,8 +64,10 @@ __all__ = ["MAX_SWEEP_RUNS", "build_batch_tools", "describe_module_parameters"]
 MATRIX_FILENAME = "simulation_matrix.json"
 
 # READIN always needs a staged source path and therefore cannot be constructed
-# from its schema defaults. These four modules have complete, runnable defaults.
-AUTO_DEFAULT_MODULES = frozenset({"guide", "writeout", "monitor1d", "monitor2d"})
+# from its schema defaults. These five modules have complete, runnable defaults.
+AUTO_DEFAULT_MODULES = frozenset(
+    {"guide", "writeout", "monitor1d", "monitor2d", "capture_flux"}
+)
 
 
 def _enum_type(annotation: Any) -> type[Enum] | None:
@@ -638,6 +641,7 @@ async def _run_one(
             thread_id=thread_id,
             graph_run_id=graph_run_id,
             result=outcome.result,
+            run_name=entry.run_name,
         )
     except ValueError as exc:
         return failure(f"VITESS returned unverifiable file metadata: {exc}")
@@ -657,8 +661,12 @@ async def _run_one(
     reference = SimulationRunReference(
         run_name=entry.run_name, simulation_run_id=entry.simulation_run_id
     )
+    line = f"- {entry.run_name}: completed ({exits})"
+    summary = capture_flux_summary(outcome.result)
+    if summary:
+        line += f". {summary}"
     return (
-        f"- {entry.run_name}: completed ({exits})",
+        line,
         events,
         reference.model_dump(mode="json"),
     )

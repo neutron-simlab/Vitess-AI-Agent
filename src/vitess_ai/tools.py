@@ -45,6 +45,7 @@ from vitess_ai.state import SimulationOrderEvent, SimulationRunReference
 __all__ = [
     "attach_artifacts",
     "build_vitess_tools",
+    "capture_flux_summary",
     "plan_simulation",
     "register_run_files",
     "runtime_identity",
@@ -53,7 +54,7 @@ __all__ = [
     "vitess_supervisor_middleware",
 ]
 
-# The five helpers above are public because the batch path needs them too.
+# The helpers above are public because the batch path needs them too.
 # `vitess_ai.agents.advanced_mode.tools` reads the same trusted identity, writes
 # the same kind of tool message and registers produced files through the same
 # artifact checks -- one execution path, two trusted callers (03/CP5). A second
@@ -131,6 +132,30 @@ def tool_message(
         content=content,
         tool_call_id=runtime.tool_call_id,
         status="error" if error else "success",
+    )
+
+
+def capture_flux_summary(result: SimulationResult) -> str | None:
+    """One sentence with the capture flux the server read from the run's log.
+
+    Both run paths append it to their tool message, so the supervisor can
+    report the number without a log in its context. ``None`` when the run has
+    no reading.
+    """
+    reading = result.capture_flux
+    if reading is None:
+        return None
+    reference = (
+        f"reference wavelength {reading.reference_wavelength:.3f} Å"
+        if reading.reference_wavelength > 0
+        else "no reference wavelength"
+    )
+    return (
+        "Capture flux from the capture_flux log: "
+        f"{reading.capture_flux:.3e} ± {reading.capture_flux_error:.3e} n/(s·cm²); "
+        f"captured intensity {reading.captured_intensity:.3e} ± "
+        f"{reading.captured_intensity_error:.3e} n/s from {reading.trajectories} "
+        f"trajectories; {reference}."
     )
 
 
@@ -307,6 +332,7 @@ def register_run_files(
     thread_id: str,
     graph_run_id: str,
     result: SimulationResult,
+    run_name: str | None = None,
 ) -> tuple[list[str], list[str], list[tuple[str, str]]]:
     resolved = _load_descriptors(project_root, result)
     store = get_artifact_store()
@@ -340,6 +366,8 @@ def register_run_files(
                 filename=path.name,
                 content=path.read_bytes(),
                 caption=f"VITESS output: {descriptor.path}",
+                group_id=str(result.simulation_run_id),
+                group_label=f"Simulation proof · {run_name or result.simulation_run_id}",
             )
         except (OSError, ValueError) as exc:
             reason = str(exc) or type(exc).__name__
@@ -533,6 +561,7 @@ def build_vitess_tools(
                 thread_id=thread_id,
                 graph_run_id=graph_run_id,
                 result=outcome.result,
+                run_name=display_name,
             )
         except ValueError as exc:
             failure = ExecutionEvidence(
@@ -567,6 +596,9 @@ def build_vitess_tools(
             f"VITESS {display_name!r}: {outcome.result.message}. "
             f"Server evidence: {module_summary or 'no module process started'}."
         )
+        summary = capture_flux_summary(outcome.result)
+        if summary:
+            message += f" {summary}"
         update: dict[str, Any] = {
             "messages": [tool_message(runtime, message, error=not outcome.success)],
             "execution_events": events,
@@ -652,6 +684,7 @@ def build_vitess_tools(
                     thread_id=thread_id,
                     graph_run_id=graph_run_id,
                     result=synthetic,
+                    run_name=reference.run_name,
                 )
             except ValueError as exc:
                 return tool_message(

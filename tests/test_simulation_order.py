@@ -256,7 +256,7 @@ def test_the_planned_the_delegated_and_the_executed_orders_agree(
     ]
     assert harness.tool_errors(result) == []
     assert "<verified_by_server>" in result["messages"][-1].text
-    assert "Executions: 5" in result["messages"][-1].text
+    assert f"Executions: {len(execution_order())}" in result["messages"][-1].text
 
 
 def test_the_executed_arguments_are_the_ones_the_specialists_validated(
