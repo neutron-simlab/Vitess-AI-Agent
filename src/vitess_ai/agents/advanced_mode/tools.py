@@ -1,751 +1,675 @@
-"""
-Tools for advanced mode agent.
+"""The trusted schema, planning and execution tools for a parameter sweep.
 
-Simplified version that delegates simulation execution to MCP supervisor tools.
+`write_simulation_matrix` expands the sweep and `run_batch_from_matrix` executes
+it. Between them sits the `simulation_plan` channel, and the point of the pair is
+what is **not** in either signature: no `module_results`, no `run_specs`, no
+`execution_order`, no `thread_id`. The first-generation batch tool took all four
+from the model (`agents/advanced_mode/tools.py:458`), so the sweep reached
+execution through model-authored parameters while the guided path was busy
+closing exactly that route.
+
+Two smaller things the first generation got wrong and this does not:
+
+*The matrix file is written, not read.* It was the input to execution --
+`run_batch_from_matrix` loaded it, converted it and ran it -- so a file anyone
+could edit decided what VITESS did. Here the file is **rendered from the plan**,
+the same way 03/CP1 renders a display command that is never executed: readable,
+checkable, downloadable, and not the thing that runs.
+
+*`run_id` was the model's `run_name`.* Whatever the model called a run became a
+directory name on a shared volume. The two are separate fields now, and only one
+of them is an identifier.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
-import os
+from datetime import datetime, timezone
+from enum import Enum
+from itertools import product
+from math import prod
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, get_args
+from uuid import UUID, uuid4
 
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
+from langchain_core.tools import BaseTool, InjectedToolArg
+from langgraph.types import Command
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic.json_schema import SkipJsonSchema
 
-from vitess_ai.core.config import global_config
-from vitess_ai.agents.simulator.tools.readin import readin_params_to_cli
-from vitess_ai.agents.simulator.tools.guide import guide_params_to_cli
-from vitess_ai.agents.simulator.tools.writeout import writeout_params_to_cli
-from vitess_ai.agents.simulator.tools.monitor import monitor1d_params_to_cli, monitor2d_params_to_cli
-from vitess_ai.retrieval.tools import get_rag_tools
+from juena_core.schema.interrupts import ExecutionEvidence
+from vitess_ai.agents.specialists.module_tools import validate_module_parameters
+from vitess_ai.cli.arguments import parameters_to_arguments
+from vitess_ai.modules.catalog import execution_order
+from vitess_ai.modules.parameters import parameter_model
+from vitess_ai.run import InternalSimulationRequest, VitessGateway
+from vitess_ai.schema.module_result import (
+    ModuleConfigurationResult,
+    module_schema_version,
+)
+from vitess_ai.schema.simulation_plan import MAX_SWEEP_RUNS, SimulationPlanEntry
+from vitess_ai.state import SimulationRunReference
+from vitess_ai.tools import (
+    attach_artifacts,
+    capture_flux_summary,
+    register_run_files,
+    runtime_identity,
+    state_mapping,
+    tool_message,
+)
 
+__all__ = ["MAX_SWEEP_RUNS", "build_batch_tools", "describe_module_parameters"]
 
-def _resolve_thread_id(thread_id: str | None = None) -> str | None:
-    """Resolve thread id from arg or environment."""
-    return thread_id or os.environ.get("THREAD_ID")
+MATRIX_FILENAME = "simulation_matrix.json"
 
-
-# ============================================================================
-# MODULE CLI CONVERTERS
-# ============================================================================
-
-MODULE_CLI_CONVERTERS = {
-    "readin": readin_params_to_cli,
-    "guide": guide_params_to_cli,
-    "writeout": writeout_params_to_cli,
-    "monitor1d": monitor1d_params_to_cli,
-    "monitor2d": monitor2d_params_to_cli,
-}
-
-# Canonical order for pipeline; used to infer execution_order from matrix when not provided.
-# Monitors are last so they receive piped input from writeout.
-CANONICAL_EXECUTION_ORDER = ["readin", "guide", "writeout", "monitor1d", "monitor2d"]
-
-
-def _execution_order_for_simulation(
-    simulation: dict[str, Any],
-    execution_order: list[str] | None,
-) -> list[str]:
-    """
-    Resolve execution_order for a single simulation.
-    When execution_order is None, infer from simulation keys using canonical order.
-    When provided, use only modules that are present in this simulation.
-    """
-    if execution_order is not None:
-        return [m for m in execution_order if simulation.get(m)]
-    return [m for m in CANONICAL_EXECUTION_ORDER if simulation.get(m)]
+# READIN always needs a staged source path and therefore cannot be constructed
+# from its schema defaults. These five modules have complete, runnable defaults.
+AUTO_DEFAULT_MODULES = frozenset(
+    {"guide", "writeout", "monitor1d", "monitor2d", "capture_flux"}
+)
 
 
-def _convert_simulation_to_module_results(
-    simulation: dict[str, Any],
-    execution_order: list[str],
-) -> dict[str, Any]:
-    """
-    Convert a simulation config (JSON parameters) to module_results with cli_parameters.
+def _enum_type(annotation: Any) -> type[Enum] | None:
+    """Return an enum contained in one field annotation, if it has one."""
 
-    Output filenames (e.g. writeout sOutFileName) can stay as bare names; P is set to
-    thread_id/outputs/run_id in the script so binaries resolve them under the run folder.
-    """
-    module_results = {}
-    errors = []
+    for candidate in (annotation, *get_args(annotation)):
+        if isinstance(candidate, type) and issubclass(candidate, Enum):
+            return candidate
+    return None
 
-    for module_name in execution_order:
-        params = simulation.get(module_name)
-        if not params:
-            errors.append(f"Missing parameters for module: {module_name}")
+
+@tool(
+    "describe_module_parameters",
+    description=(
+        "Return the authoritative Pydantic parameter schema for one runnable "
+        "VITESS module. Use this for exact field names, command-line flags, "
+        "defaults, units, ranges, and enum name-to-number mappings; do not "
+        "infer those facts from memory or from the manual."
+    ),
+)
+def describe_module_parameters(module: str) -> str:
+    """Render schema facts without maintaining a second parameter catalogue."""
+
+    known = execution_order()
+    if module not in known:
+        return json.dumps(
+            {
+                "error": f"Unknown runnable VITESS module: {module!r}",
+                "known_modules": list(known),
+            },
+            indent=2,
+        )
+
+    model = parameter_model(module)
+    enum_mappings: dict[str, dict[str, Any]] = {}
+    for field in model.model_fields.values():
+        enum_type = _enum_type(field.annotation)
+        if enum_type is not None:
+            enum_mappings[enum_type.__name__] = {
+                member.name: member.value for member in enum_type
+            }
+
+    # `model_construct()` fills in the defaults without running the model's checks.
+    # `model()` would run them, and READIN's "at least one input file is required"
+    # rejects an empty READIN, so the tool failed every time it was asked about it.
+    return json.dumps(
+        {
+            "module": module,
+            "parameter_model": model.__name__,
+            "schema_defaults": model.model_construct().model_dump(mode="json"),
+            "enum_mappings": enum_mappings,
+            "json_schema": model.model_json_schema(),
+        },
+        indent=2,
+    )
+
+
+class _SweepArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    combination: Literal["cartesian", "paired"] = Field(
+        description=(
+            "How to combine the modules' variants. 'cartesian' runs every "
+            "combination; 'paired' runs one simulation per row, taking the "
+            "first variant of each module together, then the second, and so on."
+        )
+    )
+    run_names: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional human-readable name for each run, in order. Names are "
+            "labels, not identifiers -- the server names the output directory."
+        ),
+    )
+    runtime: Annotated[
+        ToolRuntime[Any, Any],
+        InjectedToolArg,
+        SkipJsonSchema(),
+    ]
+
+
+class _BatchArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    runtime: Annotated[
+        ToolRuntime[Any, Any],
+        InjectedToolArg,
+        SkipJsonSchema(),
+    ]
+
+
+def _current_result(module: str, value: Any) -> ModuleConfigurationResult:
+    """Validate one stored result against the module and schema in this build."""
+
+    result = ModuleConfigurationResult.model_validate(value)
+    if result.module != module:
+        raise ValueError(
+            f"A configuration recorded under {module!r} says it is for "
+            f"{result.module!r}"
+        )
+    current_version = module_schema_version(parameter_model(module))
+    if result.schema_version != current_version:
+        raise ValueError(
+            f"The {module!r} parameter schema has changed since its variants "
+            "were validated. Delegate to that specialist again."
+        )
+    return result
+
+
+def _variants(
+    runtime: ToolRuntime[Any, Any],
+    *,
+    project_root: Path,
+    thread_id: str,
+) -> dict[str, list[ModuleConfigurationResult]]:
+    """Recorded variants plus trusted schema defaults for untouched modules."""
+
+    stored = state_mapping(runtime).get("module_variants")
+    if stored is None:
+        stored = {}
+    if not isinstance(stored, dict):
+        raise ValueError("The recorded module variants are not a module mapping")
+
+    planned = execution_order()
+    missing = [module for module in planned if module not in stored]
+    required = [module for module in missing if module not in AUTO_DEFAULT_MODULES]
+    if required:
+        raise ValueError(
+            "These modules have no validated variants: "
+            + ", ".join(required)
+            + ". READIN must be delegated because its staged input path has no "
+            "runnable schema default."
+        )
+    unplanned = sorted(set(stored) - set(planned))
+    if unplanned:
+        raise ValueError("These variants belong to no pipeline module: " + ", ".join(unplanned))
+
+    variants: dict[str, list[ModuleConfigurationResult]] = {}
+    for module in planned:
+        if module not in stored:
+            model = parameter_model(module)
+            variants[module] = [
+                validate_module_parameters(
+                    {},
+                    module=module,
+                    model=model,
+                    schema_version=module_schema_version(model),
+                    project_root=project_root,
+                    thread_id=thread_id,
+                )
+            ]
             continue
-
-        if isinstance(params, dict) and (
-            params.get("validation_status") is False or "errors" in params
-        ):
-            errors.append(
-                f"Module {module_name}: invalid or failed validation result, do not use as parameters"
-            )
-            continue
-
-        converter = MODULE_CLI_CONVERTERS.get(module_name)
-        if not converter:
-            errors.append(f"No CLI converter for module: {module_name}")
-            continue
-
-        try:
-            cli_string = converter(params)
-            module_results[module_name] = {
-                "parameters": params,
-                "cli_parameters": cli_string,
-                "validation_status": True,
-            }
-        except Exception as exc:
-            errors.append(f"Failed to convert {module_name} params to CLI: {exc}")
-
-    return {
-        "module_results": module_results,
-        "errors": errors,
-        "success": len(errors) == 0,
-    }
+        entries = stored[module]
+        if not isinstance(entries, list) or not entries:
+            raise ValueError(f"The variants recorded for {module} are not a non-empty list")
+        validated = [_current_result(module, entry) for entry in entries]
+        variants[module] = validated
+    return variants
 
 
-# ============================================================================
-# MODULE SUBAGENT RESULT (structured contract for orchestrator)
-# ============================================================================
+def _combination_size(
+    variants: dict[str, list[ModuleConfigurationResult]],
+    combination: str,
+) -> int:
+    """Return the expansion size without constructing the expansion."""
 
-def _is_error_shaped_dict(value: Any) -> bool:
-    """True if value looks like a validation error payload (dict key checks only, no regex)."""
-    if not isinstance(value, dict):
-        return False
-    return "validation_status" in value or "errors" in value
+    planned = list(execution_order())
+    if combination == "cartesian":
+        return prod(len(variants[module]) for module in planned)
+    if combination != "paired":
+        raise ValueError(f"Unknown sweep combination: {combination!r}")
+
+    lengths = {len(variants[module]) for module in planned}
+    width = max(lengths)
+    uneven = [
+        module for module in planned if len(variants[module]) not in (1, width)
+    ]
+    if uneven:
+        raise ValueError(
+            "A paired sweep needs every module to have the same number of "
+            f"variants, or exactly one to reuse. These have neither: "
+            + ", ".join(f"{module} ({len(variants[module])})" for module in uneven)
+            + f"; the widest is {width}."
+        )
+    return width
 
 
-@tool
-def submit_module_result(
-    module_name: str,
-    validation_passed: bool,
-    parameters: dict[str, Any] | list[dict[str, Any]] | None = None,
-    error_message: str | None = None,
-) -> dict[str, Any]:
+def _combine(
+    variants: dict[str, list[ModuleConfigurationResult]],
+    combination: str,
+) -> list[dict[str, ModuleConfigurationResult]]:
+    """Expand the per-module variants into one configuration set per run.
+
+    'paired' is the case the first-generation prompt had to explain at length,
+    because a model reads `[(1,1), (2,2), (3,3)]` as three setups and a Cartesian
+    product reads it as nine. Here it is a named argument rather than something
+    inferred from the shape of what the model sent.
     """
-    Report the module result to the orchestrator. Call this after running the module's
-    validate_* tool. Return value is always a dictionary the orchestrator can read by key.
 
-    Args:
-        module_name: Module name (e.g. readin, guide, writeout).
-        validation_passed: True if validation succeeded and parameters are ready for CLI.
-        parameters: Validated parameter dict or list of parameter dicts
-            (required when validation_passed is True).
-        error_message: Error description (required when validation_passed is False).
+    planned = list(execution_order())
+    if combination == "cartesian":
+        return [
+            dict(zip(planned, chosen, strict=True))
+            for chosen in product(*(variants[module] for module in planned))
+        ]
 
-    Returns:
-        Dict with keys: accepted, module, validation_passed, and either parameters or error.
-    """
-    if validation_passed:
-        if not parameters:
-            return {
-                "accepted": False,
-                "module": module_name,
-                "validation_passed": False,
-                "error": (
-                    "parameters must be a non-empty dict or non-empty list of dicts "
-                    "when validation_passed is True"
-                ),
-            }
-
-        if isinstance(parameters, dict):
-            return {
-                "accepted": True,
-                "module": module_name,
-                "validation_passed": True,
-                "parameters": parameters,
-            }
-
-        if isinstance(parameters, list):
-            if any(not isinstance(param_set, dict) or not param_set for param_set in parameters):
-                return {
-                    "accepted": False,
-                    "module": module_name,
-                    "validation_passed": False,
-                    "error": "all items in parameters must be non-empty dicts",
-                }
-            return {
-                "accepted": True,
-                "module": module_name,
-                "validation_passed": True,
-                "parameters": parameters,
-            }
-
-        return {
-            "accepted": False,
-            "module": module_name,
-            "validation_passed": False,
-            "error": "parameters must be a dict or list of dicts when validation_passed is True",
+    width = _combination_size(variants, combination)
+    return [
+        {
+            module: variants[module][index if len(variants[module]) > 1 else 0]
+            for module in planned
         }
-
-    if not error_message:
-        return {
-            "accepted": False,
-            "module": module_name,
-            "validation_passed": False,
-            "error": "error_message is required when validation_passed is False",
-        }
-    return {
-        "accepted": True,
-        "module": module_name,
-        "validation_passed": False,
-        "error": error_message,
-    }
+        for index in range(width)
+    ]
 
 
-# ============================================================================
-# FILE LISTING TOOLS
-# ============================================================================
+def _render_matrix(
+    entries: list[SimulationPlanEntry],
+    *,
+    combination: str,
+) -> bytes:
+    """Render the plan as the readable file the sweep can be checked against.
 
-@tool
-async def list_thread_input_files(thread_id: str | None = None) -> dict[str, Any]:
+    Rendered from the plan rather than being the plan's source, so editing it
+    changes nothing that runs.
     """
-    List uploaded input files available for a thread.
 
-    Returns a flat list of all uploaded files with module, filename, and path.
-    """
-    from vitess_ai.mcp import supervisor_tools
-
-    resolved_thread_id = _resolve_thread_id(thread_id)
-    inspection = await supervisor_tools.inspect_thread_folders.fn(thread_id=resolved_thread_id)
-    if not inspection.get("success"):
-        return inspection
-
-    structure = inspection.get("folder_structure", {})
-    uploads = (structure.get("uploads") or {}).get("modules", {})
-
-    flattened: list[dict[str, Any]] = []
-    for module_name, module_payload in uploads.items():
-        module_path = module_payload.get("path")
-        for item in module_payload.get("files", []):
-            filename = item.get("filename")
-            flattened.append(
-                {
-                    "module": module_name,
-                    "filename": filename,
-                    "file_size": item.get("file_size"),
-                    "modified_at": item.get("modified_at"),
-                    "path": str(Path(module_path) / filename) if module_path and filename else None,
-                }
-            )
-
-    return {
-        "success": True,
-        "thread_id": resolved_thread_id,
-        "upload_modules": sorted(list(uploads.keys())),
-        "total_files": len(flattened),
-        "files": flattened,
-    }
-
-
-# ============================================================================
-# SIMULATION MATRIX I/O
-# ============================================================================
-
-@tool
-async def write_simulation_matrix(
-    simulations: list[dict[str, Any]],
-    thread_id: str | None = None,
-    filename: str = "simulation_matrix.json",
-) -> dict[str, Any]:
-    """
-    Write the simulation matrix to a JSON file.
-
-    Args:
-        simulations: List of simulation configs with module parameters.
-        thread_id: Optional thread ID.
-        filename: Output filename (default: simulation_matrix.json).
-
-    Returns:
-        Dictionary with success status and file path.
-    """
-    resolved_thread_id = _resolve_thread_id(thread_id)
-    if not resolved_thread_id:
-        return {"success": False, "message": "No thread_id available.", "file_path": None}
-
-    invalid = []
-    missing_required = []
-    for i, sim in enumerate(simulations):
-        sim_id = sim.get("id", f"sim_{i + 1:03d}")
-        for module_name in CANONICAL_EXECUTION_ORDER:
-            if sim.get(module_name) is None:
-                missing_required.append(f"{sim_id}/{module_name}")
-        for module_name, value in sim.items():
-            if module_name == "id":
-                continue
-            if _is_error_shaped_dict(value):
-                invalid.append(f"{sim_id}/{module_name}")
-    if invalid:
-        return {
-            "success": False,
-            "thread_id": resolved_thread_id,
-            "file_path": None,
-            "message": f"Simulation matrix contains invalid or error-shaped module data; do not use validation errors as parameters. Invalid entries: {', '.join(invalid)}",
-        }
-    if missing_required:
-        return {
-            "success": False,
-            "thread_id": resolved_thread_id,
-            "file_path": None,
-            "message": (
-                "Simulation matrix must include all five modules "
-                f"(readin, guide, writeout, monitor1d, monitor2d). "
-                f"Missing entries: {', '.join(missing_required)}"
-            ),
-        }
-
-    output_dir = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / filename
-
-    matrix_data = {
+    document = {
         "metadata": {
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "thread_id": resolved_thread_id,
-            "total_simulations": len(simulations),
+            "combination": combination,
+            "total_simulations": len(entries),
+            "note": (
+                "Rendered from the recorded simulation plan for review. Editing "
+                "this file changes nothing: the plan is what executes."
+            ),
         },
-        "simulations": simulations,
+        "simulations": [
+            {
+                "run_name": entry.run_name,
+                "simulation_run_id": str(entry.simulation_run_id),
+                "modules": {
+                    module: result.parameters
+                    for module, result in entry.modules.items()
+                },
+                "arguments": {
+                    module: parameters_to_arguments(
+                        parameter_model(module)(**result.parameters)
+                    )
+                    for module, result in entry.modules.items()
+                },
+            }
+            for entry in entries
+        ],
     }
-
-    try:
-        file_path.write_text(json.dumps(matrix_data, indent=2), encoding="utf-8")
-        return {
-            "success": True,
-            "thread_id": resolved_thread_id,
-            "file_path": str(file_path),
-            "total_simulations": len(simulations),
-            "message": f"Simulation matrix saved to {file_path}",
-        }
-    except Exception as exc:
-        return {
-            "success": False,
-            "thread_id": resolved_thread_id,
-            "file_path": str(file_path),
-            "message": f"Failed to write simulation matrix: {exc}",
-        }
+    return json.dumps(document, indent=2).encode("utf-8")
 
 
-@tool
-async def read_simulation_matrix(
-    thread_id: str | None = None,
-    filename: str = "simulation_matrix.json",
-) -> dict[str, Any]:
-    """
-    Read a simulation matrix from file.
+def build_batch_tools(
+    gateway: VitessGateway,
+    *,
+    project_root: str | Path | None = None,
+) -> list[BaseTool]:
+    """Build the sweep's two tools over the one MCP gateway."""
 
-    Args:
-        thread_id: Optional thread ID.
-        filename: Input filename (default: simulation_matrix.json).
+    root = Path(project_root or "/data/projects").expanduser().resolve()
 
-    Returns:
-        Dictionary with the simulation matrix data.
-    """
-    resolved_thread_id = _resolve_thread_id(thread_id)
-    if not resolved_thread_id:
-        return {"success": False, "message": "No thread_id available.", "file_path": None}
-
-    file_path = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs" / filename
-    if not file_path.exists():
-        return {
-            "success": False,
-            "thread_id": resolved_thread_id,
-            "file_path": str(file_path),
-            "message": f"Simulation matrix file not found: {file_path}",
-        }
-
-    try:
-        matrix_data = json.loads(file_path.read_text(encoding="utf-8"))
-        return {
-            "success": True,
-            "thread_id": resolved_thread_id,
-            "file_path": str(file_path),
-            "matrix": matrix_data,
-            "total_simulations": len(matrix_data.get("simulations", [])),
-            "message": f"Loaded simulation matrix from {file_path}",
-        }
-    except Exception as exc:
-        return {
-            "success": False,
-            "thread_id": resolved_thread_id,
-            "file_path": str(file_path),
-            "message": f"Failed to read simulation matrix: {exc}",
-        }
-
-
-# ============================================================================
-# CONVERSION: JSON PARAMS → CLI STRINGS
-# ============================================================================
-
-@tool
-async def convert_matrix_to_run_specs(
-    thread_id: str | None = None,
-    filename: str = "simulation_matrix.json",
-    execution_order: list[str] | None = None,
-) -> dict[str, Any]:
-    """
-    Convert a simulation matrix (JSON parameters) to run specs with CLI strings.
-
-    Args:
-        thread_id: Optional thread ID.
-        filename: Simulation matrix filename.
-        execution_order: Module execution order. If None, inferred from each simulation's
-            keys using canonical order (readin, guide, writeout, monitor1d, monitor2d),
-            so monitor modules are included when present in the matrix.
-
-    Returns:
-        Dictionary with run_specs ready for run_simulation MCP tool.
-    """
-    resolved_thread_id = _resolve_thread_id(thread_id)
-    if not resolved_thread_id:
-        return {"success": False, "message": "No thread_id available."}
-
-    file_path = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs" / filename
-    if not file_path.exists():
-        return {
-            "success": False,
-            "thread_id": resolved_thread_id,
-            "file_path": str(file_path),
-            "message": f"Simulation matrix file not found: {file_path}",
-        }
-
-    try:
-        matrix_data = json.loads(file_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return {"success": False, "thread_id": resolved_thread_id, "message": f"Failed to read: {exc}"}
-
-    simulations = matrix_data.get("simulations", [])
-    if not simulations:
-        return {"success": False, "thread_id": resolved_thread_id, "message": "No simulations in matrix."}
-
-    run_specs = []
-    errors = []
-
-    for sim in simulations:
-        sim_id = sim.get("id", f"sim_{len(run_specs) + 1:03d}")
-        exec_order = _execution_order_for_simulation(sim, execution_order)
-        if not exec_order:
-            errors.append(f"[{sim_id}] No known modules found in simulation keys: {list(sim.keys())}")
-            continue
-        conversion = _convert_simulation_to_module_results(sim, exec_order)
-
-        if conversion["success"]:
-            run_specs.append({
-                "run_name": sim_id,
-                "module_results": conversion["module_results"],
-                "execution_order": exec_order,
-            })
-        else:
-            errors.extend([f"[{sim_id}] {e}" for e in conversion["errors"]])
-
-    return {
-        "success": len(run_specs) > 0,
-        "thread_id": resolved_thread_id,
-        "total_simulations": len(simulations),
-        "converted_runs": len(run_specs),
-        "run_specs": run_specs,
-        "execution_order": run_specs[0]["execution_order"] if run_specs else [],
-        "errors": errors if errors else None,
-        "message": f"Converted {len(run_specs)}/{len(simulations)} simulations to run specs.",
-    }
-
-
-# ============================================================================
-# SIMULATION EXECUTION (DELEGATES TO MCP)
-# ============================================================================
-
-@tool
-async def run_batch_from_matrix(
-    thread_id: str | None = None,
-    filename: str = "simulation_matrix.json",
-    execution_order: list[str] | None = None,
-    execute: bool = True,
-    run_specs: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """
-    Run 1 to N simulations sequentially via MCP.
-
-    Accepts either in-memory run_specs or a matrix file. When run_specs is
-    provided and non-empty, it is used directly (filename is ignored).
-    Otherwise the matrix is loaded from filename and converted to run_specs.
-
-    Args:
-        thread_id: Optional thread ID. Required when executing.
-        filename: Simulation matrix filename (used only when run_specs is not provided).
-        execution_order: Module execution order. If None, inferred from each simulation
-            in the matrix (can include monitor1d, monitor2d when present).
-            Ignored when run_specs is provided.
-        execute: Whether to execute (True) or just generate CLIs (False).
-        run_specs: Optional list of run specs, each with run_name, module_results,
-            execution_order. When provided and non-empty, use this instead of loading
-            from filename. Use for single or multiple in-memory runs (e.g. from
-            convert_matrix_to_run_specs).
-
-    Returns:
-        Dictionary with results for each simulation (total_runs, succeeded, failed, results).
-    """
-    from vitess_ai.mcp import supervisor_tools
-
-    resolved_thread_id = _resolve_thread_id(thread_id)
-    if not resolved_thread_id:
-        return {"success": False, "message": "No thread_id available."}
-
-    # Resolve run_specs: either use provided list or load from matrix file
-    if run_specs:
-        run_specs = list(run_specs)
-    if not run_specs:
-        # Load matrix and convert to run specs
-        conversion = await convert_matrix_to_run_specs.ainvoke({
-            "thread_id": resolved_thread_id,
-            "filename": filename,
-            "execution_order": execution_order,
-        })
-        if not conversion.get("success"):
-            return conversion
-        run_specs = conversion.get("run_specs", [])
-    if not run_specs:
-        return {
-            "success": False,
-            "thread_id": resolved_thread_id,
-            "message": "No run specs to execute. Provide run_specs or ensure matrix file exists at filename.",
-        }
-
-    # Run each simulation sequentially via MCP
-    results = []
-    succeeded = 0
-    failed = 0
-
-    for run_spec in run_specs:
-        run_name = run_spec.get("run_name", "unknown")
-        module_results = run_spec.get("module_results", {})
-        exec_order = run_spec.get("execution_order", CANONICAL_EXECUTION_ORDER)
-
+    @tool(
+        "write_simulation_matrix",
+        args_schema=_SweepArguments,
+        description=(
+            "Expand the validated module variants into the runs of this sweep "
+            "and record the plan. Say whether the variants combine as a "
+            "Cartesian product or as paired rows. Untouched guide, writeout, and "
+            "monitor modules receive exact schema defaults in trusted code."
+        ),
+    )
+    def write_simulation_matrix(
+        runtime: ToolRuntime[Any, Any],
+        combination: Literal["cartesian", "paired"],
+        run_names: list[str] | None = None,
+    ) -> Command:
         try:
-            sim_result = await supervisor_tools.run_simulation.fn(
-                module_results=module_results,
-                execution_order=exec_order,
-                execute=execute,
-                thread_id=resolved_thread_id,
-                run_id=run_name,
+            user_id, thread_id, graph_run_id = runtime_identity(runtime)
+            variants = _variants(
+                runtime,
+                project_root=root,
+                thread_id=thread_id,
+            )
+            combination_size = _combination_size(variants, combination)
+        except (ValidationError, ValueError) as exc:
+            return Command(
+                update={"messages": [tool_message(runtime, str(exc), error=True)]}
             )
 
-            run_result = {
-                "run_name": run_name,
-                "success": sim_result.get("success", False),
-                "executed": sim_result.get("executed", False),
-                "message": sim_result.get("message", ""),
-                "cli_command": sim_result.get("cli_command", ""),
+        if combination_size > MAX_SWEEP_RUNS:
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(
+                            runtime,
+                            f"That combination is {combination_size} simulations, over "
+                            f"the limit of {MAX_SWEEP_RUNS}. A sweep this wide is "
+                            "usually a Cartesian product where paired rows were "
+                            "meant. Check with the user which they want before "
+                            "expanding it.",
+                            error=True,
+                        )
+                    ]
+                }
+            )
+
+        combined = _combine(variants, combination)
+
+        names = list(run_names or [])
+        if names and len(names) != len(combined):
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(
+                            runtime,
+                            f"{len(names)} run names were given for "
+                            f"{len(combined)} simulations.",
+                            error=True,
+                        )
+                    ]
+                }
+            )
+        if len(set(names)) != len(names):
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(
+                            runtime, "Run names must be distinct.", error=True
+                        )
+                    ]
+                }
+            )
+
+        try:
+            entries = [
+                SimulationPlanEntry(
+                    run_name=names[index] if names else f"run {index + 1}",
+                    # Generated here, by trusted code. The model names runs; it does
+                    # not name directories.
+                    simulation_run_id=uuid4(),
+                    modules=modules,
+                )
+                for index, modules in enumerate(combined)
+            ]
+        except ValidationError as exc:
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(runtime, f"Run names are not valid: {exc}", error=True)
+                    ]
+                }
+            )
+        normalized_names = [entry.run_name for entry in entries]
+        if len(set(normalized_names)) != len(normalized_names):
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(runtime, "Run names must be distinct.", error=True)
+                    ]
+                }
+            )
+
+        rendered = _render_matrix(entries, combination=combination)
+        delivered = ""
+        try:
+            from juena_core.artifacts import get_artifact_store
+
+            reference = get_artifact_store().register_artifact(
+                user_id=user_id,
+                thread_id=thread_id,
+                run_id=graph_run_id,
+                filename=MATRIX_FILENAME,
+                content=rendered,
+                caption="Simulation matrix",
+            )
+            delivered = f" The matrix is attached as {reference.filename} for review."
+        except (OSError, ValueError) as exc:
+            delivered = f" The matrix could not be attached for review: {exc}"
+
+        summary = ", ".join(
+            f"{entry.run_name}" for entry in entries[:6]
+        ) + ("…" if len(entries) > 6 else "")
+        return Command(
+            update={
+                "messages": [
+                    tool_message(
+                        runtime,
+                        f"Planned {len(entries)} simulation(s) as a "
+                        f"{combination} sweep: {summary}.{delivered}",
+                    )
+                ],
+                "simulation_plan": [entry.model_dump(mode="json") for entry in entries],
             }
+        )
 
-            if sim_result.get("success"):
+    @tool(
+        "run_batch_from_matrix",
+        args_schema=_BatchArguments,
+        description=(
+            "Run every simulation in the recorded plan, one after another, and "
+            "report what each one did. Takes no arguments: it runs the plan "
+            "`write_simulation_matrix` recorded and nothing else."
+        ),
+    )
+    async def run_batch_from_matrix(runtime: ToolRuntime[Any, Any]) -> Command:
+        try:
+            user_id, thread_id, graph_run_id = runtime_identity(runtime)
+        except ValueError as exc:
+            return Command(
+                update={"messages": [tool_message(runtime, str(exc), error=True)]}
+            )
+
+        stored = state_mapping(runtime).get("simulation_plan")
+        if not isinstance(stored, list) or not stored:
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(
+                            runtime,
+                            "There is no simulation plan to run. Call "
+                            "write_simulation_matrix first.",
+                            error=True,
+                        )
+                    ]
+                }
+            )
+        try:
+            plan = [SimulationPlanEntry.model_validate(entry) for entry in stored]
+        except ValidationError as exc:
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(
+                            runtime, f"The recorded plan is not usable: {exc}", error=True
+                        )
+                    ]
+                }
+            )
+        if len(plan) > MAX_SWEEP_RUNS:
+            event = ExecutionEvidence(
+                graph_run_id=graph_run_id,
+                command="VITESS parameter sweep",
+                status="tool_error",
+                exit_code=None,
+            )
+            return Command(
+                update={
+                    "messages": [
+                        tool_message(
+                            runtime,
+                            f"The recorded plan contains {len(plan)} simulations, "
+                            f"over the limit of {MAX_SWEEP_RUNS}.",
+                            error=True,
+                        )
+                    ],
+                    "execution_events": [event.model_dump(mode="json")],
+                }
+            )
+
+        planned = execution_order()
+        events: list[dict[str, Any]] = []
+        references: list[dict[str, Any]] = []
+        lines: list[str] = []
+        succeeded = 0
+
+        for entry in plan:
+            outcome_line, entry_events, reference = await _run_one(
+                gateway,
+                entry,
+                planned=planned,
+                project_root=root,
+                user_id=user_id,
+                thread_id=thread_id,
+                graph_run_id=graph_run_id,
+            )
+            events.extend(entry_events)
+            lines.append(outcome_line)
+            if reference is not None:
+                references.append(reference)
                 succeeded += 1
-            else:
-                failed += 1
-                run_result["error"] = sim_result.get("error")
 
-            results.append(run_result)
-
-        except Exception as exc:
-            failed += 1
-            results.append({
-                "run_name": run_name,
-                "success": False,
-                "executed": False,
-                "message": f"Exception: {exc}",
-                "error": str(exc),
-            })
-
-    return {
-        "success": failed == 0,
-        "thread_id": resolved_thread_id,
-        "total_runs": len(run_specs),
-        "succeeded": succeeded,
-        "failed": failed,
-        "results": results,
-        "message": f"Batch complete: {succeeded} succeeded, {failed} failed.",
-    }
-
-
-# ============================================================================
-# PLOT GENERATION
-# ============================================================================
-
-def _get_outputs_dir(thread_id: str | None, run_id: str | None) -> dict[str, Any]:
-    """Resolve thread_id and run_id to outputs directory path. Returns error dict or dict with 'outputs_dir'."""
-    resolved_thread_id = _resolve_thread_id(thread_id)
-    if not resolved_thread_id:
-        return {
-            "success": False,
-            "error": "No thread_id available.",
-            "plot_data": {},
-            "message": "No thread_id provided and not available in environment.",
+        update: dict[str, Any] = {
+            "messages": [
+                tool_message(
+                    runtime,
+                    f"Sweep complete: {succeeded} of {len(plan)} run(s) succeeded.\n"
+                    + "\n".join(lines),
+                    error=succeeded != len(plan),
+                )
+            ],
+            "execution_events": events,
         }
-    outputs_dir = Path(global_config.VITESS_PROJECT_PATH) / resolved_thread_id / "outputs"
-    if run_id:
-        outputs_dir = outputs_dir / run_id
-    if not outputs_dir.exists():
-        return {
-            "success": False,
-            "error": f"Output directory not found: {outputs_dir}",
-            "plot_data": {},
-            "message": f"Directory {outputs_dir} does not exist.",
-        }
-    return {"success": True, "outputs_dir": outputs_dir}
+        if references:
+            # Recorded the same way a single guided run is, so the plot tools
+            # (03/CP3a) work unchanged for a sweep: one plot path, two agents.
+            update["simulation_runs"] = references
+        return Command(update=update)
+
+    return [write_simulation_matrix, run_batch_from_matrix]
 
 
-@tool(response_format="content_and_artifact")
-async def generate_plot_1d(
-    thread_id: str | None = None,
-    run_id: str | None = None,
-) -> tuple[str, dict[str, Any]]:
-    """
-    Generate an interactive Monitor1D plot from simulation output.
+async def _run_one(
+    gateway: VitessGateway,
+    entry: SimulationPlanEntry,
+    *,
+    planned: tuple[str, ...],
+    project_root: Path,
+    user_id: str,
+    thread_id: str,
+    graph_run_id: str,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
+    """Execute one planned run and return its line, its evidence and its reference."""
 
-    Looks for monitor1D.dat in the run output directory and returns plot_data
-    suitable for UI rendering (same shape as simulator plots).
+    def failure(message: str, status: str = "tool_error") -> tuple[str, list[dict[str, Any]], None]:
+        event = ExecutionEvidence(
+            graph_run_id=graph_run_id,
+            command=f"VITESS sweep run {entry.run_name!r}",
+            status=status,  # type: ignore[arg-type]
+            exit_code=None,
+        )
+        return (
+            f"- {entry.run_name}: not run -- {message}",
+            [event.model_dump(mode="json")],
+            None,
+        )
 
-    The plot data is returned as an artifact (not visible to the LLM) so that
-    large Plotly JSON payloads do not consume the context window.
+    missing = [module for module in planned if module not in entry.modules]
+    if missing:
+        return failure(f"planned modules missing from the entry: {', '.join(missing)}")
+    unplanned = sorted(set(entry.modules) - set(planned))
+    if unplanned:
+        return failure(f"entry contains unplanned modules: {', '.join(unplanned)}")
 
-    Args:
-        thread_id: Optional thread ID. If not provided, uses THREAD_ID from environment.
-        run_id: Optional run ID (e.g. sim_001). If set, looks in outputs/run_id/;
-                if None, looks in thread outputs/ (flat, single-run case).
-
-    Returns:
-        Tuple of (content_for_llm, artifact_dict).
-        artifact_dict has success, plot_data (monitor1d with plot_json, title, etc.).
-    """
-    out = _get_outputs_dir(thread_id, run_id)
-    if not out.get("success"):
-        return (out.get("message", "Failed to resolve output directory."), out)
-
-    outputs_dir: Path = out["outputs_dir"]
     try:
-        from vitess_ai.plots.vitess_plot import read_mfile_plotly
-    except ImportError as e:
-        return (
-            f"Could not load plotting library: {e}",
-            {"success": False, "error": str(e), "plot_data": {}},
-        )
-
-    monitor1d_file = outputs_dir / "monitor1D.dat"
-    if not monitor1d_file.exists():
-        return (
-            "monitor1D.dat not found in output directory.",
-            {"success": True, "plot_data": {}},
-        )
-
-    result = read_mfile_plotly(str(monitor1d_file))
-    if not result.get("success"):
-        msg = result.get("error", "Failed to generate Monitor1D plot.")
-        return (msg, {"success": False, "error": msg, "plot_data": {}})
-
-    plot_data = {
-        "monitor1d": {
-            "plot_json": result["plot_json"],
-            "title": result.get("title", "Monitor1D Results"),
-            "xaxis": result.get("xaxis", "x"),
-            "yaxis": result.get("yaxis", "Intensity [n/s]"),
-            "plot_type": "monitor1d",
+        module_results = {
+            module: {
+                "cli_parameters": parameters_to_arguments(
+                    parameter_model(module)(
+                        **_current_result(module, entry.modules[module]).parameters
+                    )
+                )
+            }
+            for module in planned
         }
-    }
-    return (
-        "The plot has been generated and is displayed in the UI. No further action needed.",
-        {"success": True, "plot_data": plot_data},
-    )
+        request = InternalSimulationRequest(
+            thread_id=UUID(thread_id),
+            simulation_run_id=entry.simulation_run_id,
+            graph_run_id=graph_run_id,
+            module_results=module_results,
+            execution_order=planned,
+        )
+    except (ValidationError, ValueError, KeyError) as exc:
+        return failure(f"its configuration is not runnable: {exc}")
 
+    outcome = await gateway.run_simulation(request)
+    if outcome.result is None:
+        assert outcome.failure is not None
+        return (
+            f"- {entry.run_name}: {outcome.failure.status} -- {outcome.failure.message}",
+            [event.model_dump(mode="json") for event in outcome.events],
+            None,
+        )
 
-@tool(response_format="content_and_artifact")
-async def generate_plot_2d(
-    thread_id: str | None = None,
-    run_id: str | None = None,
-) -> tuple[str, dict[str, Any]]:
-    """
-    Generate an interactive Monitor2D plot from simulation output.
-
-    Looks for monitor2D.dat in the run output directory and returns plot_data
-    suitable for UI rendering (same shape as simulator plots).
-
-    The plot data is returned as an artifact (not visible to the LLM) so that
-    large Plotly JSON payloads do not consume the context window.
-
-    Args:
-        thread_id: Optional thread ID. If not provided, uses THREAD_ID from environment.
-        run_id: Optional run ID (e.g. sim_001). If set, looks in outputs/run_id/;
-                if None, looks in thread outputs/ (flat, single-run case).
-
-    Returns:
-        Tuple of (content_for_llm, artifact_dict).
-        artifact_dict has success, plot_data (monitor2d with plot_json, title, etc.).
-    """
-    out = _get_outputs_dir(thread_id, run_id)
-    if not out.get("success"):
-        return (out.get("message", "Failed to resolve output directory."), out)
-
-    outputs_dir: Path = out["outputs_dir"]
     try:
-        from vitess_ai.plots.vitess_plot import read_mfile_plotly
-    except ImportError as e:
-        return (
-            f"Could not load plotting library: {e}",
-            {"success": False, "error": str(e), "plot_data": {}},
+        artifact_ids, artifact_filenames, dropped = register_run_files(
+            project_root=project_root,
+            user_id=user_id,
+            thread_id=thread_id,
+            graph_run_id=graph_run_id,
+            result=outcome.result,
+            run_name=entry.run_name,
         )
+    except ValueError as exc:
+        return failure(f"VITESS returned unverifiable file metadata: {exc}")
 
-    monitor2d_file = outputs_dir / "monitor2D.dat"
-    if not monitor2d_file.exists():
-        return (
-            "monitor2D.dat not found in output directory.",
-            {"success": True, "plot_data": {}},
-        )
-
-    result = read_mfile_plotly(str(monitor2d_file))
-    if not result.get("success"):
-        msg = result.get("error", "Failed to generate Monitor2D plot.")
-        return (msg, {"success": False, "error": msg, "plot_data": {}})
-
-    plot_data = {
-        "monitor2d": {
-            "plot_json": result["plot_json"],
-            "title": result.get("title", "Monitor2D Results"),
-            "xaxis": result.get("xaxis", "x"),
-            "yaxis": result.get("yaxis", "y"),
-            "plot_type": "monitor2d",
-        }
-    }
-    return (
-        "The plot has been generated and is displayed in the UI. No further action needed.",
-        {"success": True, "plot_data": plot_data},
+    events = attach_artifacts(
+        outcome.events,
+        artifact_ids=artifact_ids,
+        artifact_filenames=artifact_filenames,
+        dropped=dropped,
     )
+    exits = ", ".join(
+        f"{module.name}=exit {module.exit_code}" for module in outcome.result.modules
+    )
+    if not outcome.success:
+        return (f"- {entry.run_name}: failed -- {exits or outcome.result.message}", events, None)
 
-
-# ============================================================================
-# TOOL EXPORTS
-# ============================================================================
-
-def get_sim_runner_tools() -> list[Any]:
-    """Return tools for the simulation runner subagent.
-
-    Plot tools (generate_plot_1d, generate_plot_2d) are intentionally excluded
-    so that only the main deep agent runs them. That way the ToolMessage
-    (including the artifact with plot_data) is emitted by the main agent and
-    streams to the UI correctly.
-    """
-    return [
-        run_batch_from_matrix,
-    ]
-
-
-def get_shared_advanced_mode_tools() -> list[Any]:
-    """Return tools shared by the main advanced mode orchestrator."""
-    return [
-        list_thread_input_files,
-        write_simulation_matrix,
-        read_simulation_matrix,
-        convert_matrix_to_run_specs,
-        run_batch_from_matrix,
-        generate_plot_1d,
-        generate_plot_2d,
-        *get_rag_tools(),
-    ]
+    reference = SimulationRunReference(
+        run_name=entry.run_name, simulation_run_id=entry.simulation_run_id
+    )
+    line = f"- {entry.run_name}: completed ({exits})"
+    summary = capture_flux_summary(outcome.result)
+    if summary:
+        line += f". {summary}"
+    return (
+        line,
+        events,
+        reference.model_dump(mode="json"),
+    )

@@ -1,9 +1,14 @@
 from typing import Annotated, Literal, Optional
-from pydantic import BaseModel, Field
-from vitess_ai.schema.base import VtMonPar, VtFiltComb
+from pydantic import BaseModel, Field, model_validator
+from vitess_ai.schema.base import (
+    VitessParameterModel,
+    VtFiltComb,
+    VtMonPar,
+    validate_monitor_filter_configuration,
+)
 
 
-class Monitor1DParameters(BaseModel):
+class Monitor1DParameters(VitessParameterModel):
     """Configuration model for 1D monitor parameters."""
     
     # Monitor file configuration
@@ -25,6 +30,7 @@ class Monitor1DParameters(BaseModel):
     # Binning configuration
     nBinsX: Annotated[int, Field(
         default=100,
+        gt=0,
         description=("-x [-] Number of monitor channels on the x-axis. Must be > 0."),
         json_schema_extra={"flag": "-x"}
     )]
@@ -156,6 +162,52 @@ class Monitor1DParameters(BaseModel):
         json_schema_extra={"flag": "-t"}
     )]
 
+    @model_validator(mode="after")
+    def the_monitor_measures_something(self) -> "Monitor1DParameters":
+        """`NO_PAR` and a blank file name are both "this monitor does nothing".
+
+        `VtMonPar.NO_PAR` is a zero sentinel this schema invented; it is not in
+        the VITESS parameter list, so `-X0` asks monitor1D to plot a quantity
+        that does not exist. A blank `fMonitorFilename` drops `-O` entirely and
+        the monitor writes nowhere.
+        """
+        if self.eParX == VtMonPar.NO_PAR:
+            raise ValueError(
+                "eParX must name the quantity to monitor; NO_PAR (0) is not a "
+                "VITESS parameter"
+            )
+        if not self.fMonitorFilename.strip():
+            raise ValueError("fMonitorFilename is required")
+        return self
+
+    @model_validator(mode="after")
+    def ranges_are_ordered(self) -> "Monitor1DParameters":
+        if self.xMin >= self.xMax:
+            raise ValueError("xMin must be smaller than xMax")
+        for label, lower, upper in (
+            ("lambda", self.lambdaMin, self.lambdaMax),
+            ("filter 1", self.filterVarMin1, self.filterVarMax1),
+            ("filter 2", self.filterVarMin2, self.filterVarMax2),
+        ):
+            if lower is not None and upper is not None and lower >= upper:
+                raise ValueError(f"{label} minimum must be smaller than its maximum")
+        return self
+
+    @model_validator(mode="after")
+    def filters_are_complete(self) -> "Monitor1DParameters":
+        validate_monitor_filter_configuration(
+            lambda_minimum=self.lambdaMin,
+            lambda_maximum=self.lambdaMax,
+            parameter_1=self.filterParam1,
+            minimum_1=self.filterVarMin1,
+            maximum_1=self.filterVarMax1,
+            parameter_2=self.filterParam2,
+            minimum_2=self.filterVarMin2,
+            maximum_2=self.filterVarMax2,
+            combination=self.filterComb,
+        )
+        return self
+
 
 # Schema for initial response
 class InitialResponseMonitor1D(BaseModel):
@@ -197,4 +249,3 @@ if __name__ == "__main__":
     # Print the configuration
     print(f"\nDefault config JSON:")
     print(config.model_dump_json(indent=2))
-

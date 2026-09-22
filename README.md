@@ -1,409 +1,110 @@
-# VITESS AI Agent
+# Vitess AI Agent
 
-<div align="center">
-  <img src="app/assets/logo.png" alt="VITESS AI Agent Logo" width="200"/>
-</div>
+A local VITESS simulation assistant built on `juena-core`.
 
-**VITESS AI Agent** is part of **Jülich Neutron AI Agents (JüNA)**, an agentic AI system designed to assist researchers in accessing and utilizing JCNS's extensive knowledge base in neutron science. This specific agent focuses on [VITESS](https://vitess.fz-juelich.de), an open-source software package for simulating neutron scattering experiments.
+## The stack
 
-> **⚠️ Testing/Preview Version**: This is a testing version of VITESS AI Agent. While functional, it is not yet production-ready. We welcome feedback and testing via Docker. The application can be tested using Docker Compose as described below.
+Three Compose services on one internal network, sharing one volume:
 
-## Key Features
+```text
+browser ──127.0.0.1:9601──▶ vitess-app ──────▶ postgres
+                                │
+                                ├─ http://vitess-mcp:9005/mcp   (internal only)
+                                ▼
+                          /data/projects                 (mounted in both)
+```
 
-- **LangGraph-Based Architecture**: Multi-agent system built on LangGraph for orchestration
-- **Multi-Agent Architecture**: Specialized AI agents for different simulation modules
-- **RESTful API Server**: FastAPI-based server for programmatic access
-- **Web Interface**: Streamlit-based chat interface with comprehensive configuration options
-- **Real-time Streaming**: Server-Sent Events (SSE) for live conversation streaming
-- **Multiple LLM Providers**: Support for OpenAI and Blablador (OpenAI-compatible API)
-- **File Management**: Upload and manage files for different VITESS modules
-- **Runtime Configuration**: Dynamic VITESS environment configuration
-- **Docker Support**: Complete Docker setup with VITESS included - no manual installation required
+`vitess-mcp` runs the VITESS binaries; `vitess-app` runs the agent, the API and
+the UI. **They are the same image with different commands**, which is what keeps
+the file layouts on the shared volume identical. Only the UI port is published,
+and only on loopback: the MCP server has no authentication of its own, so it
+stays on the Compose network.
 
-## Architecture
+Application code never runs a VITESS binary directly. Every execution goes
+through the MCP service.
 
-The system uses LangGraph to orchestrate specialized module agents in a unified workflow.
+The four tools advertised by that service are also never bound directly to a
+model: their schemas contain the conversation id, the simulation id and
+validated module state. `vitess_ai.tools.build_vitess_tools()` wraps them in
+application façades whose model-visible schemas contain only a human run name
+or plot filename. The façades read identity and state through `ToolRuntime`,
+validate MCP `structuredContent`, verify every claimed file against the app's
+own shared-volume mount, and register deliverable files with `ArtifactStore`.
+`vitess_supervisor_middleware()` then attaches those files and the
+server-authored `<verified_by_server>` block to the root answer.
 
-<div align="center">
-  <img src="app/assets/vitess-ai-arch.png" alt="VITESS AI Agent Architecture" width="600"/>
-</div>
+## Repository layout
 
-## Prerequisites
+The application consumes `juena-core` as a sibling path dependency. The
+compatible core revision is recorded in `.juena-core-revision`; keep both
+checkouts under one parent directory and retain the canonical repository name
+because the Docker build context admits only these two sibling directories.
 
-- **Docker** and **Docker Compose** installed on your system
-  - Docker Desktop (macOS/Windows) or Docker Engine (Linux)
-  - Docker Compose v2.0+ (included with Docker Desktop)
-- **API Key** for at least one LLM provider:
-  - OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
-  - OR Blablador API key ([Take a look here](https://sdlaml.pages.jsc.fz-juelich.de/ai/guides/blablador_api_access/))
-
-> **Note**: VITESS is automatically built and included in the Docker image. You do not need to install VITESS separately on your system.
-
-## Quick Start
-
-### 1. Clone the Repository
-
-This project includes the [`vitess-rag`](https://github.com/neutron-simlab/vitess-rag) documentation RAG package as a Git submodule at `rag/vitess-rag`. Initialize it when you clone:
-
-```bash
-git clone --recurse-submodules <repository-url>
+```sh
+mkdir vitess-ai-workspace
+cd vitess-ai-workspace
+git clone --recurse-submodules https://github.com/neutron-simlab/Vitess-AI-Agent.git
+git clone https://github.com/neutron-simlab/juena-core.git
+git -C juena-core checkout "$(cat Vitess-AI-Agent/.juena-core-revision)"
 cd Vitess-AI-Agent
 ```
 
-If you already cloned without submodules, initialize them from the repo root:
+## Running it
 
-```bash
-git submodule update --init --recursive
+```sh
+git submodule update --init --recursive   # rag/vitess-rag is a path dependency
+cp env.example .env                       # then set POSTGRES_PASSWORD and a model key
+./vitess install                          # once: add the launcher to ~/.local/bin
+vitess up                                 # build and start Postgres, MCP, API, and UI
+vitess health
 ```
 
-Verify the submodule is present:
+After installation, `vitess up`, `vitess down`, `vitess logs`, and
+`vitess health` work from any directory. Run `vitess help` for the full list.
 
-```bash
-test -f rag/vitess-rag/pyproject.toml && echo "vitess-rag submodule OK"
+The first build compiles the same pinned VITESS source revision on every
+architecture (a few minutes). This keeps the binaries aligned with the monitor
+formats exercised by the test fixtures.
+
+Use `./vitess index-docs` once, after the stack is running, to embed the bundled
+manual. This spends embedding quota and therefore is never done implicitly at
+startup. If it has not been run, the documentation tools remain present and
+answer `RAG_UNAVAILABLE` instead of silently disappearing.
+
+Documentation queries specifically require `BLABLADOR_API_KEY`: the persisted
+index was built with the configured Blablador embedding model. An OpenAI key
+may run the chat model, but it cannot embed a query against this collection.
+
+To reuse the first-generation checkout's existing index instead, migrate it
+once while this application is stopped. The destination must be empty; do
+not merge two Chroma databases. SQLite needs to create journal files even for
+queries, so the copied files must belong to the image's uid 10001.
+
+```sh
+docker compose stop vitess-app
+docker run --rm \
+  -v vitess-ai-agent_vitess-rag:/src:ro \
+  -v vitess-ai-chroma:/dst \
+  alpine sh -c 'test -f /src/chroma_db/chroma.sqlite3 && test -z "$(find /dst -mindepth 1 -maxdepth 1 -print -quit)" && cp -a /src/chroma_db/. /dst/ && chown -R 10001:10001 /dst'
+docker compose up -d vitess-app
 ```
 
-Without the submodule, local installs (`uv sync`) and Docker builds will fail because `vitess-rag` is a path dependency in `pyproject.toml`.
+The source volume name is the default Compose name from `Vitess-AI-Agent`; if
+that stack used a different project name, substitute its actual volume from
+`docker volume ls`. After a future re-index, `collections.config_json_str` in
+`chroma.sqlite3` must remain `{}`: Chroma 1.5.9 cannot reopen this copied index
+when that field names an embedding function unknown to its registry.
 
-To update the submodule later after pulling upstream changes:
+`GET /health` on the MCP service answers 200 only when the five VITESS
+executables resolve and the project volume is writable, and Compose holds the
+application back until it does.
 
-```bash
-git submodule update --init --recursive
+## Tests
+
+```sh
+uv sync --frozen
+./vitess test
 ```
 
-### 2. Configure Environment Variables
-
-Copy the example environment file and configure your API keys:
-
-```bash
-cp env.example .env
-```
-
-Edit `.env` and set at least one LLM provider API key:
-
-```bash
-# For OpenAI
-OPENAI_API_KEY=sk-your-openai-api-key-here
-DEFAULT_PROVIDER=openai
-
-# OR for Blablador
-BLABLADOR_API_KEY=your-blablador-api-key-here
-BLABLADOR_BASE_URL=https://api.helmholtz-blablador.fz-juelich.de/v1/
-DEFAULT_PROVIDER=blablador
-```
-
-See the [Configuration](#configuration) section below for more details.
-
-### 3. Start with Docker Compose
-
-```bash
-docker compose up
-```
-
-This will:
-- Build the Docker image (includes VITESS compilation - may take several minutes on first run)
-- Start the FastAPI server on `http://localhost:8000`
-- Start the Streamlit web interface on `http://localhost:8501`
-- Start MCP servers on ports 9001-9005
-
-### 4. Access the Services
-
-- **Web Interface**: Open `http://localhost:8501` in your browser
-- **API Server**: `http://localhost:8000`
-- **API Documentation**: `http://localhost:8000/docs`
-
-To run in detached mode (background):
-
-```bash
-docker compose up -d
-```
-
-To view logs:
-
-```bash
-docker compose logs -f
-```
-
-To stop the services:
-
-```bash
-docker compose down
-```
-
-## Configuration
-
-### Environment Variables
-
-The `.env` file contains all configuration options. Key settings:
-
-#### Required: LLM Provider API Keys
-
-Configure at least one provider:
-
-**OpenAI:**
-```bash
-OPENAI_API_KEY=sk-your-key-here
-DEFAULT_PROVIDER=openai
-```
-
-**Blablador:**
-```bash
-BLABLADOR_API_KEY=your-key-here
-BLABLADOR_BASE_URL=https://api.helmholtz-blablador.fz-juelich.de/v1/
-DEFAULT_PROVIDER=blablador
-```
-
-#### Optional: LLM Settings
-
-```bash
-MAX_TOKENS=10000
-TIMEOUT_SECONDS=120
-MAX_RETRIES=3
-```
-
-#### Optional: LangSmith Tracing
-
-```bash
-LANGSMITH_TRACING=false
-LANGSMITH_API_KEY=your-key-here
-LANGSMITH_PROJECT=Vitess-AI-Agent
-```
-
-> **Note**: VITESS paths (`VITESS_MODULES_PATH`, `VITESS_PROJECT_PATH`, `VITESS_LOG_PATH`) are automatically configured in Docker and do not need to be set manually.
-
-For detailed configuration options, see `env.example` which includes comprehensive comments for each setting.
-
-### Supported LLM Providers
-
-**OpenAI**: Models `gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo`
-- Default: `gpt-4o-mini`
-- Requires `OPENAI_API_KEY`
-
-**Blablador**: OpenAI-compatible API
-- Default model: `01 - GPT-OSS-120b - an open model released by OpenAI in August 2025`
-- Also available: MiniMax-M2.7, Qwen3.5-122B
-- Requires `BLABLADOR_API_KEY` and `BLABLADOR_BASE_URL`
-
-## Usage
-
-### Web Interface (Streamlit)
-
-Access the interactive chat interface at `http://localhost:8501`:
-
-- Chat with AI agents using natural language
-- Switch between LLM providers and models
-- Manage conversation threads
-- Upload files for VITESS modules
-- Configure VITESS environment settings
-- View real-time streaming responses
-
-### API Server (FastAPI)
-
-The API server runs on `http://localhost:8000`:
-
-- Interactive API docs: `http://localhost:8000/docs`
-- Health check: `http://localhost:8000/health`
-
-See [API Endpoints](#api-endpoints) below for available endpoints.
-
-## API Endpoints
-
-The default agent is `"supervisor"`. You can specify the agent ID in the path or omit it to use the default.
-
-### Agent Endpoints
-
-- **POST `/{agent_id}/invoke`** or **POST `/invoke`** - Send message and get complete response
-- **POST `/{agent_id}/stream`** or **POST `/stream`** - Real-time streaming response
-- **POST `/{agent_id}/restart`** or **POST `/restart`** - Restart agent with new configuration
-
-### File Management
-
-- **POST `/files/upload`** - Upload a file for a specific module
-- **GET `/files/{file_id}`** - Get file information
-- **GET `/files/thread/{thread_id}`** - List all files for a thread
-- **DELETE `/files/{file_id}`** - Delete a file
-- **GET `/files/{file_id}/download`** - Download a file
-
-### Configuration
-
-- **GET `/config/vitess`** - Get current VITESS environment configuration
-- **PUT `/config/vitess`** - Update VITESS environment configuration
-- **POST `/config/vitess/reset`** - Reset VITESS configuration to defaults
-
-### Health Check
-
-- **GET `/health`** - Health check endpoint
-
-See `/docs` for interactive API documentation with request/response schemas.
-
-## Available Agents
-
-- **SupervisorAgent**: Orchestrates the entire simulation workflow
-- **ReadInAgent**: Configures neutron input parameters and initial conditions
-- **GuideAgent**: Handles neutron guide specifications and geometry
-- **WriteoutAgent**: Manages output settings and data formats
-- **MonitorsAgent**: Generate plot of 1D and 2D data
-
-## Docker Details
-
-### Ports
-
-The following ports are exposed:
-
-- **8000**: FastAPI server (main API)
-- **8501**: Streamlit web interface
-- **9001-9005**: MCP servers (ReadIn, Guide, Writeout, Monitor, Supervisor)
-
-### Volumes
-
-- **`vitess-projects`**: Persistent storage for VITESS project files (`/data/projects`)
-- Logs are stored in `/data/logs` inside the container
-
-### VITESS Integration
-
-VITESS is automatically built from source during the Docker image build process. The compiled modules are available at `/vitess/MODULES` inside the container. No manual VITESS installation is required.
-
-### Troubleshooting
-
-**Container won't start:**
-```bash
-# Check logs
-docker compose logs
-
-# Verify .env file exists and has valid API keys
-cat .env | grep API_KEY
-```
-
-**Port already in use:**
-```bash
-# Change ports in docker-compose.yml or stop conflicting services
-# Edit ports section:
-# ports:
-#   - "8001:8000"  # Use different host port
-```
-
-**Build fails:**
-```bash
-# Clean build (no cache)
-docker compose build --no-cache
-
-# Check Docker has enough resources (memory, disk space)
-docker system df
-```
-
-**Missing `rag/vitess-rag` submodule:**
-```bash
-# Initialize submodules from the repo root
-git submodule update --init --recursive
-
-# Or re-clone with submodules
-git clone --recurse-submodules <repository-url>
-```
-
-**API key errors:**
-```bash
-# Verify API keys are set correctly
-docker compose exec vitess-ai-agent env | grep API_KEY
-
-# Check .env file is loaded
-docker compose config | grep OPENAI_API_KEY
-```
-
-## Project Structure
-
-```
-vitess-ai-agent/
-├── app/                    # Streamlit web interface
-├── src/vitess_ai/
-│   ├── clients/            # API client library
-│   ├── modules/            # Central module catalog (graph + UI + upload metadata)
-│   ├── retrieval/          # VITESS documentation RAG adapters
-│   ├── server/             # FastAPI server and endpoints
-│   │   └── streaming/      # Streaming event processors
-│   ├── server_agents/      # Server-optimized agents
-│   ├── mcp/                # MCP validation tools
-│   ├── prompts/            # Agent prompts
-│   ├── schema/             # Pydantic schemas
-│   └── core/               # Core utilities
-├── rag/
-│   └── vitess-rag/         # Git submodule: VITESS documentation RAG package
-├── main.py                 # Server entry point
-├── docker-compose.yml      # Docker Compose configuration
-├── Dockerfile              # Docker image definition
-└── pyproject.toml          # Python project configuration
-```
-
-## Dynamic Module Registration (New)
-
-The project now uses a central module catalog at:
-
-- `src/vitess_ai/modules/catalog.py`
-
-This catalog is now the main registration point for:
-
-- Graph module registration order
-- Module tools (via `tool_factory`)
-- Validation tool patterns (completion detection)
-- Upload behavior in Streamlit (`upload_schema_sidebar`)
-- CLI executable mapping for simulation pipeline generation
-
-The backend `GET /config/modules` now returns both:
-
-- `modules`: graph-enabled modules
-- `upload_modules`: upload-enabled modules/resources (including auxiliary entries like `instrument`)
-
-This means adding a module no longer requires hardcoding in multiple places (supervisor, sidebar dropdowns, file storage validation, etc.).
-
-### Example: Add a New Module
-
-1. Create the agent class (for example `src/vitess_ai/server_agents/chopper_module_agent.py`).
-2. Add tools/prompt/schema as needed.
-3. Register it once in `src/vitess_ai/modules/catalog.py`.
-
-Example catalog entry:
-
-```python
-from vitess_ai.server_agents.chopper_module_agent import ChopperModuleAgent
-from vitess_ai.tools.chopper_tools import get_chopper_tools
-
-ModuleBuilder.create(
-    name="chopper",
-    display_name="Chopper Parameters",
-    description="Configure chopper settings",
-    agent_class=ChopperModuleAgent,
-    order=6,
-    tool_factory=get_chopper_tools,
-    validation_tool_patterns=["validate_chopper_module"],
-    cli_executable="$V/chopper",
-    upload_schema_sidebar={
-        "mode": "file_single",     # file_single | file_multi | path_only
-        "label": "Chopper Input File",
-        "help": "Upload one chopper input file.",
-        "extensions": ["dat", "txt"],
-        "max_files": 1,
-    },
-)
-```
-
-After this, the module is picked up by:
-
-- Supervisor graph registration
-- `/config/modules` metadata
-- Streamlit upload module selector/UI
-- File upload module-type validation
-- CLI executable mapping
-
-No additional hardcoded module-list edits are required for these layers.
-
-## Contributing
-
-Areas for contribution:
-- New module agents for additional VITESS simulation modules
-- API enhancements and new endpoints
-- Client libraries for different languages
-- Documentation improvements
-- Test coverage for agents and API endpoints
-- Additional LLM provider support
-
-## License
-
-MIT License - Copyright © 2025-2026
+The monitor-file fixtures under `tests/data/` were written by the real VITESS
+binaries; `tests/data/README.md` says how to regenerate them.

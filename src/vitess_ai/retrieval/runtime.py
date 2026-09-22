@@ -1,43 +1,83 @@
-"""Runtime helpers for connecting Vitess AI to ``vitess_rag``."""
+"""Connecting vitess-ai to the embedded `vitess_rag` index.
+
+Chroma stays, `vitess-rag` stays a submodule, and **core does not learn about
+either** -- the same rule that keeps core away from juena-rag. juena-chatbot
+searches its index over HTTP; this one is a directory on disk. Neither belongs
+in a library that knows what a specialist report is.
+
+Every import of `vitess_rag` is inside a function. Chroma pulls in ONNX and a
+tokenizer, and a deployment that has turned retrieval off should not pay for
+them at import.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from vitess_ai.core.config import global_config
+from vitess_ai.config import Config
+
+__all__ = [
+    "RagUnavailable",
+    "build_embedding_client",
+    "build_embedding_function",
+    "get_rag_collection",
+    "rag_enabled",
+]
 
 
-class RagUnavailableError(RuntimeError):
-    """Raised when documentation RAG cannot be initialized."""
+class RagUnavailable(RuntimeError):
+    """Retrieval cannot answer, and this says why in one sentence."""
 
 
-def is_rag_enabled() -> bool:
-    return bool(global_config.VITESS_RAG_ENABLED)
+def rag_enabled() -> bool:
+    return bool(Config.RAG_ENABLED)
+
+
+def build_embedding_client() -> Any:
+    """Build the query client with a conversational, bounded failure time.
+
+    The embedded package uses the OpenAI SDK default timeout (ten minutes) and
+    no explicit retry limit. A documentation lookup happens inside an agent
+    turn, where that is indistinguishable from a hung agent.
+    """
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=Config.BLABLADOR_API_KEY,
+        base_url=Config.BLABLADOR_BASE_URL,
+        timeout=Config.RAG_QUERY_TIMEOUT_SECONDS,
+        max_retries=Config.RAG_MAX_RETRIES,
+    )
 
 
 def build_embedding_function() -> Any:
     from vitess_rag.embeddings import BlabladorEmbeddingFunction
 
-    return BlabladorEmbeddingFunction(
-        model_name=global_config.VITESS_RAG_EMBEDDING_MODEL,
-        api_key=global_config.BLABLADOR_API_KEY,
-        base_url=global_config.BLABLADOR_BASE_URL,
+    embedding_function = BlabladorEmbeddingFunction(
+        model_name=Config.RAG_EMBEDDING_MODEL,
+        api_key=Config.BLABLADOR_API_KEY,
+        base_url=Config.BLABLADOR_BASE_URL,
     )
+    # `vitess-rag` is a retained submodule, so keep the deployment policy here
+    # rather than changing the reusable package. Close the client its
+    # constructor made before replacing it, otherwise every graph construction
+    # leaks an idle HTTP transport.
+    original_client = embedding_function.client
+    embedding_function.client = build_embedding_client()
+    original_client.close()
+    return embedding_function
 
 
 def get_rag_collection(recreate: bool = False) -> Any:
-    if not is_rag_enabled():
-        raise RagUnavailableError("VITESS RAG is disabled.")
+    if not rag_enabled():
+        raise RagUnavailable("VITESS documentation retrieval is switched off.")
 
     from vitess_rag.chroma import get_or_create_collection
 
-    persist_path = Path(global_config.VITESS_RAG_PERSIST_PATH)
-    persist_path.mkdir(parents=True, exist_ok=True)
-
+    Config.RAG_PERSIST_PATH.mkdir(parents=True, exist_ok=True)
     return get_or_create_collection(
-        persist_path=persist_path,
-        collection_name=global_config.VITESS_RAG_COLLECTION,
+        persist_path=Config.RAG_PERSIST_PATH,
+        collection_name=Config.RAG_COLLECTION,
         embedding_function=build_embedding_function(),
         recreate=recreate,
     )
