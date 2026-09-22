@@ -51,6 +51,7 @@ from vitess_ai.agents.advanced_mode.agent import (
     build_advanced_mode_graph,
 )
 from vitess_ai.agents.advanced_mode.tools import (
+    AUTO_DEFAULT_MODULES,
     MAX_SWEEP_RUNS,
     build_batch_tools,
     describe_module_parameters,
@@ -907,6 +908,40 @@ def test_the_guide_shape_conversation_uses_the_authoritative_schema(
     assert described["schema_defaults"]["eGuideShapeZ"] == 1
     assert described["json_schema"]["properties"]["GuideExitWidth"]["flag"] == "-W"
     assert described["json_schema"]["properties"]["GuideExitHeight"]["flag"] == "-H"
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_every_runnable_module_can_be_described(module: str) -> None:
+    """Regression for the turn that stopped on `describe_module_parameters("readin")`.
+
+    The tool built its defaults with `model()`, which runs READIN's "at least one
+    input file is required" check and raised. The model saw a blank error, repeated
+    the call, and the loop guard ended the turn. Only `guide` was ever described.
+    """
+
+    described = json.loads(describe_module_parameters.invoke({"module": module}))
+
+    assert described["module"] == module
+    assert described["parameter_model"] == parameter_model(module).__name__
+
+
+def test_readin_is_described_with_its_empty_input_defaults() -> None:
+    """READIN has no runnable default, but its schema still has defaults to show."""
+
+    described = json.loads(describe_module_parameters.invoke({"module": "readin"}))
+
+    assert described["schema_defaults"]["sInputFileName"] == []
+    assert described["schema_defaults"]["Weight"] == []
+
+
+@pytest.mark.parametrize("module", sorted(AUTO_DEFAULT_MODULES))
+def test_described_defaults_match_the_validated_defaults(module: str) -> None:
+    """Skipping the checks must not change what a defaultable module reports."""
+
+    described = json.loads(describe_module_parameters.invoke({"module": module}))
+    validated = parameter_model(module)().model_dump(mode="json")
+
+    assert described["schema_defaults"] == validated
 
 
 def test_the_sweep_signs_its_evidence_with_its_own_agent_id() -> None:

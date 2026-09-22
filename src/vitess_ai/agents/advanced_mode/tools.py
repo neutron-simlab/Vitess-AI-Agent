@@ -110,11 +110,14 @@ def describe_module_parameters(module: str) -> str:
                 member.name: member.value for member in enum_type
             }
 
+    # `model_construct()` fills in the defaults without running the model's checks.
+    # `model()` would run them, and READIN's "at least one input file is required"
+    # rejects an empty READIN, so the tool failed every time it was asked about it.
     return json.dumps(
         {
             "module": module,
             "parameter_model": model.__name__,
-            "schema_defaults": model().model_dump(mode="json"),
+            "schema_defaults": model.model_construct().model_dump(mode="json"),
             "enum_mappings": enum_mappings,
             "json_schema": model.model_json_schema(),
         },
