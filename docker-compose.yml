@@ -1,0 +1,176 @@
+# =============================================================================
+# DOCKER COMPOSE CONFIGURATION FOR vitess-ai
+# =============================================================================
+# Three services, one network, one shared project volume:
+#
+#   browser -> 127.0.0.1:<ui port> -> vitess-app -> postgres
+#                                          |
+#                                          +-> http://vitess-mcp:9005/mcp
+#                                          |
+#                              /data/projects (mounted in BOTH)
+#
+# Only the UI port is published, and only on the loopback interface. The MCP
+# server has no authentication of its own, so it must stay on the Compose
+# network; the negative check in 03-VITESS-V2.md CP3 asserts that the host
+# cannot reach it.
+#
+# Usage:
+#   cp env.example .env      # then set POSTGRES_PASSWORD
+#   docker compose up -d --build
+# =============================================================================
+
+# The project name, so the stack is `vitess-ai` whatever the checkout is called.
+name: vitess-ai
+
+# The MCP service needs the VITESS build and the application needs the Python
+# environment; one image holds both, and the two services differ only in the
+# command they run. That is also what guarantees identical file layouts on the
+# shared volume.
+#
+# Only `vitess-mcp` carries the `build:` section. Declaring it on both built the
+# same Dockerfile twice and produced two image IDs for one image -- which
+# defeats the point, and leaves nothing single to record as the digest that was
+# tested. `vitess-app` names the tag and `depends_on` makes it wait, so the
+# image is built once, before either container is created.
+x-vitess-image: &vitess-image "vitess-ai:latest"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-vitess}
+      - POSTGRES_USER=${POSTGRES_USER:-vitess}
+      # Required, with no default on purpose: `${VAR:-}` would supply an empty
+      # password silently and fail later as a health-check timeout.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your env file (see env.example)}
+    volumes:
+      - vitess-postgres:/var/lib/postgresql/data
+    # Intentionally not published.
+    networks:
+      - vitess-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vitess} -d ${POSTGRES_DB:-vitess}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  vitess-mcp:
+    build:
+      # The parent directory, not this one. juena-core is a sibling path
+      # dependency and a build context cannot reach outside itself, so the
+      # context has to contain both directories.
+      #
+      # The consequence is worth knowing where the build is configured: Docker
+      # reads `Vitess-AI-Agent/Dockerfile.dockerignore` for a build whose
+      # Dockerfile is named here, and a `.dockerignore` inside this repository
+      # would not be consulted at all.
+      context: ..
+      dockerfile: Vitess-AI-Agent/Dockerfile
+    image: *vitess-image
+    container_name: vitess-mcp
+    command: ["python", "-m", "vitess_ai.mcp.server"]
+    environment:
+      # Both services mount the project volume at exactly this path, so a path
+      # written by one is meaningful to the other.
+      - VITESS_PROJECT_PATH=/data/projects
+      - VITESS_MODULES_PATH=/vitess/MODULES
+      - VITESS_MCP_HOST=0.0.0.0
+      - VITESS_MCP_PORT=9005
+      - VITESS_SIMULATION_TIMEOUT_SECONDS=${VITESS_SIMULATION_TIMEOUT_SECONDS:-3600}
+      # The service is pinned and must not contact PyPI at startup merely to
+      # advertise a newer FastMCP release in its banner.
+      - FASTMCP_CHECK_FOR_UPDATES=off
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - vitess-projects:/data/projects
+    # No `ports`. The application reaches this service by name on the Compose
+    # network; the host has no route to it at all.
+    networks:
+      - vitess-network
+    healthcheck:
+      # An explicit route, not an inference: it answers 503 unless the VITESS
+      # executables resolve and the project volume is writable. A port that
+      # merely accepts a connection proves neither.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  vitess-app:
+    image: *vitess-image
+    container_name: vitess-app
+    # One container, two processes: the API on container loopback and the
+    # Streamlit UI on the published port. If either stops, the container stops
+    # -- a UI still serving pages against a dead API looks like it works.
+    command: ["vitess-entrypoint"]
+    environment:
+      - VITESS_PROJECT_PATH=/data/projects
+      - VITESS_MODULES_PATH=/vitess/MODULES
+      # The base URL, not the /mcp endpoint: the health route and the MCP
+      # endpoint are derived from it, so they cannot disagree.
+      - VITESS_MCP_BASE_URL=http://vitess-mcp:9005
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-vitess}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in your env file (see env.example)}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-vitess}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Container loopback, and not published. Core refuses to pair a fixed
+      # principal with a reachable API, which is the check these two satisfy.
+      - VITESS_BIND_HOST=127.0.0.1
+      - VITESS_API_PORT=9600
+      - UI_PORT=9601
+      - VITESS_ARTIFACT_ROOT=/data/artifacts
+      - VITESS_AUDIT_FILE=/data/artifacts/audit.jsonl
+      - BLABLADOR_API_KEY=${BLABLADOR_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # LangSmith observes the agent/model process, not the VITESS MCP server.
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vitess-ai}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      - VITESS_RAG_PERSIST_PATH=/data/chroma
+      - VITESS_RAG_EMBEDDING_MODEL=${VITESS_RAG_EMBEDDING_MODEL:-alias-qwen3-8b-embeddings}
+      - VITESS_RAG_QUERY_TIMEOUT_SECONDS=${VITESS_RAG_QUERY_TIMEOUT_SECONDS:-20}
+      - VITESS_RAG_MAX_RETRIES=${VITESS_RAG_MAX_RETRIES:-1}
+    volumes:
+      - vitess-projects:/data/projects
+      # Delivered plots and their audit log. Separate from the project volume
+      # because these are what a *user* may download, and the MCP container --
+      # which mounts the project volume -- has no business in them.
+      - vitess-artifacts:/data/artifacts
+      # The documentation index, built once by `vitess index-docs`. A volume so
+      # that rebuilding the image does not mean embedding the manual again.
+      - vitess-chroma:/data/chroma
+    ports:
+      # Loopback only, and the UI alone. The API binds container loopback and is
+      # not published. CP6 brings up the process that listens here.
+      - "127.0.0.1:${UI_PORT:-9601}:9601"
+    networks:
+      - vitess-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vitess-mcp:
+        # Discovery has to reach the server to obtain tool schemas, so the agent
+        # is never constructed against a server that is not answering yet.
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  vitess-artifacts:
+    driver: local
+    name: vitess-ai-artifacts
+  vitess-chroma:
+    driver: local
+    name: vitess-ai-chroma
+  vitess-postgres:
+    driver: local
+    name: vitess-ai-postgres
+  vitess-projects:
+    driver: local
+    name: vitess-ai-projects
+
+networks:
+  vitess-network:
+    driver: bridge
+    name: vitess-ai-network

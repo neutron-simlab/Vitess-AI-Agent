@@ -1,95 +1,124 @@
-"""
-Streamlit UI for Vitess AI Supervisor Agent
+"""The VITESS AI Agent web interface.
 
-This Streamlit application provides a web interface for interacting with the
-Vitess AI supervisor agent through the FastAPI service.
+Deliberately shorter than juena-chatbot's equivalent, and every line that is
+missing is missing for a reason: there is no sign-in, because this deployment
+has one fixed local user, and no session cookie to carry. Identity is injected
+at the API as `local_principal`, exactly where an institute login's dependency
+would go.
+
+What this file owns is session state: which agent, which conversation, which
+model. Everything it draws is in `sidebar` and `chat_interface`.
 """
-import streamlit as st
-from uuid import uuid4
-from pathlib import Path
+
+from __future__ import annotations
+
 import sys
+from pathlib import Path
+from uuid import uuid4
 
-# Add parent directory to path to import vitess_ai modules
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import streamlit as st
 
-from vitess_ai.schema.llm_models import Provider, OpenAIModelName
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Import UI modules
-from sidebar import render_sidebar
-from chat_interface import render_chat_interface
-from file_management import check_server_health, initialize_client
+from vitess_ai.config import Config, configure_core  # noqa: E402
 
-# Paths and assets
-_assets_dir = Path(__file__).parent / "assets"
-_logo_path = _assets_dir / "logo.png"
+# The API and Streamlit are separate processes, so configuring core in the API
+# process does not configure this one. Do it before any UI helper reads core's
+# provider settings. Repeating the same configuration on a Streamlit rerun is
+# explicitly harmless.
+Config.validate_required()
+configure_core()
 
-# Page configuration
+from juena_core.llms_providers import get_available_providers, get_default_model  # noqa: E402
+from juena_core.schema.llm_models import Provider  # noqa: E402
+from juena_core.ui.chat_storage import get_chat_storage  # noqa: E402
+from juena_core.ui.client_setup import initialize_client  # noqa: E402
+
+from app.chat_interface import render_chat_interface  # noqa: E402
+from app.sidebar import AGENTS, render_sidebar  # noqa: E402
+from app.session_state import adopt_thread_agent  # noqa: E402
+from app.ui_components import logo_path  # noqa: E402
+from vitess_ai.clients import VitessClient  # noqa: E402
+
+API_URL = f"http://{Config.BIND_HOST}:{Config.API_PORT}"
+
 st.set_page_config(
-    page_title="Vitess AI Agent Chatbot",
-    page_icon=str(_logo_path) if _logo_path.exists() else None,
+    page_title="VITESS AI Agent",
+    page_icon=str(logo_path()) if logo_path() else "⚛️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Initialize session state
+if "selected_agent" not in st.session_state:
+    st.session_state.selected_agent = next(iter(AGENTS))
+if "show_system_messages" not in st.session_state:
+    st.session_state.show_system_messages = False
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# The active conversation lives in the URL as well as in session state: session
+# state is per-Streamlit-session, so a browser reload would otherwise start a
+# brand new thread every time.
 if "thread_id" not in st.session_state:
-    st.session_state.thread_id = str(uuid4())
-
-if "user_id" not in st.session_state:
-    st.session_state.user_id = str(uuid4())
-
-if "server_url" not in st.session_state:
-    st.session_state.server_url = "http://localhost:8000"
-
-if "client" not in st.session_state:
-    st.session_state.client = None
-
-if "current_interrupt" not in st.session_state:
-    st.session_state.current_interrupt = None
-
-if "server_connected" not in st.session_state:
-    st.session_state.server_connected = False
-
-if "show_system_messages" not in st.session_state:
-    st.session_state.show_system_messages = False
+    st.session_state.thread_id = st.query_params.get("thread") or str(uuid4())
 
 if "selected_provider" not in st.session_state:
-    st.session_state.selected_provider = Provider.OPENAI.value
-
+    available = get_available_providers()
+    providers = [item.value for item in Provider if available.get(item.value, False)]
+    st.session_state.selected_provider = (
+        Config.DEFAULT_PROVIDER.lower()
+        if Config.DEFAULT_PROVIDER.lower() in providers
+        else (providers[0] if providers else Provider.OPENAI.value)
+    )
 if "selected_model" not in st.session_state:
-    st.session_state.selected_model = OpenAIModelName.GPT_4O_MINI.value
+    st.session_state.selected_model = (
+        get_default_model(st.session_state.selected_provider) or Config.DEFAULT_MODEL
+    )
 
-if "provider_change_pending" not in st.session_state:
-    st.session_state.provider_change_pending = False
+# One client per agent: `agent_id` is part of the stream URL, and switching
+# modes has to switch which registered graph the next message reaches.
+client = st.session_state.get("client")
+if client is None or client.agent != st.session_state.selected_agent:
+    if client is not None:
+        client.close()
+    client = initialize_client(
+        API_URL,
+        agent_id=st.session_state.selected_agent,
+        timeout=float(Config.TIMEOUT_SECONDS),
+        client_class=VitessClient,
+    )
+    st.session_state.client = client
+    st.session_state.chat_storage = get_chat_storage(client)
 
-if "pending_provider" not in st.session_state:
-    st.session_state.pending_provider = None
+if not client.health():
+    st.error(
+        "The VITESS service is not answering. If you started the stack just now, "
+        "give it a moment; otherwise check `vitess logs`."
+    )
+    st.stop()
 
-if "pending_model" not in st.session_state:
-    st.session_state.pending_model = None
+# Resume the thread named in the URL, if there is one. A thread with no row yet
+# is simply an unsent conversation -- the row is created server side by the
+# first message, so reloading an empty chat leaves no stray entry behind.
+if "chat_initialized" not in st.session_state:
+    loaded = st.session_state.chat_storage.load_chat_with_messages(
+        st.session_state.thread_id
+    )
+    if loaded is not None:
+        chat, st.session_state.messages = loaded
+        if adopt_thread_agent(
+            st.session_state,
+            chat.agent_id,
+            known_agents=set(AGENTS),
+        ):
+            # The client above was built for the previously selected agent.
+            # Re-enter from the top so no request can reach the wrong graph.
+            st.session_state.chat_initialized = True
+            st.rerun()
+    st.session_state.chat_initialized = True
 
-if "uploaded_files" not in st.session_state:
-    st.session_state.uploaded_files = {}  # {module_type: [file_metadata]}
+if st.query_params.get("thread") != st.session_state.thread_id:
+    st.query_params["thread"] = st.session_state.thread_id
 
-if "selected_upload_module" not in st.session_state:
-    st.session_state.selected_upload_module = "readin"
-
-# Auto-connect to server on app load (only check once per session)
-if not hasattr(st.session_state, '_health_checked'):
-    st.session_state.server_connected = check_server_health(st.session_state.server_url)
-    if st.session_state.server_connected:
-        st.session_state.client = initialize_client(st.session_state.server_url)
-        if st.session_state.client is None:
-            st.session_state.server_connected = False
-    else:
-        st.session_state.client = None
-    st.session_state._health_checked = True
-
-# Render sidebar
-render_sidebar()
-
-# Render main chat interface
+render_sidebar(client)
 render_chat_interface()

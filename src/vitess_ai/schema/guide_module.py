@@ -1,14 +1,14 @@
 from typing import Annotated, Literal
 from pydantic import BaseModel, Field
-from vitess_ai.schema.base import VtGdeShape
+from vitess_ai.schema.base import VitessParameterModel, VtGdeShape
 
 
-class GuideParameters(BaseModel):
+class GuideParameters(VitessParameterModel):
     """Configuration model for neutron guide parameters."""
     
     # Guide shape configuration
     eGuideShapeY: Annotated[VtGdeShape, Field(
-        default=VtGdeShape.VT_CONSTANT,
+        default=VtGdeShape.VT_LINEAR,
         description=("-Y [-] Shape of the guide in horizontal direction. "
                     "VT_CONSTANT (0): Same cross-section on whole length (usually 1 piece). "
                     "VT_LINEAR (1): Linearly converging/diverging between entrance and exit (usually 1 piece). "
@@ -21,7 +21,7 @@ class GuideParameters(BaseModel):
     )]
     
     eGuideShapeZ: Annotated[VtGdeShape, Field(
-        default=VtGdeShape.VT_CONSTANT,
+        default=VtGdeShape.VT_LINEAR,
         description=("-Z [-] Shape of the guide in vertical direction. "
                     "VT_CONSTANT (0): Same cross-section on whole length (usually 1 piece). "
                     "VT_LINEAR (1): Linearly converging/diverging between entrance and exit (usually 1 piece). "
@@ -35,17 +35,18 @@ class GuideParameters(BaseModel):
     
     # File configuration
     ShapeFileName: Annotated[str, Field(
-        default="guide_shape.dat",
+        default="",
         description=("-S [-] Name of the file containing the sizes of the guide, output or input file. "
-                    "Used for VT_FROM_FILE shape type where each piece is described by one line in the file "
+                    "Optional: used for VT_FROM_FILE shape type where each piece is described by one line in the file "
                     "with parameters: Position, width and height of the beginning of the piece, "
-                    "reflectivity files for left, right, top and bottom plane."),
+                    "reflectivity files for left, right, top and bottom plane. When empty, -S is omitted in CLI (default configuration)."),
         json_schema_extra={"flag": "-S"}
     )]
     
     # Guide piece configuration
     nPieces: Annotated[int, Field(
         default=1,
+        gt=0,
         description=("-N [-] Number of guide pieces. "
                     "For VT_CONSTANT and VT_LINEAR usually 1 piece. "
                     "For VT_CURVED, VT_PARABOLIC, VT_ELLIPTIC, and VT_LIN_CURV multiple pieces are required "
@@ -56,12 +57,14 @@ class GuideParameters(BaseModel):
     # Entrance dimensions
     GuideEntrWidth: Annotated[float, Field(
         default=3.0,
+        gt=0,
         description="-w [cm] Width of the guide entrance",
         json_schema_extra={"flag": "-w"}
     )]
     
     GuideEntrHeight: Annotated[float, Field(
         default=3.0,
+        gt=0,
         description="-h [cm] Height of the guide entrance",
         json_schema_extra={"flag": "-h"}
     )]
@@ -69,12 +72,14 @@ class GuideParameters(BaseModel):
     # Exit dimensions
     GuideExitWidth: Annotated[float, Field(
         default=3.0,
+        gt=0,
         description="-W [cm] Width of the guide exit",
         json_schema_extra={"flag": "-W"}
     )]
     
     GuideExitHeight: Annotated[float, Field(
         default=3.0,
+        gt=0,
         description="-H [cm] Height of the guide exit",
         json_schema_extra={"flag": "-H"}
     )]
@@ -82,6 +87,7 @@ class GuideParameters(BaseModel):
     # Physical parameters
     piecelength: Annotated[float, Field(
         default=50.0,
+        gt=0,
         description=("-p [cm] Length of 1 piece of the guide. "
                     "For multi-piece guides (curved, parabolic, elliptic), this is the length of each "
                     "individual straight segment that approximates the overall shape."),
@@ -114,18 +120,24 @@ class GuideParameters(BaseModel):
     # M-values for different walls
     MValGenL: Annotated[float, Field(
         default=3.0,
+        ge=1.0,
+        le=6.0,
         description="-L [-] M-value for left wall",
         json_schema_extra={"flag": "-L"}
     )]
     
     MValGenR: Annotated[float, Field(
         default=3.0,
+        ge=1.0,
+        le=6.0,
         description="-Q [-] M-value for right wall",
         json_schema_extra={"flag": "-Q"}
     )]
     
     MValGenTB: Annotated[float, Field(
         default=3.0,
+        ge=1.0,
+        le=6.0,
         description="-G [-] M-value for top and bottom wall",
         json_schema_extra={"flag": "-G"}
     )]

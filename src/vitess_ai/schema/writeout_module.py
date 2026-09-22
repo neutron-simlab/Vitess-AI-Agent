@@ -1,9 +1,9 @@
 from typing import Annotated, Optional, Literal
-from pydantic import BaseModel, Field
-from vitess_ai.schema.base import VtDataFormat, VtPrgFormat, VtSeparator
+from pydantic import BaseModel, Field, model_validator
+from vitess_ai.schema.base import VitessParameterModel, VtDataFormat, VtPrgFormat, VtSeparator
 
 
-class VtOutputFlags(BaseModel):
+class VtOutputFlags(VitessParameterModel):
     """Flags to determine which neutron parameters are written to output."""
     
     bF_cID: Annotated[bool, Field(
@@ -61,7 +61,7 @@ class VtOutputFlags(BaseModel):
     )]
 
 
-class VtFilterLimits(BaseModel):
+class VtFilterLimits(VitessParameterModel):
     """Filtering limits for neutron selection based on physical parameters."""
     
     # Wavelength filtering
@@ -140,13 +140,27 @@ class VtFilterLimits(BaseModel):
         json_schema_extra={"flag": "-G"}
     )]
 
+    @model_validator(mode="after")
+    def ranges_are_ordered(self) -> "VtFilterLimits":
+        for label, lower, upper in (
+            ("wavelength", self.filtLambdaMin, self.filtLambdaMax),
+            ("horizontal position", self.filtYMin, self.filtYMax),
+            ("vertical position", self.filtZMin, self.filtZMax),
+            ("horizontal divergence", self.filtYDivMin, self.filtYDivMax),
+            ("vertical divergence", self.filtZDivMin, self.filtZDivMax),
+            ("divergence", self.filtDivMin, self.filtDivMax),
+        ):
+            if lower >= upper:
+                raise ValueError(f"{label} minimum must be smaller than its maximum")
+        return self
 
-class WriteoutParameters(BaseModel):
+
+class WriteoutParameters(VitessParameterModel):
     """Main configuration model for neutron transport data processing."""
     
     # Output file configuration
     sOutFileName: Annotated[Optional[str], Field(
-        default=None,
+        default="output.dat",
         description="-A [-] Output file name",
         json_schema_extra={"flag": "-A"}
     )]
@@ -186,6 +200,7 @@ class WriteoutParameters(BaseModel):
     # Neutron selection
     iDetectColor: Annotated[int, Field(
         default=-1,
+        ge=-1,
         description="-C [-] Write out only neutrons with a given color, -1 means any",
         json_schema_extra={"flag": "-C"}
     )]
@@ -199,6 +214,7 @@ class WriteoutParameters(BaseModel):
     # Normalization and metadata
     FactInt: Annotated[float, Field(
         default=1.0,
+        gt=0,
         description="-I [-] Factor to normalize to the source intensity from MCNP data",
         json_schema_extra={"flag": "-I"}
     )]
@@ -221,6 +237,24 @@ class WriteoutParameters(BaseModel):
         description="Filtering limits for neutron selection"
     )]
 
+    @model_validator(mode="after")
+    def an_active_writeout_names_its_file(self) -> "WriteoutParameters":
+        """`-A` is the whole point of the module when it is switched on.
+
+        `sOutFileName` may be null or blank only when `bActive` is false, which
+        is writeout's documented way of running the module without writing
+        anything. With `bActive` true and a blank name the converter dropped
+        `-A` silently and writeout wrote nowhere, which looks from the exit code
+        like a run that worked.
+        """
+        if self.bActive and not (self.sOutFileName or "").strip():
+            raise ValueError(
+                "sOutFileName is required while bActive is true; set bActive to "
+                "false to run writeout without writing a file"
+            )
+        return self
+
+
 # Schema for initial response
 class InitialResponseWriteout(BaseModel): 
     """
@@ -229,7 +263,6 @@ class InitialResponseWriteout(BaseModel):
     """
     response: Annotated[Literal['Default Setup', 'Customize', 'Not Known'], 
                         Field(description="Initial writeout module response type")]
-
 
 
 # Example usage

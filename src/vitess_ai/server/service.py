@@ -1,75 +1,74 @@
-"""
-FastAPI service for Vitess AI Agent.
+"""The vitess-ai FastAPI application: core's factory, plus what is VITESS's.
 
-This module sets up the FastAPI application and registers all endpoint routers.
+The routes, the streaming vocabulary, the lifespans and the identity seam are
+`juena_core.server.service.create_app`'s. What is passed in here is what core
+cannot know: a single local user instead of an institute login, the upload route
+whose files a compiled binary opens, and the note that tells the supervisor
+those files are real paths rather than text it can read.
 """
-import logging
+
+from __future__ import annotations
+
 import warnings
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
 from langchain_core._api import LangChainBetaWarning
 
-from vitess_ai.schema.server import HealthStatus
-from vitess_ai.server.api_endpoints import router as api_router
-from vitess_ai.server.file_endpoints import router as file_router
-from vitess_ai.server.config_endpoints import router as config_router
+from juena_core.log import get_logger
+from juena_core.server.identity import local_principal
+from juena_core.server.service import create_app
+from vitess_ai.config import Config, configure_core
+from vitess_ai.server.file_endpoints import build_file_router
+from vitess_ai.server.uploads import UploadStore
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
-logger = logging.getLogger(__name__)
 
+# Order matters and it is the whole reason this is not further down: core's
+# `settings()` raises until `configure()` has run, and the imports below build
+# chat models and read the artifact root at import time.
+Config.validate_required()
+configure_core()
 
-def _setup_service_logging():
-    """Setup logging for the service"""
-    # Only add handler if logger doesn't have one (avoid duplicates)
-    if not logger.handlers:
-        # Create console handler
-        handler = logging.StreamHandler()
-        handler.setLevel(logging.INFO)
-        
-        # Create formatter
-        formatter = logging.Formatter(
-            fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-        
-        # Add handler to logger
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        
-        # Prevent propagation to avoid duplicate logs
-        logger.propagate = False
+# Imported for their side effect: each module registers its own agent factory.
+# Importing *this* module has to be enough, because the process serving the API
+# is not always the launcher -- production runs
+# `uvicorn vitess_ai.server.service:app` -- and registering only from a main
+# script leaves those processes with an empty registry, so every invocation
+# would 404.
+import vitess_ai.agents.vitess_agent  # noqa: E402,F401  the guided simulator
+import vitess_ai.agents.advanced_mode  # noqa: E402,F401  the parameter sweep
 
-
-# Setup logging when module is imported
-_setup_service_logging()
+logger = get_logger(__name__)
 logger.info("Service logging initialized")
 
+#: One user, fixed, and stable across restarts because it owns every thread and
+#: names the memory namespace. This is injected exactly where a real provider's
+#: dependency would go, so adopting an institute login later replaces this
+#: callable rather than rewriting any route.
+principal = local_principal(
+    user_id=Config.LOCAL_USER_ID,
+    subject="local",
+    issuer="vitess-ai",
+    display_name="Local user",
+)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    Simple lifespan for in-memory only operation.
-    """
-    # No database/store initialization needed for in-memory operation
-    yield
+uploads = UploadStore(
+    Config.VITESS_PROJECT_PATH,
+    max_bytes=Config.MAX_UPLOAD_BYTES,
+    allowed_extensions=Config.UPLOAD_EXTENSIONS,
+)
 
-
-app = FastAPI(lifespan=lifespan)
-
-# Register all routers
-app.include_router(api_router)
-app.include_router(file_router)
-app.include_router(config_router)
-
-
-@app.get("/health")
-async def health_check() -> HealthStatus:
-    """Health check endpoint."""
-    return HealthStatus(
-        status="ok",
-        version="0.1.0",
-        details={"service": "vitess-ai-agent", "uptime": "running"}
-    )
+app = create_app(
+    principal=principal,
+    # No `workspace`: a thread's staged files are already on the shared volume,
+    # which is the only place they are of any use -- the VITESS binaries open
+    # them by path. Copying them into graph state would produce a second,
+    # decoded copy that nothing reads.
+    closing_note=(
+        "The user's input files are staged on the project volume, not in this "
+        "conversation. `inspect_thread_folders` lists them, and the paths it "
+        "returns are what a module's file parameter takes."
+    ),
+    title="vitess-ai",
+    version="0.1.0",
+    extra_routers=(build_file_router(principal, uploads),),
+)

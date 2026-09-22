@@ -1,250 +1,110 @@
-# VITESS AI Agent
+# Vitess AI Agent
 
-<div align="center">
-  <img src="app/assets/logo.png" alt="VITESS AI Agent Logo" width="200"/>
-</div>
+A local VITESS simulation assistant built on `juena-core`.
 
-**VITESS AI Agent** is part of **Jülich Neutron AI Agents (JüNA)**, an agentic AI system designed to assist researchers in accessing and utilizing JCNS's extensive knowledge base in neutron science. This specific agent focuses on [VITESS](https://vitess.fz-juelich.de), an open-source software package for simulating neutron scattering experiments.
+## The stack
 
-## Key Features
+Three Compose services on one internal network, sharing one volume:
 
-- **LangGraph-Based Architecture**: Multi-agent system built on LangGraph for orchestration
-- **Multi-Agent Architecture**: Specialized AI agents for different simulation modules
-- **RESTful API Server**: FastAPI-based server for programmatic access
-- **Web Interface**: Streamlit-based chat interface with comprehensive configuration options
-- **Real-time Streaming**: Server-Sent Events (SSE) for live conversation streaming
-- **Multiple LLM Providers**: Support for OpenAI and Blablador (OpenAI-compatible API)
-- **File Management**: Upload and manage files for different VITESS modules
-- **Runtime Configuration**: Dynamic VITESS environment configuration
-
-## Architecture
-
-The system uses LangGraph to orchestrate specialized module agents in a unified workflow.
-
-<div align="center">
-  <img src="app/assets/vitess-ai-arch.png" alt="VITESS AI Agent Architecture" width="600"/>
-</div>
-
-
-## Prerequisites
-
-**Critical Requirement**: You must have [VITESS](https://vitess.fz-juelich.de) installed on your system with the `vitess` command available in your PATH.
-
-**System Requirements**: Python 3.13+, compatible with Windows, macOS, and Linux
-
-## Installation
-
-### Install uv (if not already installed)
-
-If you don't have `uv` installed, install it first:
-
-**macOS/Linux:**
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+```text
+browser ──127.0.0.1:9601──▶ vitess-app ──────▶ postgres
+                                │
+                                ├─ http://vitess-mcp:9005/mcp   (internal only)
+                                ▼
+                          /data/projects                 (mounted in both)
 ```
 
-**Windows:**
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+`vitess-mcp` runs the VITESS binaries; `vitess-app` runs the agent, the API and
+the UI. **They are the same image with different commands**, which is what keeps
+the file layouts on the shared volume identical. Only the UI port is published,
+and only on loopback: the MCP server has no authentication of its own, so it
+stays on the Compose network.
+
+Application code never runs a VITESS binary directly. Every execution goes
+through the MCP service.
+
+The four tools advertised by that service are also never bound directly to a
+model: their schemas contain the conversation id, the simulation id and
+validated module state. `vitess_ai.tools.build_vitess_tools()` wraps them in
+application façades whose model-visible schemas contain only a human run name
+or plot filename. The façades read identity and state through `ToolRuntime`,
+validate MCP `structuredContent`, verify every claimed file against the app's
+own shared-volume mount, and register deliverable files with `ArtifactStore`.
+`vitess_supervisor_middleware()` then attaches those files and the
+server-authored `<verified_by_server>` block to the root answer.
+
+## Repository layout
+
+The application consumes `juena-core` as a sibling path dependency. The
+compatible core revision is recorded in `.juena-core-revision`; keep both
+checkouts under one parent directory and retain the canonical repository name
+because the Docker build context admits only these two sibling directories.
+
+```sh
+mkdir vitess-ai-workspace
+cd vitess-ai-workspace
+git clone --recurse-submodules https://github.com/neutron-simlab/Vitess-AI-Agent.git
+git clone https://github.com/neutron-simlab/juena-core.git
+git -C juena-core checkout "$(cat Vitess-AI-Agent/.juena-core-revision)"
+cd Vitess-AI-Agent
 ```
 
-After installation, restart your terminal or add `uv` to your PATH.
+## Running it
 
-### Install Project Dependencies
-
-**Using uv (recommended):**
-```bash
-uv sync
+```sh
+git submodule update --init --recursive   # rag/vitess-rag is a path dependency
+cp env.example .env                       # then set POSTGRES_PASSWORD and a model key
+./vitess install                          # once: add the launcher to ~/.local/bin
+vitess up                                 # build and start Postgres, MCP, API, and UI
+vitess health
 ```
 
-**Using pip:**
-```bash
-pip install .
+After installation, `vitess up`, `vitess down`, `vitess logs`, and
+`vitess health` work from any directory. Run `vitess help` for the full list.
+
+The first build compiles the same pinned VITESS source revision on every
+architecture (a few minutes). This keeps the binaries aligned with the monitor
+formats exercised by the test fixtures.
+
+Use `./vitess index-docs` once, after the stack is running, to embed the bundled
+manual. This spends embedding quota and therefore is never done implicitly at
+startup. If it has not been run, the documentation tools remain present and
+answer `RAG_UNAVAILABLE` instead of silently disappearing.
+
+Documentation queries specifically require `BLABLADOR_API_KEY`: the persisted
+index was built with the configured Blablador embedding model. An OpenAI key
+may run the chat model, but it cannot embed a query against this collection.
+
+To reuse the first-generation checkout's existing index instead, migrate it
+once while this application is stopped. The destination must be empty; do
+not merge two Chroma databases. SQLite needs to create journal files even for
+queries, so the copied files must belong to the image's uid 10001.
+
+```sh
+docker compose stop vitess-app
+docker run --rm \
+  -v vitess-ai-agent_vitess-rag:/src:ro \
+  -v vitess-ai-chroma:/dst \
+  alpine sh -c 'test -f /src/chroma_db/chroma.sqlite3 && test -z "$(find /dst -mindepth 1 -maxdepth 1 -print -quit)" && cp -a /src/chroma_db/. /dst/ && chown -R 10001:10001 /dst'
+docker compose up -d vitess-app
 ```
 
-## Configuration
+The source volume name is the default Compose name from `Vitess-AI-Agent`; if
+that stack used a different project name, substitute its actual volume from
+`docker volume ls`. After a future re-index, `collections.config_json_str` in
+`chroma.sqlite3` must remain `{}`: Chroma 1.5.9 cannot reopen this copied index
+when that field names an embedding function unknown to its registry.
 
-### Setting Up Environment Variables
+`GET /health` on the MCP service answers 200 only when the five VITESS
+executables resolve and the project volume is writable, and Compose holds the
+application back until it does.
 
-Copy the `env.example` file to `.env` and fill in your actual values:
+## Tests
 
-**macOS/Linux:**
-```bash
-cp env.example .env
+```sh
+uv sync --frozen
+./vitess test
 ```
 
-**Windows:**
-```powershell
-copy env.example .env
-```
-
-Then edit `.env` with your own configuration values. The `env.example` file contains comprehensive configuration options with detailed comments for each setting.
-
-### Configuration Categories
-
-The `env.example` file includes the following configuration sections:
-
-- **Core API Keys**: API keys for your chosen LLM provider (OpenAI or Blablador)
-- **LLM Provider Configuration**: Choose your provider (`openai` or `blablador`), models, and request settings
-- **Blablador Settings**: Blablador API configuration (required if using Blablador)
-- **LangSmith Settings**: Optional tracing and monitoring configuration
-- **MCP Tool Paths**: Paths to module-specific MCP tools
-- **VITESS Simulation Environment**: Paths for VITESS modules, project, and logging
-- **Environment Settings**: Development/production mode and logging levels
-
-For detailed information about each configuration option, see the `env.example` file which includes inline comments and setup instructions.
-
-### Supported LLM Providers
-
-You can choose to use either OpenAI or Blablador as your LLM provider. Configure your choice in the `.env` file by setting `DEFAULT_PROVIDER` to either `openai` or `blablador`.
-
-**OpenAI**: Models `gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`, `gpt-3.5-turbo` (default: `gpt-4o-mini`)
-- Requires `OPENAI_API_KEY` in your `.env` file
-
-**Blablador**: Models `alias-function-call`, `alias-code` (default: `alias-function-call`)
-- Requires `BLABLADOR_API_KEY` and `BLABLADOR_BASE_URL` in your `.env` file
-
-## Quick Start
-
-### 1. Start the API Server
-
-```bash
-python main.py
-```
-
-Server runs on `http://localhost:8000` with auto-reload and interactive docs at `/docs`.
-
-### 2. Start the Streamlit Web Interface
-
-```bash
-streamlit run app/streamlit_app.py
-```
-
-The app will be available at `http://localhost:8501`.
-
-## API Endpoints
-
-The default agent is `"supervisor"`. You can specify the agent ID in the path or omit it to use the default.
-
-### Agent Endpoints
-- **POST `/{agent_id}/invoke`** or **POST `/invoke`** - Send message and get complete response
-- **POST `/{agent_id}/stream`** or **POST `/stream`** - Real-time streaming response
-- **POST `/{agent_id}/restart`** or **POST `/restart`** - Restart agent with new configuration
-
-### File Management
-- **POST `/files/upload`** - Upload a file for a specific module
-- **GET `/files/{file_id}`** - Get file information
-- **GET `/files/thread/{thread_id}`** - List all files for a thread
-- **DELETE `/files/{file_id}`** - Delete a file
-- **GET `/files/{file_id}/download`** - Download a file
-
-### Configuration
-- **GET `/config/vitess`** - Get current VITESS environment configuration
-- **PUT `/config/vitess`** - Update VITESS environment configuration
-- **POST `/config/vitess/reset`** - Reset VITESS configuration to defaults
-
-### Health Check
-- **GET `/health`** - Health check
-
-See `/docs` for interactive API documentation with request/response schemas.
-
-## Python Client Usage
-
-```python
-from vitess_ai.clients.client import AgentClient
-
-# Initialize client
-client = AgentClient(base_url="http://localhost:8000", agent="supervisor")
-
-# Simple invoke
-response = client.invoke(
-    message="Configure neutron beam",
-    thread_id="thread_123",
-    provider="openai",
-    model="gpt-4o-mini"
-)
-print(response.content)
-
-# Streaming response
-for chunk in client.stream(
-    message="Run simulation",
-    thread_id="thread_123",
-    stream_tokens=True,
-    provider="openai",
-    model="gpt-4o-mini"
-):
-    if hasattr(chunk, 'content'):
-        print(chunk.content, end='', flush=True)
-    elif isinstance(chunk, dict) and chunk.get("type") == "token":
-        print(chunk.get("content", ""), end='', flush=True)
-```
-
-## Available Agents
-
-- **SupervisorAgent**: Orchestrates the entire simulation workflow
-- **ReadInAgent**: Configures neutron input parameters and initial conditions
-- **GuideAgent**: Handles neutron guide specifications and geometry
-- **WriteoutAgent**: Manages output settings and data formats
-- **MonitorsAgent**: Generate plot of 1D and 2D data
-
-## Streamlit Features
-
-- Interactive chat interface with real-time streaming
-- LLM provider/model switching (OpenAI, Blablador)
-- Thread management and conversation history
-- Module interrupt handling
-- VITESS environment configuration (V, P, L paths)
-- File upload/management for different VITESS modules
-- Debug mode for system messages
-
-## Production Deployment
-
-### Using Gunicorn
-```bash
-pip install gunicorn
-gunicorn vitess_ai.server.service:app \
-  --host 0.0.0.0 --port 8000 --workers 4 \
-  --worker-class uvicorn.workers.UvicornWorker
-```
-
-### Docker
-```dockerfile
-FROM python:3.13-slim
-WORKDIR /app
-COPY . .
-RUN pip install .
-EXPOSE 8000
-CMD ["python", "main.py"]
-```
-
-## Project Structure
-
-```
-vitess-ai-agent/
-├── app/                    # Streamlit web interface
-├── src/vitess_ai/
-│   ├── clients/            # API client library
-│   ├── server/             # FastAPI server and endpoints
-│   │   └── streaming/      # Streaming event processors
-│   ├── server_agents/      # Server-optimized agents
-│   ├── mcp/                # MCP validation tools
-│   ├── prompts/            # Agent prompts
-│   ├── schema/             # Pydantic schemas
-│   └── core/               # Core utilities
-├── main.py                 # Server entry point
-└── pyproject.toml
-```
-
-## Contributing
-
-Areas for contribution:
-- New module agents for additional VITESS simulation modules
-- API enhancements and new endpoints
-- Client libraries for different languages
-- Documentation improvements
-- Test coverage for agents and API endpoints
-- Additional LLM provider support
-
-## License
-
-MIT License - Copyright © 2025
+The monitor-file fixtures under `tests/data/` were written by the real VITESS
+binaries; `tests/data/README.md` says how to regenerate them.

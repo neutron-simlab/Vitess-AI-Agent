@@ -1,34 +1,22 @@
 [project]
 name = "vitess-ai"
-authors = [
-    {name = "Ahmad Z. Ihsan",email = "a.ihsan@fz-juelich.de"}
-]
 version = "0.1.0"
-description = "Add your description here"
+description = "A local VITESS simulation assistant built on juena-core"
 readme = "README.md"
-requires-python = ">=3.13, <4.0"
+requires-python = ">=3.11, <4.0"
 dependencies = [
-    "langchain[openai]>=1.0.0",
-    "langchain-openai>=1.0.0",
-    "langgraph>=1.0.0",
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "httpx>=0.25.0",
-    "streamlit>=1.28.0",
-    "pydantic[all]>=2.11.2,<3.0.0",
-    "fastmcp>=2.9.2",
-    "langchain-mcp-adapters>=0.1.7",
-    "langchain-community>=0.4.1",
-    "langgraph-api>=0.4.48",
-    "matplotlib>=3.10.7",
-    "numpy>=2.3.4",
-    "plotly>=6.5.0",
-    "markdown>=3.10",
-]
-
-[project.optional-dependencies]
-inmem = [
-    "langgraph-cli>=0.4.4",
+    "juena-core[ui,mcp]",
+    "fastmcp>=4,<5",
+    # Imported directly: the application probes the MCP server's health route
+    # before it builds an agent against it (src/vitess_ai/mcp/connection.py).
+    "httpx>=0.28,<1",
+    "matplotlib",
+    "numpy",
+    "plotly",
+    "pydantic>=2,<3",
+    # Imported directly for FastMCP's custom health response.
+    "starlette>=1,<2",
+    "vitess-rag",
 ]
 
 [build-system]
@@ -37,19 +25,21 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "ipykernel>=6.29.5",
-    "langgraph-cli[inmem]>=0.0.1",
-    "langgraph-api>=0.0.1",
-    "fastapi>=0.104.0",
-    "httpx>=0.25.0",
-    "pytest>=8.4.2",
-    "pytest-asyncio>=1.2.0",
-    "pytest-mock>=3.15.1",
+    "pytest>=9.1.1,<10",
 ]
-test = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-mock>=3.12.0",
-    "pytest-cov>=4.1.0",
-    "responses>=0.24.0",
-]
+
+[tool.uv.sources]
+juena-core = { path = "../juena-core" }
+vitess-rag = { path = "rag/vitess-rag" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The repository root, so `tests/` can import `app.*`. The Streamlit pages are
+# not part of the installed package -- `streamlit run` takes a path, not a
+# module -- but their invariants are worth asserting, and `tests/` is already on
+# the path through pytest's rootdir insertion.
+pythonpath = ["."]
+
+[tool.basedpyright]
+venvPath = "."
+venv = ".venv"

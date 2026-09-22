@@ -1,0 +1,45 @@
+GSL_RNG_TYPE=ran3
+GSL_RNG_SEED=1
+
+
+VITESS version 3.8 Linux_aarch64 2026-09-18  module Source 1.33a
+
+> Simulation of constant wave source (null) <
+
+wavelength distribution file : constant.dat 
+total moderated flux in 2*pi :   2.5133e+15 n/(cm^2s) 
+moderator position           :(  0.000    0.000    0.000) cm 
+eff. moderator size (W x H)  :   3.000 cm  x   3.000 cm  
+time averaged neutron current:   3.5998e+11 n/s in 0.000100 sr  
+wavelength band used         :   1.000 Ang -  10.000 Ang 
+
+
+  Declination                :   0.000 deg
+real window   , distance     :   2.000 m
+  horizontal range           :  -1.000 cm  -   1.000 cm 
+  vertical range             :  -1.000 cm  -   1.000 cm 
+polarization                 : 100.000 %  X: 0.577 Y: 0.577 Z: 0.577
+
+Gravity is enabled 
+Cutoff probability per traj. :  1.000e-25 
+Center of beam at window     :(200.000    0.010    0.002) cm 
+Average TOF                  :   2.789 ms 
+
+number of trajectories started         :       10000 = 1 x 10000
+ 1 number of trajectories read         :           0
+ 1 number of trajectories written      :       10000
+(time averaged) neutron count rate     :  8.0991e+10 +/-  8.099e+08 n/s 
+GSL_RNG_TYPE=ran3
+GSL_RNG_SEED=1
+
+
+VITESS version 3.8 Linux_aarch64 2026-09-18  module CaptureFlux 1.13a
+Rectangular window of size   6.00 x   6.00 cm (W x H),    area  36.000  cm^2 
+Lambda window from   1.000 A to   5.000 A 
+Reference wavelength:        1.798 A
+Captured intensity  :    5.991e+10 +/-    9.676e+08 n/s       by       4401 trajectories
+Capture flux        :    1.664e+09 +/-    2.688e+07 n/(s*cm^2) 
+
+ 2 number of trajectories read         :       10000
+ 2 number of trajectories written      :           0
+(time averaged) neutron count rate     :  8.0991e+10 +/-  8.099e+10 n/s 
