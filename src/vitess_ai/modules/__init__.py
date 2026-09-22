@@ -1,18 +1,21 @@
-"""Module catalog exports."""
+"""The VITESS module catalog: pure data, no agent imports."""
 
 from vitess_ai.modules.catalog import (
-    get_cli_executable_mapping,
-    get_graph_module_metadata,
-    get_graph_modules_info,
-    get_upload_module_names,
-    get_upload_modules_info,
+    MODULES,
+    ModuleSpec,
+    UploadSchema,
+    cli_executables,
+    execution_order,
+    module_spec,
+    upload_modules,
 )
 
 __all__ = [
-    "get_cli_executable_mapping",
-    "get_graph_module_metadata",
-    "get_graph_modules_info",
-    "get_upload_module_names",
-    "get_upload_modules_info",
+    "MODULES",
+    "ModuleSpec",
+    "UploadSchema",
+    "cli_executables",
+    "execution_order",
+    "module_spec",
+    "upload_modules",
 ]
-

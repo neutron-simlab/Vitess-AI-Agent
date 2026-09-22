@@ -1,9 +1,15 @@
 from typing import Annotated, Literal, Optional
-from pydantic import BaseModel, Field
-from vitess_ai.schema.base import VtMonPar, VtFiltComb, VtFormat2D
+from pydantic import BaseModel, Field, model_validator
+from vitess_ai.schema.base import (
+    VitessParameterModel,
+    VtFiltComb,
+    VtFormat2D,
+    VtMonPar,
+    validate_monitor_filter_configuration,
+)
 
 
-class Monitor2DParameters(BaseModel):
+class Monitor2DParameters(VitessParameterModel):
     """Configuration model for 2D monitor parameters."""
     
     # Monitor file configuration
@@ -61,12 +67,14 @@ class Monitor2DParameters(BaseModel):
     # Binning configuration
     nBinsX: Annotated[int, Field(
         default=100,
+        gt=0,
         description=("-x [-] Number of monitor channels on x-axis. Must be > 0."),
         json_schema_extra={"flag": "-x"}
     )]
     
     nBinsY: Annotated[int, Field(
         default=100,
+        gt=0,
         description=("-y [-] Number of monitor channels on y-axis. Must be > 0."),
         json_schema_extra={"flag": "-y"}
     )]
@@ -194,6 +202,61 @@ class Monitor2DParameters(BaseModel):
         json_schema_extra={"flag": "-t"}
     )]
 
+    @model_validator(mode="after")
+    def the_monitor_measures_something(self) -> "Monitor2DParameters":
+        """Both axes, the file format and the file name are all required.
+
+        `VtMonPar.NO_PAR` (0) and `VtFormat2D.NO_2D_FORMAT` (-1) are sentinels
+        this schema invented -- neither appears in the VITESS parameter list or
+        among the documented formats ('matrix', 'xyz', 'matrix_compact',
+        'xyz_compact'). A grid with no axes, written in no format, to no file,
+        still exits 0.
+        """
+        for field_name, value in (("xParam", self.xParam), ("yParam", self.yParam)):
+            if value == VtMonPar.NO_PAR:
+                raise ValueError(
+                    f"{field_name} must name the quantity for that axis; "
+                    "NO_PAR (0) is not a VITESS parameter"
+                )
+        if self.format == VtFormat2D.NO_2D_FORMAT:
+            raise ValueError(
+                "format must be one of the VITESS 2D formats; NO_2D_FORMAT (-1) "
+                "is not one of them"
+            )
+        if not self.fMonitorFilename.strip():
+            raise ValueError("fMonitorFilename is required")
+        return self
+
+    @model_validator(mode="after")
+    def ranges_are_ordered(self) -> "Monitor2DParameters":
+        if self.xMin >= self.xMax:
+            raise ValueError("xMin must be smaller than xMax")
+        if self.yMin >= self.yMax:
+            raise ValueError("yMin must be smaller than yMax")
+        for label, lower, upper in (
+            ("lambda", self.lambdaMin, self.lambdaMax),
+            ("filter 1", self.filterVarMin1, self.filterVarMax1),
+            ("filter 2", self.filterVarMin2, self.filterVarMax2),
+        ):
+            if lower is not None and upper is not None and lower >= upper:
+                raise ValueError(f"{label} minimum must be smaller than its maximum")
+        return self
+
+    @model_validator(mode="after")
+    def filters_are_complete(self) -> "Monitor2DParameters":
+        validate_monitor_filter_configuration(
+            lambda_minimum=self.lambdaMin,
+            lambda_maximum=self.lambdaMax,
+            parameter_1=self.filterParam1,
+            minimum_1=self.filterVarMin1,
+            maximum_1=self.filterVarMax1,
+            parameter_2=self.filterParam2,
+            minimum_2=self.filterVarMin2,
+            maximum_2=self.filterVarMax2,
+            combination=self.filterComb,
+        )
+        return self
+
 
 # Schema for initial response
 class InitialResponseMonitor2D(BaseModel):
@@ -240,4 +303,3 @@ if __name__ == "__main__":
     # Print the configuration
     print(f"\nDefault config JSON:")
     print(config.model_dump_json(indent=2))
-

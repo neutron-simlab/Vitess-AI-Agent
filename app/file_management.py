@@ -1,193 +1,135 @@
-"""
-File management functions for Streamlit UI.
+"""The staged-file manifest: every slot at once, and what is in it.
 
-This module provides functions for uploading, downloading, and managing files
-in the Streamlit interface, including server health checks and client initialization.
+**This is a status panel with upload controls, not an upload form.** The
+question it exists to answer is *"has read-in got everything it needs?"*, and
+that question is answered by looking rather than by asking the agent. The first
+generation's sidebar showed six upload widgets and nothing about what was
+already there, so the only way to find out was to send a message.
+
+Three slots, not six. `writeout`, `monitor1d` and `monitor2d` were declared as
+uploads under a mode that uploaded nothing: each set an output filename the
+parameter schema already owns, with its own flag and its own default. Those
+rows are gone (03/CP2), and no output filename appears here at all -- the three
+modules collect theirs conversationally, from the schema default.
 """
-import streamlit as st
+
+from __future__ import annotations
+
+from typing import Any
+
 import httpx
-from typing import Optional, List, Dict, Iterable
-from io import BytesIO
+import streamlit as st
+from juena_core.clients.base import AgentClientError
 
-from vitess_ai.clients.client import AgentClient
-from vitess_ai.schema.server import ChatMessage
+__all__ = ["render_file_manifest"]
 
+def _refusal(error: Exception) -> str:
+    """The server's own sentence, which was written for this reader."""
 
-def check_server_health(server_url: str) -> bool:
-    """Check if server is running by hitting /health endpoint."""
-    try:
-        response = httpx.get(f"{server_url}/health", timeout=2.0)
-        return response.status_code == 200
-    except Exception:
-        return False
-
-
-def initialize_client(server_url: str, agent_id: str = "supervisor") -> Optional[AgentClient]:
-    """Initialize AgentClient with server URL."""
-    try:
-        # Set get_info=False since /info endpoint doesn't exist in the service
-        # Initialize without agent first, then set it with verify=False
-        client = AgentClient(base_url=server_url, agent=None, get_info=False)
-        # Set selected agent without verification
-        client.update_agent(agent_id, verify=False)
-        return client
-    except Exception as e:
-        st.error(f"Failed to initialize client: {e}")
-        return None
+    if isinstance(error, httpx.HTTPStatusError):
+        try:
+            detail = error.response.json().get("detail")
+        except Exception:  # noqa: BLE001 -- a non-JSON body is still a refusal
+            detail = None
+        return str(detail or error.response.text or error)
+    return str(error)
 
 
-def upload_file_to_server(
-    file: BytesIO,
-    filename: str,
-    thread_id: str,
-    module_type: str,
-    server_url: str
-) -> Optional[Dict]:
-    """Upload a file to the server."""
-    try:
-        files = {"file": (filename, file, "application/octet-stream")}
-        data = {
-            "thread_id": thread_id,
-            "module_type": module_type
-        }
-        
-        response = httpx.post(
-            f"{server_url}/files/upload",
-            files=files,
-            data=data,
-            timeout=30.0
+def _ensure_chat(client: Any, thread_id: str) -> None:
+    """Give a sidebar-first upload the chat row ownership is checked against."""
+
+    existing = client.get_chat(thread_id, include_messages=False)
+    if existing is None:
+        client.create_chat(
+            thread_id,
+            agent_id=client.agent,
+            title="New Chat",
         )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Failed to upload file: {e}")
-        return None
-
-
-def delete_file_from_server(
-    file_id: str,
-    thread_id: str,
-    module_type: str,
-    server_url: str
-) -> bool:
-    """Delete a file from the server."""
-    try:
-        response = httpx.delete(
-            f"{server_url}/files/{file_id}",
-            params={
-                "thread_id": thread_id,
-                "module_type": module_type
-            },
-            timeout=10.0
+        return
+    if str(existing.get("agent_id")) != client.agent:
+        raise RuntimeError(
+            "This conversation belongs to the other VITESS mode. Start or open "
+            "a conversation in the selected mode before staging a file."
         )
-        response.raise_for_status()
-        return True
-    except Exception as e:
-        st.error(f"Failed to delete file: {e}")
-        return False
 
 
-def load_uploaded_files(thread_id: str, server_url: str) -> Dict[str, List[Dict]]:
-    """Load uploaded files for a thread from the server."""
+def _stage(client: Any, thread_id: str, module: str, uploaded: Any) -> None:
     try:
-        response = httpx.get(
-            f"{server_url}/files/thread/{thread_id}",
-            timeout=10.0
-        )
-        response.raise_for_status()
-        data = response.json()
-        
-        # Organize by module type
-        files_by_module = {}
-        for file_meta in data.get("files", []):
-            module_type = file_meta.get("module_type")
-            if module_type not in files_by_module:
-                files_by_module[module_type] = []
-            files_by_module[module_type].append(file_meta)
-        
-        return files_by_module
-    except Exception as e:
-        st.warning(f"Failed to load uploaded files: {e}")
-        return {}
+        _ensure_chat(client, thread_id)
+        client.stage_file(thread_id, module, uploaded.name, uploaded.getvalue())
+    except (AgentClientError, httpx.HTTPError, RuntimeError) as error:
+        st.error(_refusal(error))
+        return
+    st.session_state[f"staged_marker:{thread_id}:{module}"] = uploaded.name
 
 
-def get_active_module_from_messages(
-    messages: List[ChatMessage],
-    allowed_modules: Optional[Iterable[str]] = None,
-) -> Optional[str]:
-    """
-    Detect the currently active module from chat messages.
-    
-    Looks at the most recent AI messages to determine which module
-    is currently active/being configured.
-    
-    Args:
-        messages: List of chat messages
-        
-    Returns:
-        Active module name or None
-    """
-    if not messages:
-        return None
+def render_file_manifest(client: Any, thread_id: str) -> None:
+    """Draw every slot, what is staged in it, and the way to change that."""
 
-    allowed_set = set(allowed_modules) if allowed_modules is not None else None
-    
-    # Look at recent AI messages (most recent first)
-    for message in reversed(messages):
-        if message.type == "ai" and message.custom_data:
-            module_name = message.custom_data.get("module_name")
-            if not module_name:
-                continue
-
-            # Supervisor/default means no specific module is active.
-            if module_name in {"supervisor", "default"}:
-                continue
-
-            if allowed_set is None or module_name in allowed_set:
-                return module_name
-    
-    return None
-
-
-def save_path_metadata_to_server(
-    file_path: str,
-    thread_id: str,
-    module_type: str,
-    server_url: str
-) -> Optional[Dict]:
-    """
-    Save a file path as metadata to the server for modules that use paths (writeout, monitor1d, monitor2d).
-    
-    This creates a small metadata file that can be retrieved by MCP tools.
-    
-    Args:
-        file_path: The file path to save
-        thread_id: Thread ID
-        module_type: Module type (writeout, monitor1d, monitor2d)
-        server_url: Server URL
-        
-    Returns:
-        Dictionary with file metadata or None if failed
-    """
+    st.subheader("Input files")
     try:
-        # Create a small metadata file with the path
-        metadata_content = file_path.encode('utf-8')
-        filename = f"{module_type}_path.txt"
-        
-        files = {"file": (filename, BytesIO(metadata_content), "text/plain")}
-        data = {
-            "thread_id": thread_id,
-            "module_type": module_type
-        }
-        
-        response = httpx.post(
-            f"{server_url}/files/upload",
-            files=files,
-            data=data,
-            timeout=30.0
+        staged = client.list_staged(thread_id)
+    except httpx.HTTPError as error:
+        st.warning(f"Could not read the staged files: {error}")
+        return
+
+    by_module: dict[str, list[dict[str, Any]]] = {}
+    for item in staged:
+        by_module.setdefault(str(item["module"]), []).append(item)
+
+    try:
+        modules = client.upload_modules()
+    except httpx.HTTPError as error:
+        # Labels are presentation, not a fallback catalog. If the server cannot
+        # name the slots, drawing controls from this module would recreate the
+        # second source of truth CP2 removed.
+        st.warning(f"Could not read the upload slots: {error}")
+        return
+
+    for slot in modules:
+        module = str(slot["name"])
+        label = str(slot["label"])
+        help_text = str(slot["help"])
+        extensions = [str(item) for item in slot["extensions"]]
+        max_files = int(slot["max_files"])
+        files = by_module.get(module, [])
+        with st.expander(f"{label} — {len(files)} staged", expanded=not files):
+            st.caption(help_text)
+            for item in files:
+                columns = st.columns([5, 1])
+                columns[0].write(f"`{item['filename']}`  ·  {item['size_bytes']:,} bytes")
+                if columns[1].button(
+                    "Remove",
+                    key=f"remove:{thread_id}:{module}:{item['filename']}",
+                    help="Staged in the wrong slot? Remove it and upload it again.",
+                ):
+                    try:
+                        client.remove_staged(thread_id, module, item["filename"])
+                    except httpx.HTTPStatusError as error:
+                        st.error(_refusal(error))
+                    else:
+                        st.rerun()
+
+            if len(files) < max_files:
+                # Keyed on what is already staged, so the widget resets after an
+                # upload instead of re-sending the same file on the next rerun.
+                uploaded = st.file_uploader(
+                    f"Add to {label.lower()}",
+                    type=extensions,
+                    key=f"upload:{thread_id}:{module}:{len(files)}",
+                    label_visibility="collapsed",
+                )
+                if uploaded is not None:
+                    _stage(client, thread_id, module, uploaded)
+                    st.rerun()
+            else:
+                st.caption(
+                    f"This slot is full ({max_files} of {max_files}). Remove a file "
+                    "before uploading another."
+                )
+
+    if not staged:
+        st.caption(
+            "Nothing staged yet. If the agent asks for a file, upload it here while "
+            "the conversation waits, then answer its question card."
         )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Failed to save path metadata: {e}")
-        return None

@@ -1,0 +1,87 @@
+# Build-context filter for the PARENT-context build (docker-compose.yml sets
+# `context: ..` so the Dockerfile can COPY the sibling juena-core source).
+#
+# Docker looks for `<dockerfile>.dockerignore` first and only falls back to a
+# `.dockerignore` at the context root. The context root here is the parent
+# directory, which has none -- so this file is the ONLY filter in effect.
+# Anything missing here is sent to the daemon.
+#
+# That parent directory holds roughly nine gigabytes across a dozen unrelated
+# repositories, several of which contain real credentials in their own `.env`,
+# including the first-generation `Vitess-AI-Agent` checkout. So the rule is
+# deny-by-default: exclude every top-level entry, re-admit only the two
+# directories this image is built from, then prune inside them.
+#
+# The re-admission below names this repository's directory as it sits on disk.
+# Renaming the checkout breaks the build; the Dockerfile's COPY paths carry the
+# same name, so both change together.
+
+# 1. Everything in the parent, including unrelated repositories and the
+#    first-generation Vitess-AI-Agent checkout.
+*
+
+# 2. The two directories the build reads, and nothing else.
+!Vitess-AI-Agent
+!juena-core
+
+# 3. Prune inside them. Order matters: these follow the re-admissions above, and
+#    for any given path the last matching pattern wins.
+
+# Credentials. Nothing reads .env from the image; Compose supplies the
+# environment at run time.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.crt
+
+# Version control and virtual environments. The .venv directories are hundreds
+# of megabytes each and are rebuilt inside the image by `uv sync`.
+**/.git
+**/.gitignore
+**/.gitattributes
+**/.gitmodules
+**/.venv
+**/venv
+**/node_modules
+
+# Python build, test and tool output.
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.pytest_cache
+**/.coverage
+**/htmlcov
+**/.claude
+**/.ruff_cache
+**/.mypy_cache
+**/.ipynb_checkpoints
+**/build
+**/dist
+
+# Tests. The Dockerfile copies no test suite; excluding them keeps the context
+# small and keeps this honest about what ships.
+Vitess-AI-Agent/tests
+Vitess-AI-Agent/rag/vitess-rag/tests
+juena-core/tests
+juena-core/examples
+juena-core/scripts
+
+# Runtime state and local data. The project directory and the Chroma index are
+# Docker volumes at run time, and a VITESS build produced on the host is not the
+# one this image runs -- stage 1 builds its own.
+Vitess-AI-Agent/data
+Vitess-AI-Agent/rag/vitess-rag/chroma_db
+Vitess-AI-Agent/rag/vitess-rag/data/chroma*
+Vitess-AI-Agent/vitess
+Vitess-AI-Agent/MODULES
+**/*.db
+**/*.sqlite
+**/*.log
+**/logs
+
+# Editor and OS noise.
+**/.DS_Store
+**/.vscode
+**/.idea
+**/*.swp

@@ -1,294 +1,134 @@
-"""
-File upload and download endpoints.
+"""The one HTTP route staged VITESS inputs arrive through.
 
-This module provides endpoints for uploading files, managing file metadata,
-and handling output files for simulation threads.
+The sidebar's per-module control posts here. When a specialist needs a file,
+`ask_user` pauses the conversation while the user uploads through that same
+sidebar and then answers the waiting card. Core's clarification reply is text;
+pretending the card itself carries binary bytes would create a second upload
+protocol with no structured module destination.
+
+Ownership is checked against the chat rather than against the directory. A
+thread id the caller does not own must 404 whether or not anything is staged on
+it -- otherwise the reply distinguishes "not yours" from "nothing there", which
+is a thread-id oracle.
 """
+
+from __future__ import annotations
+
 from typing import Any
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from uuid import UUID
 
-from vitess_ai.core.log import get_logger
-from vitess_ai.server.file_storage import get_file_storage_service
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = get_logger(__name__)
+from juena_core.server.chat.repository import ChatNotFoundError, get_owned_chat
+from juena_core.server.database.connection import get_db_session
+from juena_core.server.identity import Principal, PrincipalDependency
+from vitess_ai.server.uploads import UploadRefused, UploadStore, upload_module_manifest
 
-router = APIRouter()
+__all__ = ["build_file_router"]
 
 
-@router.post("/files/upload")
-async def upload_file(
-    file: UploadFile = File(...),
-    thread_id: str = Form(...),
-    module_type: str = Form(...)
-) -> dict[str, Any]:
+async def _read_upload_bytes(upload: UploadFile, max_bytes: int) -> bytes:
+    """Read at most one byte beyond the limit, then release the spool file.
+
+    The store is still the authority that accepts or refuses the body. This
+    boundary only prevents a client from making the API allocate an unbounded
+    body before the store gets a chance to enforce its 100 MB policy.
     """
-    Upload a file for a specific module type in a thread.
-    
-    Args:
-        file: The file to upload
-        thread_id: Thread ID to associate file with
-        module_type: Module type (readin, guide, instrument, writeout)
-        
-    Returns:
-        Dictionary with file metadata
-    """
+
     try:
-        # Read file content
-        file_content = await file.read()
-        
-        # Upload file
-        storage_service = get_file_storage_service()
-        file_metadata = storage_service.upload_file(
-            file_content=file_content,
-            filename=file.filename or "unknown",
-            thread_id=thread_id,
-            module_type=module_type
-        )
-        
-        logger.info(f"File uploaded successfully: {file_metadata['filename']} (thread_id={thread_id}, module_type={module_type})")
-        return {
-            "status": "success",
-            "file": file_metadata
-        }
-    except ValueError as e:
-        logger.error(f"File upload validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"File upload error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+        return await upload.read(max_bytes + 1)
+    finally:
+        await upload.close()
 
 
-@router.get("/files/{file_id}")
-async def get_file_info(
-    file_id: str,
-    thread_id: str = Query(...),
-    module_type: str = Query(...)
-) -> dict[str, Any]:
-    """
-    Get file information by file ID.
-    
-    Args:
-        file_id: File ID
-        thread_id: Thread ID
-        module_type: Module type
-        
-    Returns:
-        Dictionary with file metadata
-    """
-    try:
-        storage_service = get_file_storage_service()
-        file_info = storage_service.get_file_info(file_id, thread_id, module_type)
-        
-        if file_info is None:
-            raise HTTPException(status_code=404, detail="File not found")
-        
-        return {
-            "status": "success",
-            "file": file_info
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting file info: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get file info: {str(e)}")
+def build_file_router(
+    principal: PrincipalDependency, store: UploadStore
+) -> APIRouter:
+    """A router over one upload store, authenticating with one principal."""
 
+    router = APIRouter(prefix="/files", tags=["files"])
 
-@router.delete("/files/{file_id}")
-async def delete_file(
-    file_id: str,
-    thread_id: str = Query(...),
-    module_type: str = Query(...)
-) -> dict[str, Any]:
-    """
-    Delete a file by file ID.
-    
-    Args:
-        file_id: File ID
-        thread_id: Thread ID
-        module_type: Module type
-        
-    Returns:
-        Dictionary with delete status
-    """
-    try:
-        storage_service = get_file_storage_service()
-        deleted = storage_service.delete_file(file_id, thread_id, module_type)
-        
-        if not deleted:
-            raise HTTPException(status_code=404, detail="File not found")
-        
-        return {
-            "status": "success",
-            "message": "File deleted successfully",
-            "file_id": file_id
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+    async def _owned(session: AsyncSession, user: Principal, thread_id: UUID) -> None:
+        try:
+            # `agent_id=None`: addressed by thread, runs no graph. Core makes
+            # the argument mandatory-but-nullable so a route that *does* run
+            # one cannot skip the check by leaving it out.
+            await get_owned_chat(session, user.id, str(thread_id), agent_id=None)
+        except ChatNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Chat not found") from exc
 
+    @router.get("/modules")
+    async def list_modules() -> dict[str, Any]:
+        """The slots and limits that exist. The sidebar renders exactly these."""
 
-@router.get("/files/thread/{thread_id}")
-async def list_thread_files(
-    thread_id: str,
-    module_type: str | None = Query(None, description="Optional module type filter")
-) -> dict[str, Any]:
-    """
-    List files for a thread, optionally filtered by module type.
-    
-    Args:
-        thread_id: Thread ID
-        module_type: Optional module type filter
-        
-    Returns:
-        Dictionary with list of file metadata
-    """
-    try:
-        storage_service = get_file_storage_service()
-        files = storage_service.list_files(thread_id, module_type)
-        
-        return {
-            "status": "success",
-            "thread_id": thread_id,
-            "module_type": module_type,
-            "file_count": len(files),
-            "files": files
-        }
-    except Exception as e:
-        logger.error(f"Error listing files: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list files: {str(e)}")
+        return {"modules": list(upload_module_manifest())}
 
+    @router.post("/{thread_id}/{module}")
+    async def stage_file(
+        thread_id: UUID,
+        module: str,
+        upload: UploadFile = File(...),
+        user: Principal = Depends(principal),
+        session: AsyncSession = Depends(get_db_session),
+    ) -> dict[str, Any]:
+        """Write one input file into a thread's slot on the shared volume."""
 
-@router.delete("/files/thread/{thread_id}")
-async def delete_thread_files(thread_id: str) -> dict[str, Any]:
-    """
-    Delete all files (uploads and outputs) for a thread.
-    
-    Args:
-        thread_id: Thread ID
-        
-    Returns:
-        Dictionary with delete status
-    """
-    try:
-        storage_service = get_file_storage_service()
-        deleted_count = storage_service.delete_thread_files(thread_id)
-        deleted_outputs = storage_service.delete_thread_outputs(thread_id)
-        
-        return {
-            "status": "success",
-            "message": f"Deleted {deleted_count} upload files and {deleted_outputs} output files for thread {thread_id}",
-            "thread_id": thread_id,
-            "deleted_uploads": deleted_count,
-            "deleted_outputs": deleted_outputs,
-            "total_deleted": deleted_count + deleted_outputs
-        }
-    except Exception as e:
-        logger.error(f"Error deleting thread files: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to delete thread files: {str(e)}")
+        await _owned(session, user, thread_id)
+        content = await _read_upload_bytes(upload, store.max_bytes)
+        try:
+            staged = store.stage(
+                content,
+                filename=upload.filename or "",
+                thread_id=thread_id,
+                module=module,
+            )
+        except UploadRefused as exc:
+            # 422, not 400: the request was well-formed and the file was not
+            # acceptable. The message is written for the person who chose it.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return staged.as_dict()
 
+    @router.get("/{thread_id}")
+    async def list_staged(
+        thread_id: UUID,
+        module: str | None = None,
+        user: Principal = Depends(principal),
+        session: AsyncSession = Depends(get_db_session),
+    ) -> dict[str, Any]:
+        """Everything staged for one thread, which is what the manifest shows."""
 
-# ============================================================================
-# OUTPUT FILE ENDPOINTS
-# ============================================================================
+        await _owned(session, user, thread_id)
+        try:
+            files = store.staged(thread_id, module)
+        except UploadRefused as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"files": [item.as_dict() for item in files]}
 
-@router.get("/files/thread/{thread_id}/outputs")
-async def list_output_files(thread_id: str) -> dict[str, Any]:
-    """
-    List output files for a thread.
-    
-    Args:
-        thread_id: Thread ID
-        
-    Returns:
-        Dictionary with list of output file metadata
-    """
-    try:
-        storage_service = get_file_storage_service()
-        files = storage_service.list_output_files(thread_id)
-        
-        return {
-            "status": "success",
-            "thread_id": thread_id,
-            "file_count": len(files),
-            "files": files
-        }
-    except Exception as e:
-        logger.error(f"Error listing output files: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list output files: {str(e)}")
+    @router.delete("/{thread_id}/{module}/{filename}")
+    async def remove_staged(
+        thread_id: UUID,
+        module: str,
+        filename: str,
+        user: Principal = Depends(principal),
+        session: AsyncSession = Depends(get_db_session),
+    ) -> dict[str, Any]:
+        """Remove one staged file, so a wrong slot can be corrected."""
 
+        await _owned(session, user, thread_id)
+        try:
+            removed = store.remove(thread_id, module, filename)
+        except UploadRefused as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not removed:
+            raise HTTPException(status_code=404, detail="No such staged file")
+        return {"removed": filename, "module": module}
 
-@router.post("/files/thread/{thread_id}/outputs")
-async def save_output_file(
-    thread_id: str,
-    filename: str = Form(...),
-    file: UploadFile = File(...)
-) -> dict[str, Any]:
-    """
-    Save a simulation output file for a thread.
-    
-    Args:
-        thread_id: Thread ID
-        filename: Output filename
-        file: The output file to save
-        
-    Returns:
-        Dictionary with file metadata
-    """
-    try:
-        # Read file content
-        file_content = await file.read()
-        
-        # Save output file
-        storage_service = get_file_storage_service()
-        file_metadata = storage_service.save_output_file(
-            file_content=file_content,
-            filename=filename or file.filename or "output",
-            thread_id=thread_id
-        )
-        
-        logger.info(f"Output file saved: {filename} for thread {thread_id}")
-        return {
-            "status": "success",
-            "file": file_metadata
-        }
-    except Exception as e:
-        logger.error(f"Error saving output file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to save output file: {str(e)}")
+    #: Deliberately absent: everything to do with *output* files. The first
+    #: generation's store also saved, listed and deleted simulation outputs,
+    #: which in v2 belong to two owners that already exist -- the MCP server
+    #: writes them under the run id it was given, and core's artifact store
+    #: delivers them (03/CP3a). A third copy of "which files may be handed to a
+    #: user" is how a sweep quietly delivers what the guided path refuses.
 
-
-@router.delete("/files/thread/{thread_id}/outputs/{filename}")
-async def delete_output_file(
-    thread_id: str,
-    filename: str
-) -> dict[str, Any]:
-    """
-    Delete an output file.
-    
-    Args:
-        thread_id: Thread ID
-        filename: Output filename
-        
-    Returns:
-        Dictionary with delete status
-    """
-    try:
-        storage_service = get_file_storage_service()
-        deleted = storage_service.delete_output_file(thread_id, filename)
-        
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Output file not found")
-        
-        return {
-            "status": "success",
-            "message": "Output file deleted successfully",
-            "thread_id": thread_id,
-            "filename": filename
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting output file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to delete output file: {str(e)}")
-
+    return router

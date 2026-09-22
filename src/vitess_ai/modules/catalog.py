@@ -1,208 +1,222 @@
-"""
-Central module catalog for graph registration, UI metadata, and upload behavior.
+"""Which VITESS modules exist, in what order, and what each one accepts.
 
-This module is the single source of truth for module registration metadata so
-new modules can be added once and consumed consistently by:
-- Supervisor graph registration
-- Tool loading and validation detection
-- Configuration endpoints
-- Streamlit upload UI
-- CLI executable mapping
+This is a data table, not a registry. The distinction matters, because JüNA's
+rule is that adding an *agent* requires a package, a builder import and one
+explicit entry -- no discovery, no registry. That rule is about agents. These
+rows are about VITESS physics modules, and four unrelated callers need the same
+handful of facts about them: the command generator needs the executable, the
+file store needs to know what may be uploaded, the sidebar needs a label and an
+order, and the specialists need their own row.
+
+Without this table each of those grows its own copy. Two such copies existed in
+the first-generation agent -- ``FALLBACK_MODULE_EXECUTABLES`` in
+``mcp/supervisor_tools.py`` and ``FALLBACK_MODULE_TYPES`` in
+``server/file_storage.py`` -- and they existed for a reason worth not repeating:
+the old catalog carried an ``agent_class``, so importing it imported LangChain,
+and a FastMCP server that wanted a five-entry ``{module: executable}`` mapping
+dragged in the whole agent framework to get it. The fallbacks were the escape.
+
+So: **this module imports pydantic and nothing else**, and a test asserts that
+importing it pulls in neither ``langchain`` nor ``deepagents``. ``agent_class``,
+``tool_factory`` and ``validation_tool_patterns`` are gone. The five module
+specialists will be built by five explicit builders in the simulator checkpoint,
+listed one line each, with JüNA's rule unchanged.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Any
+from typing import Literal
 
-from vitess_ai.agents.simulator.base_agent import ModuleBuilder, ModuleMetadata
-from vitess_ai.agents.simulator.modules.readin import ReadInModuleAgent
-from vitess_ai.agents.simulator.modules.guide import GuideModuleAgent
-from vitess_ai.agents.simulator.modules.monitor1d import Monitor1DModuleAgent
-from vitess_ai.agents.simulator.modules.monitor2d import Monitor2DModuleAgent
-from vitess_ai.agents.simulator.modules.writeout import WriteoutModuleAgent
-from vitess_ai.agents.simulator.tools import (
-    get_guide_tools,
-    get_readin_tools,
-    get_writeout_tools,
-    get_monitor1d_tools,
-    get_monitor2d_tools,
-)
+from pydantic import BaseModel, ConfigDict, Field
 
-def get_monitor_tools():
-    """Backward compatible - return combined monitor tools."""
-    return get_monitor1d_tools() + get_monitor2d_tools()
-
-
-DEFAULT_DATA_FILE_EXTENSIONS = ["dat", "txt", "csv", "nxs", "h5"]
-
-
-def _build_graph_modules() -> list[ModuleMetadata]:
-    """Build default graph-enabled module metadata."""
-    return [
-        ModuleBuilder.create(
-            name="readin",
-            display_name="Read-in Parameters",
-            description="Configure neutron input parameters and initial conditions",
-            agent_class=ReadInModuleAgent,
-            order=1,
-            tool_factory=get_readin_tools,
-            validation_tool_patterns=["validate_readin_module"],
-            cli_executable="$V/read_in",
-            upload_schema_sidebar={
-                "mode": "file_multi",
-                "label": "Read-in Module Files",
-                "help": "Select up to 3 input files for neutron simulation.",
-                "extensions": DEFAULT_DATA_FILE_EXTENSIONS,
-                "max_files": 3,
-            },
-        ),
-        ModuleBuilder.create(
-            name="guide",
-            display_name="Guide Parameters",
-            description="Configure neutron guide specifications and geometry",
-            agent_class=GuideModuleAgent,
-            order=2,
-            tool_factory=get_guide_tools,
-            validation_tool_patterns=["validate_guide_parameters"],
-            cli_executable="$V/guide_parallel",
-            upload_schema_sidebar={
-                "mode": "file_single",
-                "label": "Guide Module File",
-                "help": "Optional: select one guide input file for neutron simulation, or use default configuration.",
-                "extensions": DEFAULT_DATA_FILE_EXTENSIONS,
-                "max_files": 1,
-            },
-        ),
-        ModuleBuilder.create(
-            name="writeout",
-            display_name="Writeout Parameters",
-            description="Configure output settings and data formats",
-            agent_class=WriteoutModuleAgent,
-            order=3,
-            tool_factory=get_writeout_tools,
-            validation_tool_patterns=["validate_writeout_module"],
-            cli_executable="$V/writeout",
-            upload_schema_sidebar={
-                "mode": "path_only",
-                "label": "Writeout Save Path",
-                "help": "Set an output path for writeout results.",
-                "default_filename": "output.out",
-                "button_text": "Save Path",
-            },
-        ),
-        ModuleBuilder.create(
-            name="monitor1d",
-            display_name="Monitor1D Parameters",
-            description="Configure 1D monitor parameters for neutron detection",
-            agent_class=Monitor1DModuleAgent,
-            order=4,
-            tool_factory=get_monitor_tools,
-            validation_tool_patterns=["validate_monitor1d_module"],
-            cli_executable="$V/monitor1D",
-            upload_schema_sidebar={
-                "mode": "path_only",
-                "label": "Monitor1D Output File Path",
-                "help": "Set an output path for Monitor1D results.",
-                "default_filename": "monitor1D.dat",
-                "button_text": "Save Path",
-            },
-        ),
-        ModuleBuilder.create(
-            name="monitor2d",
-            display_name="Monitor2D Parameters",
-            description="Configure 2D monitor parameters for neutron detection",
-            agent_class=Monitor2DModuleAgent,
-            order=5,
-            tool_factory=get_monitor_tools,
-            validation_tool_patterns=["validate_monitor2d_module"],
-            cli_executable="$V/monitor2D",
-            upload_schema_sidebar={
-                "mode": "path_only",
-                "label": "Monitor2D Output File Path",
-                "help": "Set an output path for Monitor2D results.",
-                "default_filename": "monitor2D.dat",
-                "button_text": "Save Path",
-            },
-        )
-    ]
-
-
-# Upload-only entries are not graph modules, but still appear in file UI/storage.
-_AUXILIARY_UPLOAD_MODULES: list[dict[str, Any]] = [
-    {
-        "name": "instrument",
-        "display_name": "Instrument File",
-        "description": "Upload instrument file used by read-in module (sInstrInfIn).",
-        "order": 2,
-        "optional": True,
-        "agent_enabled": False,
-        "upload_schema_sidebar": {
-            "mode": "file_single",
-            "label": "Instrument File",
-            "help": "Select one instrument file (.inf) for neutron simulation.",
-            "extensions": ["inf", "dat", "txt"],
-            "max_files": 1,
-        },
-    }
+__all__ = [
+    "DATA_FILE_EXTENSIONS",
+    "UploadSchema",
+    "ModuleSpec",
+    "MODULES",
+    "module_spec",
+    "execution_order",
+    "cli_executables",
+    "upload_modules",
 ]
 
-
-@lru_cache(maxsize=1)
-def _cached_graph_modules() -> tuple[ModuleMetadata, ...]:
-    modules = sorted(_build_graph_modules(), key=lambda m: m.order)
-    return tuple(modules)
+#: What a neutron data file may be called. Not the instrument file, which has
+#: its own list below.
+DATA_FILE_EXTENSIONS = ("dat", "txt", "csv", "nxs", "h5")
 
 
-def get_graph_module_metadata() -> list[ModuleMetadata]:
-    """Return graph-enabled modules as ModuleMetadata list."""
-    return list(_cached_graph_modules())
+class UploadSchema(BaseModel):
+    """What a module accepts from the user as a file.
+
+    There is deliberately no ``default_filename`` field. Three rows used to
+    carry one -- ``writeout``, ``monitor1d`` and ``monitor2d`` -- under an
+    upload mode that uploaded nothing; each merely set an output filename that
+    the parameter schema already declares, with its own CLI flag and its own
+    default. The two copies had already drifted: the sidebar said
+    ``output.out`` where ``WriteoutParameters.sOutFileName`` said
+    ``output.dat``. The schema owns those names now, and a second copy here is
+    the bug that was removed rather than a feature to preserve.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["file_single", "file_multi"]
+    label: str
+    help: str
+    extensions: tuple[str, ...] = Field(min_length=1)
+    max_files: int = Field(ge=1)
 
 
-def _module_to_info(module: ModuleMetadata) -> dict[str, Any]:
+class ModuleSpec(BaseModel):
+    """One VITESS module, described by data alone.
+
+    ``cli_executable`` and ``accepts_upload`` are **independent**, which is why
+    neither a single ``kind`` field nor one implying the other would work. Two
+    rows prove it: ``instrument`` is uploaded but never executed, and
+    ``writeout`` is executed but accepts no upload.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    display_name: str
+    description: str
+    #: Position in the catalog, and among the executable rows, the order the
+    #: VITESS pipeline runs them in. Unique across the table so that sorting is
+    #: not left to a tiebreak.
+    order: int = Field(ge=1)
+    #: A **basename**, never a path: "read_in", not "$V/read_in". The old
+    #: catalog stored the latter, a shell variable that expands to nothing
+    #: outside a shell. It is resolved against the trusted modules root at
+    #: execution time and asserted to be inside it. ``None`` means this row
+    #: runs no binary.
+    cli_executable: str | None = None
+    #: ``None`` means there is nothing to upload for this module.
+    accepts_upload: UploadSchema | None = None
+
+
+MODULES: tuple[ModuleSpec, ...] = (
+    ModuleSpec(
+        name="readin",
+        display_name="Read-in Parameters",
+        description="Configure neutron input parameters and initial conditions",
+        order=1,
+        cli_executable="read_in",
+        accepts_upload=UploadSchema(
+            mode="file_multi",
+            label="Read-in Module Files",
+            help="Select up to 3 input files for neutron simulation.",
+            extensions=DATA_FILE_EXTENSIONS,
+            max_files=3,
+        ),
+    ),
+    # Sits next to the module it feeds -- it supplies read-in's `sInstrInfIn`
+    # (`--I`) -- and runs nothing itself. Its `order` therefore positions it in
+    # the sidebar only; `execution_order()` skips it because it has no
+    # executable, so the pipeline's `--N1`..`--N5` numbering is unaffected.
+    ModuleSpec(
+        name="instrument",
+        display_name="Instrument File",
+        description="Upload instrument file used by read-in module (sInstrInfIn).",
+        order=2,
+        accepts_upload=UploadSchema(
+            mode="file_single",
+            label="Instrument File",
+            help="Select one instrument file (.inf) for neutron simulation.",
+            extensions=("inf", "dat", "txt"),
+            max_files=1,
+        ),
+    ),
+    ModuleSpec(
+        name="guide",
+        display_name="Guide Parameters",
+        description="Configure neutron guide specifications and geometry",
+        order=3,
+        cli_executable="guide_parallel",
+        accepts_upload=UploadSchema(
+            mode="file_single",
+            label="Guide Module File",
+            help=(
+                "Optional: select one guide input file for neutron simulation, "
+                "or use default configuration."
+            ),
+            extensions=DATA_FILE_EXTENSIONS,
+            max_files=1,
+        ),
+    ),
+    ModuleSpec(
+        name="writeout",
+        display_name="Writeout Parameters",
+        description="Configure output settings and data formats",
+        order=4,
+        cli_executable="writeout",
+    ),
+    ModuleSpec(
+        name="monitor1d",
+        display_name="Monitor1D Parameters",
+        description="Configure 1D monitor parameters for neutron detection",
+        order=5,
+        cli_executable="monitor1D",
+    ),
+    ModuleSpec(
+        name="monitor2d",
+        display_name="Monitor2D Parameters",
+        description="Configure 2D monitor parameters for neutron detection",
+        order=6,
+        cli_executable="monitor2D",
+    ),
+    # Last: it passes every trajectory on unchanged and only reports the
+    # capture flux, so nothing after it could be affected by it.
+    ModuleSpec(
+        name="capture_flux",
+        display_name="Capture Flux Parameters",
+        description="Configure the gold-foil capture flux evaluation",
+        order=7,
+        cli_executable="capture_flux",
+    ),
+)
+
+_BY_NAME = {spec.name: spec for spec in MODULES}
+
+
+def module_spec(name: str) -> ModuleSpec:
+    """Return one module's row, or raise.
+
+    Raising is the point. A builder that asks for a row that is not here has
+    been misspelled or the table has been edited out from under it, and both
+    are broken installs. The first-generation agent degraded through a fallback
+    table instead, which is how two copies of the executable mapping came to
+    exist and disagree.
+    """
+    try:
+        return _BY_NAME[name]
+    except KeyError:
+        known = ", ".join(sorted(_BY_NAME))
+        raise KeyError(f"Unknown VITESS module {name!r}. Known modules: {known}") from None
+
+
+def execution_order() -> tuple[str, ...]:
+    """The modules that run a binary, in the order the pipeline runs them."""
+    return tuple(
+        spec.name
+        for spec in sorted(MODULES, key=lambda spec: spec.order)
+        if spec.cli_executable is not None
+    )
+
+
+def cli_executables() -> dict[str, str]:
+    """The ``{module: basename}`` mapping ``generate_cli_command`` requires."""
     return {
-        "name": module.name,
-        "display_name": module.display_name,
-        "description": module.description,
-        "optional": module.optional,
-        "order": module.order,
-        "agent_enabled": True,
-        "upload_schema_sidebar": module.upload_schema_sidebar,
-        "validation_tool_patterns": module.validation_tool_patterns,
-        "cli_executable": module.cli_executable,
+        spec.name: spec.cli_executable
+        for spec in MODULES
+        if spec.cli_executable is not None
     }
 
 
-def get_graph_modules_info() -> list[dict[str, Any]]:
-    """Return graph module info dictionaries for API/UI use."""
-    return [_module_to_info(module) for module in get_graph_module_metadata()]
-
-
-def get_upload_modules_info(include_auxiliary: bool = True) -> list[dict[str, Any]]:
-    """
-    Return modules that can appear in upload UI.
-
-    Includes graph modules with upload_schema_sidebar and optional upload-only entries.
-    """
-    modules = [
-        _module_to_info(module)
-        for module in get_graph_module_metadata()
-        if module.upload_schema_sidebar
-    ]
-    if include_auxiliary:
-        modules.extend(_AUXILIARY_UPLOAD_MODULES)
-    return sorted(modules, key=lambda m: (m.get("order", 999), m.get("name", "")))
-
-
-def get_upload_module_names(include_auxiliary: bool = True) -> list[str]:
-    """Return upload module names used for storage validation and UI filtering."""
-    return [m["name"] for m in get_upload_modules_info(include_auxiliary=include_auxiliary)]
-
-
-def get_cli_executable_mapping() -> dict[str, str]:
-    """Return module-to-executable mapping for CLI generation."""
-    mapping: dict[str, str] = {}
-    for module in get_graph_module_metadata():
-        if module.cli_executable:
-            mapping[module.name] = module.cli_executable
-    return mapping
+def upload_modules() -> tuple[ModuleSpec, ...]:
+    """Every row that accepts a file, in catalog order."""
+    return tuple(
+        spec
+        for spec in sorted(MODULES, key=lambda spec: spec.order)
+        if spec.accepts_upload is not None
+    )

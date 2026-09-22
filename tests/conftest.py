@@ -1,112 +1,95 @@
+"""Fixtures every v2 test module may use.
+
+Core reads nothing on import -- `juena_core.config.settings()` raises until an
+application calls `configure()`, which is 01/CP1's whole point -- so anything
+that builds a chat model or a middleware stack needs settings installed first.
+This installs a set that reaches no network and touches no database.
 """
-Shared fixtures and test utilities for pytest tests
-"""
-import tempfile
-import shutil
+
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Generator
+
 import pytest
 
-from vitess_ai.agents.simulator import ModuleMetadata, BaseModuleAgent
+from juena_core import config as config_module
+from juena_core.config import CoreSettings
+from juena_core.schema.llm_models import BlabladorModelName
 
 
-@pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
-    """Create a temporary directory for file tests"""
-    temp_path = Path(tempfile.mkdtemp())
-    yield temp_path
-    shutil.rmtree(temp_path, ignore_errors=True)
-
-
-@pytest.fixture
-def create_temp_file(temp_dir: Path):
-    """Helper to create temporary test files"""
-    def _create(name: str, content: str = "test content") -> Path:
-        file_path = temp_dir / name
-        file_path.write_text(content)
-        return file_path
-    return _create
-
-
-@pytest.fixture
-def mock_env(monkeypatch):
-    """Mock environment variables"""
-    env_vars = {
-        "THREAD_ID": "test_thread_123",
-        "OPENAI_API_KEY": "test_openai_key",
-        "BLABLADOR_API_KEY": "test_blablador_key",
-        "BLABLADOR_BASE_URL": "https://test.blablador.com",
-        "VITESS_MODULES_PATH": "/tmp/vitess/bin",
-        "VITESS_PROJECT_PATH": "/tmp/vitess_project",
-        "VITESS_LOG_PATH": "/tmp/vitess_logs",
+def make_settings(**overrides: object) -> CoreSettings:
+    values: dict[str, object] = {
+        "OPENAI_API_KEY": None,
+        "BLABLADOR_API_KEY": "test-key-not-used",
+        "BLABLADOR_BASE_URL": "https://blablador.invalid/v1",
+        "MAX_TOKENS": 10_000,
+        "TIMEOUT_SECONDS": 60,
+        "MAX_RETRIES": 3,
+        "DEFAULT_PROVIDER": "blablador",
+        "DEFAULT_MODEL": BlabladorModelName.GPT_OSS.value,
+        "OPENAI_AVAILABLE_MODELS": None,
+        "BLABLADOR_AVAILABLE_MODELS": None,
+        "OPENAI_DEFAULT_MODEL": "gpt-4o-mini",
+        "BLABLADOR_DEFAULT_MODEL": BlabladorModelName.GPT_OSS.value,
+        "STREAM_TOOL_PAYLOADS": False,
+        "DATABASE_URL": None,
+        "DATABASE_POOL_MAX_SIZE": 5,
+        "SESSION_TTL_HOURS": 8,
+        "SESSION_COOKIE_SECURE": False,
+        "FALLBACK_PROVIDER": None,
+        "EXECUTE_TIMEOUT_SECONDS": 600,
+        "ARTIFACT_ROOT": Path("/tmp/vitess-ai-test-artifacts"),
+        "AUDIT_FILE": Path("/tmp/vitess-ai-test-artifacts/audit.jsonl"),
+        "LOG_LEVEL": "INFO",
+        "LOG_DIR": Path("/tmp/vitess-ai-test-logs"),
+        "BIND_HOST": "127.0.0.1",
+        "API_PUBLISHED": False,
     }
-    for key, value in env_vars.items():
-        monkeypatch.setenv(key, value)
-    return env_vars
+    values.update(overrides)
+    return CoreSettings(**values)  # type: ignore[arg-type]
 
 
 @pytest.fixture
-def sample_module_metadata():
-    """Sample module metadata for testing"""
-    def _create(name: str = "test_module", order: int = 1, optional: bool = False):
-        class TestAgent(BaseModuleAgent):
-            pass
-        
-        return ModuleMetadata(
-            name=name,
-            display_name=f"Test {name.title()}",
-            description=f"Test module {name}",
-            agent_class=TestAgent,
-            optional=optional,
-            order=order
-        )
-    return _create
+def configured(monkeypatch):
+    """Install core settings process-wide for one test."""
+
+    config = make_settings()
+    monkeypatch.setattr(config_module, "_settings", config)
+    return config
 
 
 @pytest.fixture
-def sample_guide_params():
-    """Sample guide parameters for testing"""
-    return {
-        "eGuideShapeY": 0,  # VT_CONSTANT
-        "eGuideShapeZ": 0,  # VT_CONSTANT
-        "nPieces": 1,
-        "GuideEntrWidth": 3.0,
-        "GuideEntrHeight": 3.0,
-        "GuideExitWidth": 3.0,
-        "GuideExitHeight": 3.0,
-        "piecelength": 50.0,
-        "Radius": 0.0,
-        "D_Foc2Y": 0.0,
-        "D_Foc2Z": 0.0,
-        "MValGenL": 3.0,
-        "MValGenR": 3.0,
-        "MValGenTB": 3.0,
-    }
+def offline_model(configured):
+    """A real `BaseChatModel` that is never called.
+
+    `create_summarization_middleware` type-checks its model, so `None` will not
+    do. This one points at an unreachable base URL: if a test ever does reach
+    the network, it fails rather than quietly costing money.
+    """
+    from juena_core.llms_providers import build_chat_model
+
+    return build_chat_model(
+        provider="blablador", model=configured.DEFAULT_MODEL, temperature=0.0
+    )
 
 
-@pytest.fixture
-def sample_readin_params():
-    """Sample readin parameters for testing"""
-    return {
-        "ePrgFormat": 1,  # VT_VITESS_FMT
-        "eDatFormat": 0,  # VT_EXPONENTIAL
-        "sInputFileName": ["file1.dat", "file2.dat"],
-        "Weight": [1.0, 1.0],
-        "FactInt": 1.0,
-        "iSurface": -1,
-    }
+@pytest.fixture(autouse=True, scope="session")
+def _documentation_retrieval_is_off_in_tests():
+    """No test opens Chroma, and none depends on a developer's API key.
 
+    The degradation path is still the real one: `get_rag_tools` returns its four
+    `RAG_UNAVAILABLE` tools, with the names the prompts name. What is switched
+    off is the branch that would build an embedding function and create a Chroma
+    directory inside the checkout -- which is what happens on a machine that has
+    `BLABLADOR_API_KEY` exported, and not on one that does not. A suite whose
+    tool surface depends on the developer's environment is not a suite.
+    """
+    from vitess_ai.config import Config
+    from vitess_ai.retrieval import tools as retrieval_tools
 
-@pytest.fixture
-def sample_writeout_params():
-    """Sample writeout parameters for testing"""
-    return {
-        "sOutFileName": "/tmp/output.dat",
-        "bActive": True,
-        "bHeader": True,
-        "ePrgFormat": 1,  # VT_VITESS_FMT
-        "eDatFormat": 1,  # VT_FLOAT
-        "eSeparator": 0,  # VT_BLANK
-        "iDetectColor": -1,
-    }
-
+    previous = Config.RAG_ENABLED
+    Config.RAG_ENABLED = False
+    retrieval_tools.get_rag_tools.cache_clear()
+    yield
+    Config.RAG_ENABLED = previous
+    retrieval_tools.get_rag_tools.cache_clear()
