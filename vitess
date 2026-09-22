@@ -112,9 +112,20 @@ cmd_health() { ## Check the UI, the API and the MCP server
     return "$failures"
 }
 
-cmd_index_docs() { ## Build the VITESS documentation index (embeds the manual)
+cmd_index_docs() { ## Build the VITESS documentation index (--reindex rebuilds it from scratch)
+    # Without --reindex a non-empty index is reused, so a new or changed file in
+    # rag/vitess-rag/data only reaches the index with it (after `vitess up`).
+    local reindex=()
+    case "${1:-}" in
+        "") ;;
+        --reindex) reindex=(-e VITESS_RAG_REINDEX=true) ;;
+        *) die "usage: vitess index-docs [--reindex]" ;;
+    esac
     echo "This sends the VITESS documentation to the embedding endpoint."
-    "${COMPOSE[@]}" exec -T vitess-app python -m vitess_ai.retrieval.bootstrap
+    # The `+` form expands an empty array to nothing; macOS's bash 3.2 treats a
+    # plain "${reindex[@]}" as unset under `set -u`.
+    "${COMPOSE[@]}" exec -T ${reindex[@]+"${reindex[@]}"} vitess-app \
+        python -m vitess_ai.retrieval.bootstrap
     # Agent graphs cache their bound tool objects. Restart after a successful
     # build so a graph first opened while the index was absent cannot keep the
     # old RAG_UNAVAILABLE tools for the lifetime of the container.

@@ -51,6 +51,7 @@ from vitess_ai.agents.advanced_mode.agent import (
     build_advanced_mode_graph,
 )
 from vitess_ai.agents.advanced_mode.tools import (
+    AUTO_DEFAULT_MODULES,
     MAX_SWEEP_RUNS,
     build_batch_tools,
     describe_module_parameters,
@@ -401,6 +402,54 @@ def test_both_runs_execute_under_their_own_identifier(
     ]
 
 
+def test_each_run_delivers_one_separate_artifact_group(
+    tmp_path: Path, artifact_store: ArtifactStore
+) -> None:
+    def record(call: dict[str, Any]) -> dict[str, Any]:
+        arguments = call["args"]
+        run_root = (
+            tmp_path
+            / arguments["thread_id"]
+            / "outputs"
+            / arguments["simulation_run_id"]
+        )
+        run_root.mkdir(parents=True)
+        content = f"result for {arguments['simulation_run_id']}\n".encode()
+        (run_root / "result.txt").write_bytes(content)
+        return simulation_payload(
+            thread_id=arguments["thread_id"],
+            simulation_run_id=arguments["simulation_run_id"],
+            modules=list(arguments["execution_order"]),
+            files=[
+                {"path": "result.txt", "kind": "data", "size_bytes": len(content)}
+            ],
+        )
+
+    command, tools = _plan(
+        tmp_path,
+        variants=swept_modules(tmp_path, guide_widths=(3.0, 5.0)),
+        run_names=["narrow", "wide"],
+        run_simulation=record,
+    )
+    _run_batch(tools, command.update["simulation_plan"])
+
+    outputs = [
+        artifact
+        for artifact in artifact_store.peek_result_refs("user-a", THREAD_ID)
+        if artifact.filename == "result.txt"
+    ]
+    assert [(artifact.group_id, artifact.group_label) for artifact in outputs] == [
+        (
+            command.update["simulation_plan"][0]["simulation_run_id"],
+            "Simulation proof · narrow",
+        ),
+        (
+            command.update["simulation_plan"][1]["simulation_run_id"],
+            "Simulation proof · wide",
+        ),
+    ]
+
+
 def test_each_run_gets_the_arguments_its_own_variant_validated(
     tmp_path: Path, artifact_store
 ) -> None:
@@ -515,7 +564,7 @@ def test_a_failed_run_is_reported_and_not_recorded_as_a_result(
             simulation_run_id=call["args"]["simulation_run_id"],
             modules=list(call["args"]["execution_order"]),
             success=len(calls) == 1,
-            exit_codes=(0, 0, 0, 0, 0) if len(calls) == 1 else (0, 1, 0, 0, 0),
+            exit_codes=(0, 0, 0, 0, 0, 0) if len(calls) == 1 else (0, 1, 0, 0, 0, 0),
         )
 
     command, tools = _plan(
@@ -859,6 +908,40 @@ def test_the_guide_shape_conversation_uses_the_authoritative_schema(
     assert described["schema_defaults"]["eGuideShapeZ"] == 1
     assert described["json_schema"]["properties"]["GuideExitWidth"]["flag"] == "-W"
     assert described["json_schema"]["properties"]["GuideExitHeight"]["flag"] == "-H"
+
+
+@pytest.mark.parametrize("module", execution_order())
+def test_every_runnable_module_can_be_described(module: str) -> None:
+    """Regression for the turn that stopped on `describe_module_parameters("readin")`.
+
+    The tool built its defaults with `model()`, which runs READIN's "at least one
+    input file is required" check and raised. The model saw a blank error, repeated
+    the call, and the loop guard ended the turn. Only `guide` was ever described.
+    """
+
+    described = json.loads(describe_module_parameters.invoke({"module": module}))
+
+    assert described["module"] == module
+    assert described["parameter_model"] == parameter_model(module).__name__
+
+
+def test_readin_is_described_with_its_empty_input_defaults() -> None:
+    """READIN has no runnable default, but its schema still has defaults to show."""
+
+    described = json.loads(describe_module_parameters.invoke({"module": "readin"}))
+
+    assert described["schema_defaults"]["sInputFileName"] == []
+    assert described["schema_defaults"]["Weight"] == []
+
+
+@pytest.mark.parametrize("module", sorted(AUTO_DEFAULT_MODULES))
+def test_described_defaults_match_the_validated_defaults(module: str) -> None:
+    """Skipping the checks must not change what a defaultable module reports."""
+
+    described = json.loads(describe_module_parameters.invoke({"module": module}))
+    validated = parameter_model(module)().model_dump(mode="json")
+
+    assert described["schema_defaults"] == validated
 
 
 def test_the_sweep_signs_its_evidence_with_its_own_agent_id() -> None:

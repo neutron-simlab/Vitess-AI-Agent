@@ -21,6 +21,10 @@ from typing import Any
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from vitess_ai.agents.specialists.capture_flux.tools import (
+    build_sweep_tools as capture_flux_sweep,
+)
+from vitess_ai.agents.specialists.capture_flux.tools import build_tools as capture_flux_tools
 from vitess_ai.agents.specialists.guide.tools import build_sweep_tools as guide_sweep
 from vitess_ai.agents.specialists.guide.tools import build_tools as guide_tools
 from vitess_ai.agents.specialists.monitor1d.tools import build_sweep_tools as monitor1d_sweep
@@ -199,7 +203,7 @@ def configured_modules(
     *,
     only: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """The `module_results` five real validation tools produce for one thread.
+    """The `module_results` the six real validation tools produce for one thread.
 
     Uses each module's own tool, so these are configurations the specialists
     could have produced -- not a dictionary shaped to satisfy the reader.
@@ -262,6 +266,16 @@ def configured_modules(
             thread_id=thread_id,
         )
     )
+    written.update(
+        _validated(
+            named_tool(
+                capture_flux_tools(project_root=project_root),
+                "validate_capture_flux_parameters",
+            ),
+            {},
+            thread_id=thread_id,
+        )
+    )
     if only is not None:
         written = {name: value for name, value in written.items() if name in only}
     return written
@@ -286,12 +300,12 @@ def swept_modules(
     *,
     guide_widths: tuple[float, ...] = (3.0,),
 ) -> dict[str, Any]:
-    """The `module_variants` the five real sweep tools produce for one thread.
+    """The `module_variants` the six real sweep tools produce for one thread.
 
     The sweep equivalent of `configured_modules`, and for the same reason: a
     plan built from hand-written variants would prove nothing about what a
     sweep specialist can actually record. Only the guide varies, which is what
-    a one-parameter sweep looks like; the other four send the single-element
+    a one-parameter sweep looks like; the other five send the single-element
     list a module with no variation still has to send.
     """
     staged = stage_uploads(project_root, thread_id)
@@ -349,6 +363,16 @@ def swept_modules(
             named_tool(
                 monitor2d_sweep(project_root=project_root),
                 "validate_monitor2d_variants",
+            ),
+            [{}],
+            thread_id=thread_id,
+        )
+    )
+    written.update(
+        _swept(
+            named_tool(
+                capture_flux_sweep(project_root=project_root),
+                "validate_capture_flux_variants",
             ),
             [{}],
             thread_id=thread_id,

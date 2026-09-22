@@ -165,6 +165,15 @@ MODULES: tuple[ModuleSpec, ...] = (
         order=6,
         cli_executable="monitor2D",
     ),
+    # Last: it passes every trajectory on unchanged and only reports the
+    # capture flux, so nothing after it could be affected by it.
+    ModuleSpec(
+        name="capture_flux",
+        display_name="Capture Flux Parameters",
+        description="Configure the gold-foil capture flux evaluation",
+        order=7,
+        cli_executable="capture_flux",
+    ),
 )
 
 _BY_NAME = {spec.name: spec for spec in MODULES}

@@ -159,7 +159,7 @@ def test_server_cannot_return_evidence_for_a_different_owner() -> None:
 
 
 def test_a_partial_pipeline_failure_is_not_mislabelled_as_a_successful_retry() -> None:
-    codes = (0, 0, 7, 0, 0)
+    codes = (0, 0, 7, 0, 0, 0)
     gateway = VitessGateway(
         raw_tools(
             run_simulation=lambda _call: simulation_payload(
@@ -336,6 +336,8 @@ def test_facade_injects_ids_registers_files_and_updates_private_state(
     stored = artifact_store.get("user-a", artifact_id)
     assert stored is not None
     assert stored[0].filename == "monitor1D.dat"
+    assert stored[0].group_id == reference["simulation_run_id"]
+    assert stored[0].group_label == "Simulation proof · baseline"
     assert stored[1] == b"server measurement\n"
 
 
@@ -538,7 +540,7 @@ def test_real_agent_writes_verified_block_and_attaches_artifact(
 
     final = result["messages"][-1]
     assert "<verified_by_server>" in final.text
-    assert "Executions: 5" in final.text
+    assert f"Executions: {len(execution_order())}" in final.text
     assert "completed (exit 0)" in final.text
     assert [
         item["filename"] for item in final.additional_kwargs[ARTIFACT_MESSAGE_KEY]

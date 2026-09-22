@@ -1,6 +1,6 @@
-"""The five VITESS module specialists, listed explicitly.
+"""The six VITESS module specialists, listed explicitly.
 
-Five imports and five entries. The catalog (03/CP2) is a data table about
+Six imports and six entries. The catalog (03/CP2) is a data table about
 physics modules and it deliberately no longer carries an ``agent_class`` or a
 ``tool_factory`` -- that field is why importing the catalog used to drag in the
 whole agent framework, and why two hand-maintained copies of the executable
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from vitess_ai.agents.delegation import ModuleCompiledSubAgent
+from vitess_ai.agents.specialists.capture_flux import build_capture_flux_specialist
 from vitess_ai.agents.specialists.guide import build_guide_specialist
 from vitess_ai.agents.specialists.monitor1d import build_monitor1d_specialist
 from vitess_ai.agents.specialists.monitor2d import build_monitor2d_specialist
@@ -32,10 +33,10 @@ def compile_module_specialists(
     fallback_models: list[Any],
     unattended: bool = False,
 ) -> list[ModuleCompiledSubAgent]:
-    """Compile all five, in the order the VITESS pipeline runs them.
+    """Compile all six, in the order the VITESS pipeline runs them.
 
     Only the two modules that read a user's file take the MCP gateway; the
-    other three write files and have nothing staged to look at.
+    other four read no staged file and have nothing to look at.
 
     ``unattended`` compiles the sweep copies -- see
     :func:`compile_sweep_specialists`.
@@ -74,6 +75,12 @@ def compile_module_specialists(
             fallback_models=fallback_models,
             unattended=unattended,
         ),
+        build_capture_flux_specialist(
+            project_root=project_root,
+            summarizer_model=summarizer_model,
+            fallback_models=fallback_models,
+            unattended=unattended,
+        ),
     ]
 
 
@@ -84,7 +91,7 @@ def compile_sweep_specialists(
     summarizer_model: Any,
     fallback_models: list[Any],
 ) -> list[ModuleCompiledSubAgent]:
-    """The same five, compiled again for a parameter sweep.
+    """The same six, compiled again for a parameter sweep.
 
     A second compile, not a second set of agents: `build_chat_model` caches on
     (provider, model, temperature), so this costs tool objects and a prompt

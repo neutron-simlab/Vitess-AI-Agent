@@ -39,6 +39,7 @@ from vitess_ai.agents.specialists.module_specialist import (
     FILESYSTEM_TOOLS,
     build_module_prompt,
 )
+from vitess_ai.agents.specialists.capture_flux.tools import build_tools as capture_flux_tools
 from vitess_ai.agents.specialists.module_tools import omitted_file_value
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
 from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
@@ -1262,6 +1263,9 @@ def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
         "monitor2d": lambda: monitor2d_tools(
             project_root=tmp_path, documentation_tools=documentation
         ),
+        "capture_flux": lambda: capture_flux_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
     }
     return builders[module]()
 
@@ -1385,7 +1389,9 @@ def test_validation_tool_description_requires_confirmation(
     assert "affirmative confirmation" in tool.description
 
 
-@pytest.mark.parametrize("module", ("guide", "writeout", "monitor1d", "monitor2d"))
+@pytest.mark.parametrize(
+    "module", ("guide", "writeout", "monitor1d", "monitor2d", "capture_flux")
+)
 def test_default_tool_accepts_no_parameters_and_records_exact_schema_defaults(
     module: str, tmp_path: Path
 ) -> None:
@@ -1693,6 +1699,22 @@ def test_a_required_file_field_refuses_a_blank_name_at_the_tool_too() -> None:
             },
             "left at `NO_FCOMB` it keeps every neutron passing **either** filter",
         ),
+        ("capture_flux", {"WindowType": 1}, "A `CIRCULAR` foil needs `winradius` greater than 0"),
+        (
+            "capture_flux",
+            {"WindowType": 2, "widthmin": 1.0, "widthmax": -1.0, "heightmin": -1.0, "heightmax": 1.0},
+            "A `RECTANGULAR` foil needs `widthmin` smaller than `widthmax`",
+        ),
+        (
+            "capture_flux",
+            {"winradius": 2.0},
+            "A field the chosen `WindowType` ignores must stay 0",
+        ),
+        (
+            "capture_flux",
+            {"lambdamin": 2.0},
+            "`lambdamin` and `lambdamax` are both 0 (no window) or both set",
+        ),
     ],
 )
 def test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces(
@@ -1713,6 +1735,7 @@ def test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces(
         "writeout": lambda: writeout_tools(project_root=tmp_path),
         "monitor1d": lambda: monitor1d_tools(project_root=tmp_path),
         "monitor2d": lambda: monitor2d_tools(project_root=tmp_path),
+        "capture_flux": lambda: capture_flux_tools(project_root=tmp_path),
     }[module]()
     base = (
         {

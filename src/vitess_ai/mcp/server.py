@@ -39,6 +39,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from vitess_ai.cli.command import canonical_uuid, generate_cli_command
+from vitess_ai.mcp.capture_flux_log import read_capture_flux
 from vitess_ai.mcp.execution import RESULT_FILENAME, execute_pipeline
 from vitess_ai.mcp.health import check_health
 from vitess_ai.mcp.payloads import (
@@ -324,6 +325,9 @@ def run_pipeline(
         modules=modules,
         files=_collect_run_files(run_directory),
         message=outcome["message"],
+        capture_flux=read_capture_flux(
+            Path(outcome["result_file"]).read_text(encoding="utf-8", errors="replace")
+        ),
     )
 
 

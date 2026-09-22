@@ -195,6 +195,19 @@ class VtFormat2D(IntEnum):
     XYZ_CMPT = 3
     MATR_INT = 4
 
+class VtWindowType(IntEnum):
+    """
+    Shape of the gold foil in capture_flux (-t). Names as in VITESS's
+    yaml/3.8/modules/capture_flux.yaml.
+
+    NO_RESTRICTIONS (0): every neutron is counted and the area is taken as 1 cm^2.
+    CIRCULAR (1): a foil of radius winradius around (ywincenter, zwincenter).
+    RECTANGULAR (2): a foil from widthmin to widthmax (y) and heightmin to heightmax (z).
+    """
+    NO_RESTRICTIONS = 0
+    CIRCULAR = 1
+    RECTANGULAR = 2
+
 class FillingStage(BaseModel):
     """
     This is the model to store the information about the parameters filling process, either it is processing, completed, or error.
