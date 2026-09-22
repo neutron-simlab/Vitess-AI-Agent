@@ -20,7 +20,6 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from deepagents.middleware.subagents import CompiledSubAgent
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.tools import BaseTool
@@ -36,6 +35,7 @@ from juena_core.llms_providers import build_chat_model
 from juena_core.schema.agents import SpecialistReport
 from juena_core.schema.llm_models import BlabladorModelName, Provider
 from juena_core.server.agent.runtime_model_middleware import RuntimeModelContext
+from vitess_ai.agents.delegation import ModuleCompiledSubAgent
 from vitess_ai.agents.specialists.module_middleware import (
     GuidedAskUserMiddleware,
     ModuleReportMiddleware,
@@ -92,7 +92,7 @@ def build_module_specialist(
     summarizer_model: Any,
     fallback_models: list[Any],
     unattended: bool = False,
-) -> CompiledSubAgent:
+) -> ModuleCompiledSubAgent:
     """Compile one module specialist from the pieces its own package chose.
 
     `tools` comes from that package's ``tools.py``, which is where the decision

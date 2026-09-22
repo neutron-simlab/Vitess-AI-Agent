@@ -39,3 +39,7 @@ testpaths = ["tests"]
 # module -- but their invariants are worth asserting, and `tests/` is already on
 # the path through pytest's rootdir insertion.
 pythonpath = ["."]
+
+[tool.basedpyright]
+venvPath = "."
+venv = ".venv"

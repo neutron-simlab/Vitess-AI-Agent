@@ -22,14 +22,26 @@ something it made up.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
+from deepagents.middleware.subagents import CompiledSubAgent
 from langchain_core.runnables import Runnable
 
 from juena_core.agents.delegation import SpecialistDelegate
 from vitess_ai.state import SimulationOrderEvent
 
-__all__ = ["ModuleSpecialistDelegate", "with_module_delegation_boundary"]
+__all__ = [
+    "ModuleCompiledSubAgent",
+    "ModuleSpecialistDelegate",
+    "with_module_delegation_boundary",
+]
+
+
+class ModuleCompiledSubAgent(CompiledSubAgent):
+    """A compiled subagent tagged with the VITESS module it configures."""
+
+    module: str
 
 
 class ModuleSpecialistDelegate(SpecialistDelegate):
@@ -77,8 +89,8 @@ class ModuleSpecialistDelegate(SpecialistDelegate):
 
 
 def with_module_delegation_boundary(
-    specialists: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+    specialists: Sequence[ModuleCompiledSubAgent],
+) -> list[CompiledSubAgent]:
     """Wrap each compiled module specialist for `SubAgentMiddleware`.
 
     Each entry carries a ``module`` key naming the catalog row it configures.
@@ -87,16 +99,16 @@ def with_module_delegation_boundary(
     delegate, which is the thing that needs it.
     """
 
-    wrapped: list[dict[str, Any]] = []
+    wrapped: list[CompiledSubAgent] = []
     for spec in specialists:
-        fields = dict(spec)
-        module = fields.pop("module")
-        wrapped.append(
-            {
-                **fields,
-                "runnable": ModuleSpecialistDelegate(
-                    spec["runnable"], name=spec["name"], module=module
-                ),
-            }
-        )
+        wrapped_spec: CompiledSubAgent = {
+            "name": spec["name"],
+            "description": spec["description"],
+            "runnable": ModuleSpecialistDelegate(
+                spec["runnable"], name=spec["name"], module=spec["module"]
+            ),
+        }
+        if "mode" in spec:
+            wrapped_spec["mode"] = spec["mode"]
+        wrapped.append(wrapped_spec)
     return wrapped

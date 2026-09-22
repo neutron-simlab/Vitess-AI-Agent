@@ -14,8 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from deepagents.middleware.subagents import CompiledSubAgent
-
+from vitess_ai.agents.delegation import ModuleCompiledSubAgent
 from vitess_ai.agents.specialists.guide import build_guide_specialist
 from vitess_ai.agents.specialists.monitor1d import build_monitor1d_specialist
 from vitess_ai.agents.specialists.monitor2d import build_monitor2d_specialist
@@ -32,7 +31,7 @@ def compile_module_specialists(
     summarizer_model: Any,
     fallback_models: list[Any],
     unattended: bool = False,
-) -> list[CompiledSubAgent]:
+) -> list[ModuleCompiledSubAgent]:
     """Compile all five, in the order the VITESS pipeline runs them.
 
     Only the two modules that read a user's file take the MCP gateway; the
@@ -84,7 +83,7 @@ def compile_sweep_specialists(
     gateway: Any,
     summarizer_model: Any,
     fallback_models: list[Any],
-) -> list[CompiledSubAgent]:
+) -> list[ModuleCompiledSubAgent]:
     """The same five, compiled again for a parameter sweep.
 
     A second compile, not a second set of agents: `build_chat_model` caches on

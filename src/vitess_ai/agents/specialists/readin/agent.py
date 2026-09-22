@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from deepagents.middleware.subagents import CompiledSubAgent
-
+from vitess_ai.agents.delegation import ModuleCompiledSubAgent
 from vitess_ai.agents.specialists.module_specialist import build_module_specialist
 from vitess_ai.agents.specialists.readin.tools import (
     MODULE,
@@ -32,7 +31,7 @@ def build_readin_specialist(
     summarizer_model: Any,
     fallback_models: list[Any],
     unattended: bool = False,
-) -> CompiledSubAgent:
+) -> ModuleCompiledSubAgent:
     """Compile this module's specialist.
 
     ``unattended`` compiles the copy a parameter sweep delegates to: it
