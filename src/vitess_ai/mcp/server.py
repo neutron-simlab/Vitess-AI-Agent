@@ -42,8 +42,10 @@ from vitess_ai.cli.command import canonical_uuid, generate_cli_command
 from vitess_ai.mcp.capture_flux_log import read_capture_flux
 from vitess_ai.mcp.execution import RESULT_FILENAME, execute_pipeline
 from vitess_ai.mcp.health import check_health
+from vitess_ai.mcp.profile_flatness import read_flatness
 from vitess_ai.mcp.payloads import (
     FileKind,
+    FlatnessReading,
     ModuleExecution,
     ModuleUploads,
     PlotResult,
@@ -328,7 +330,33 @@ def run_pipeline(
         capture_flux=read_capture_flux(
             Path(outcome["result_file"]).read_text(encoding="utf-8", errors="replace")
         ),
+        flatness=(
+            _read_run_flatness(run_directory, module_results)
+            if outcome["success"]
+            else None
+        ),
     )
+
+
+def _read_run_flatness(
+    run_directory: Path, module_results: Mapping[str, Mapping[str, Any]]
+) -> FlatnessReading | None:
+    """Judge the file monitor1D was told to write (``-O``), or return ``None``.
+
+    Never raises. The simulation has already run; a monitor file that cannot be
+    read means there is no flatness to report, not that the run failed.
+    """
+    arguments = module_results.get("monitor1d", {}).get("cli_parameters", ())
+    filename = next(
+        (argument[2:] for argument in arguments if argument.startswith("-O")), None
+    )
+    if not filename:
+        return None
+    try:
+        data = read_monitor_file(_run_file(run_directory, filename))
+    except (ToolError, MonitorFileError):
+        return None
+    return read_flatness(data)
 
 
 def inspect_thread(settings: ServerSettings, *, thread_id: str) -> ThreadInspection:

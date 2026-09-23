@@ -41,6 +41,7 @@ from pydantic.json_schema import SkipJsonSchema
 from juena_core.schema.interrupts import ExecutionEvidence
 from vitess_ai.agents.specialists.module_tools import validate_module_parameters
 from vitess_ai.cli.arguments import parameters_to_arguments
+from vitess_ai.mcp.payloads import SimulationResult
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import parameter_model
 from vitess_ai.run import InternalSimulationRequest, VitessGateway
@@ -52,7 +53,8 @@ from vitess_ai.schema.simulation_plan import MAX_SWEEP_RUNS, SimulationPlanEntry
 from vitess_ai.state import SimulationRunReference
 from vitess_ai.tools import (
     attach_artifacts,
-    capture_flux_summary,
+    guide_position,
+    readings_summary,
     register_run_files,
     runtime_identity,
     state_mapping,
@@ -537,10 +539,11 @@ def build_batch_tools(
         events: list[dict[str, Any]] = []
         references: list[dict[str, Any]] = []
         lines: list[str] = []
+        completed: list[tuple[SimulationPlanEntry, SimulationResult]] = []
         succeeded = 0
 
         for entry in plan:
-            outcome_line, entry_events, reference = await _run_one(
+            outcome_line, entry_events, reference, result = await _run_one(
                 gateway,
                 entry,
                 planned=planned,
@@ -554,6 +557,12 @@ def build_batch_tools(
             if reference is not None:
                 references.append(reference)
                 succeeded += 1
+            if result is not None:
+                completed.append((entry, result))
+
+        selection = guide_selection(completed)
+        if selection:
+            lines.append(selection)
 
         update: dict[str, Any] = {
             "messages": [
@@ -584,10 +593,13 @@ async def _run_one(
     user_id: str,
     thread_id: str,
     graph_run_id: str,
-) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
-    """Execute one planned run and return its line, its evidence and its reference."""
+) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None, SimulationResult | None]:
+    """Execute one planned run and return its line, its evidence, its reference
+    and, when it completed, its result."""
 
-    def failure(message: str, status: str = "tool_error") -> tuple[str, list[dict[str, Any]], None]:
+    def failure(
+        message: str, status: str = "tool_error"
+    ) -> tuple[str, list[dict[str, Any]], None, None]:
         event = ExecutionEvidence(
             graph_run_id=graph_run_id,
             command=f"VITESS sweep run {entry.run_name!r}",
@@ -597,6 +609,7 @@ async def _run_one(
         return (
             f"- {entry.run_name}: not run -- {message}",
             [event.model_dump(mode="json")],
+            None,
             None,
         )
 
@@ -635,6 +648,7 @@ async def _run_one(
             f"- {entry.run_name}: {outcome.failure.status} -- {outcome.failure.message}",
             [event.model_dump(mode="json") for event in outcome.events],
             None,
+            None,
         )
 
     try:
@@ -659,17 +673,65 @@ async def _run_one(
         f"{module.name}=exit {module.exit_code}" for module in outcome.result.modules
     )
     if not outcome.success:
-        return (f"- {entry.run_name}: failed -- {exits or outcome.result.message}", events, None)
+        return (
+            f"- {entry.run_name}: failed -- {exits or outcome.result.message}",
+            events,
+            None,
+            None,
+        )
 
     reference = SimulationRunReference(
         run_name=entry.run_name, simulation_run_id=entry.simulation_run_id
     )
     line = f"- {entry.run_name}: completed ({exits})"
-    summary = capture_flux_summary(outcome.result)
+    summary = readings_summary(outcome.result, entry.modules["guide"].parameters)
     if summary:
         line += f". {summary}"
     return (
         line,
         events,
         reference.model_dump(mode="json"),
+        outcome.result,
     )
+
+
+def guide_selection(
+    completed: list[tuple[SimulationPlanEntry, SimulationResult]],
+) -> str | None:
+    """The choice a sweep supports: flat runs, ranked by capture flux.
+
+    Computed here rather than left to the model, which would otherwise have to
+    sort up to 32 numbers in scientific notation by reading them. ``None`` when
+    no run has a flatness reading, i.e. the sweep was not measuring pos_y.
+    """
+    if not any(result.flatness for _entry, result in completed):
+        return None
+
+    ranked: list[tuple[float, SimulationPlanEntry]] = []
+    not_flat: list[str] = []
+    not_judged: list[str] = []
+    for entry, result in completed:
+        reading = result.flatness
+        if reading is None:
+            not_judged.append(f"{entry.run_name} (no flatness reading)")
+        elif reading.verdict == "fail":
+            not_flat.append(entry.run_name)
+        elif reading.verdict != "pass":
+            not_judged.append(f"{entry.run_name} ({reading.verdict.replace('_', ' ')})")
+        elif result.capture_flux is None:
+            not_judged.append(f"{entry.run_name} (no capture flux)")
+        else:
+            ranked.append((result.capture_flux.capture_flux, entry))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+
+    lines = ["Guide selection: flat runs ranked by capture flux, highest first."]
+    lines += [
+        f"{rank}. {entry.run_name}: {flux:.3e} n/(s·cm²), "
+        f"{guide_position(entry.modules['guide'].parameters)}"
+        for rank, (flux, entry) in enumerate(ranked, start=1)
+    ] or ["No run passed the flatness check."]
+    if not_judged:
+        lines.append("Not judged: " + ", ".join(not_judged) + ".")
+    if not_flat:
+        lines.append("Not flat: " + ", ".join(not_flat) + ".")
+    return "\n".join(lines)

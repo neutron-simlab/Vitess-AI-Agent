@@ -28,8 +28,16 @@ from juena_core.artifacts import (
 from juena_core.schema.interrupts import ExecutionEvidence
 from vitess_ai.cli.arguments import ParameterConversionError, parameters_to_arguments
 from vitess_ai.mcp.payloads import PlotResult, RunFile, SimulationResult
+from vitess_ai.mcp.profile_flatness import (
+    BIN_WIDTH_CM,
+    NOISE_SIGMAS,
+    TOLERANCE,
+    WINDOW_WIDTH_CM,
+)
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import parameter_model
+from vitess_ai.schema import GuideParameters
+from vitess_ai.schema.base import VtGdeShape
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
@@ -46,7 +54,10 @@ __all__ = [
     "attach_artifacts",
     "build_vitess_tools",
     "capture_flux_summary",
+    "flatness_summary",
+    "guide_position",
     "plan_simulation",
+    "readings_summary",
     "register_run_files",
     "runtime_identity",
     "state_mapping",
@@ -157,6 +168,85 @@ def capture_flux_summary(result: SimulationResult) -> str | None:
         f"{reading.captured_intensity_error:.3e} n/s from {reading.trajectories} "
         f"trajectories; {reference}."
     )
+
+
+def flatness_summary(result: SimulationResult) -> str | None:
+    """One sentence with the flatness verdict the server judged from monitor1D.
+
+    ``None`` when the run has no reading, e.g. its 1D monitor recorded
+    wavelength rather than horizontal position.
+    """
+    reading = result.flatness
+    if reading is None:
+        return None
+    if reading.verdict == "wrong_binning":
+        return (
+            "Horizontal flatness not judged: the 1D monitor's bins are "
+            f"{reading.bin_width_cm:.3g} cm wide and do not tile the central "
+            f"{WINDOW_WIDTH_CM:g} cm in {BIN_WIDTH_CM:g} cm bins; record pos_y "
+            "from -2 to 2 cm in 40 bins."
+        )
+    label = {
+        "pass": "PASS",
+        "fail": "FAIL",
+        "inconclusive": (
+            "INCONCLUSIVE (the statistical errors are too large to decide; "
+            "run more trajectories)"
+        ),
+    }[reading.verdict]
+    sentence = (
+        f"Horizontal flatness over the central {WINDOW_WIDTH_CM:g} cm in "
+        f"{BIN_WIDTH_CM:g} cm bins (every bin within {TOLERANCE:.0%} of the mean, "
+        f"allowing {NOISE_SIGMAS:g}σ): {label}"
+    )
+    if reading.empty_bins:
+        sentence += f"; {reading.empty_bins} empty bin(s) in the window"
+    if reading.worst_deviation is not None:
+        sentence += (
+            f"; largest deviation {reading.worst_deviation:+.1%} at y = "
+            f"{reading.worst_position_cm:+.2f} cm; median bin error "
+            f"{reading.median_relative_error:.1%}"
+        )
+    return sentence + "."
+
+
+def guide_position(guide: Mapping[str, Any]) -> str:
+    """Where a run's readings were taken, from its validated guide parameters.
+
+    monitor1D, monitor2D and capture_flux have no position parameter in VITESS
+    3.8: each records the neutrons where the module before it left them, which
+    in this pipeline is the guide exit. The distance from the guide entrance is
+    therefore the guide's length, and a longer guide is how a user measures
+    further downstream.
+    """
+    parameters = GuideParameters(**guide)
+    if VtGdeShape.VT_FROM_FILE in (parameters.eGuideShapeY, parameters.eGuideShapeZ):
+        return (
+            "at the guide exit (guide length set by the shape file "
+            f"{parameters.ShapeFileName!r})"
+        )
+    length_m = parameters.nPieces * parameters.piecelength / 100
+    return f"at the guide exit, {length_m:.2f} m from the guide entrance"
+
+
+def readings_summary(
+    result: SimulationResult, guide: Mapping[str, Any] | None
+) -> str | None:
+    """The run's readings, led by where they were taken; ``None`` if it has none.
+
+    Both run paths append this to their tool message, so the supervisor can
+    report the numbers without a log or a monitor file in its context.
+    """
+    readings = [
+        sentence
+        for sentence in (capture_flux_summary(result), flatness_summary(result))
+        if sentence
+    ]
+    if not readings:
+        return None
+    if guide is not None:
+        readings.insert(0, f"Measured {guide_position(guide)}.")
+    return " ".join(readings)
 
 
 def state_mapping(runtime: ToolRuntime[Any, Any]) -> Mapping[str, Any]:
@@ -596,7 +686,13 @@ def build_vitess_tools(
             f"VITESS {display_name!r}: {outcome.result.message}. "
             f"Server evidence: {module_summary or 'no module process started'}."
         )
-        summary = capture_flux_summary(outcome.result)
+        stored_guide = (state_mapping(runtime).get("module_results") or {}).get("guide")
+        summary = readings_summary(
+            outcome.result,
+            ModuleConfigurationResult.model_validate(stored_guide).parameters
+            if stored_guide
+            else None,
+        )
         if summary:
             message += f" {summary}"
         update: dict[str, Any] = {

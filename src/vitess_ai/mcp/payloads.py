@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "CaptureFluxReading",
     "FileKind",
+    "FlatnessReading",
     "ModuleExecution",
     "RunFile",
     "SimulationResult",
@@ -94,6 +95,28 @@ class CaptureFluxReading(_Payload):
     reference_wavelength: float
 
 
+class FlatnessReading(_Payload):
+    """Whether the horizontal 1D profile is flat across the sample.
+
+    Judged by the server from the run's monitor1D file; the criterion and the
+    noise rule are in :mod:`vitess_ai.mcp.profile_flatness`.
+    """
+
+    #: ``wrong_binning``: the file's bins do not tile the window in 0.1 cm
+    #: bins, so nothing was judged and the numbers below are ``None``.
+    verdict: Literal["pass", "fail", "inconclusive", "wrong_binning"]
+    #: cm, as read from the file.
+    bin_width_cm: float
+    #: Bins inside the window that received no intensity: a hole in the beam.
+    empty_bins: int = Field(default=0, ge=0)
+    #: (I - mean) / mean of the bin furthest from the window mean, signed.
+    worst_deviation: float | None = None
+    #: cm, the centre of that bin.
+    worst_position_cm: float | None = None
+    #: Median of error / intensity over the window's non-empty bins.
+    median_relative_error: float | None = None
+
+
 class SimulationResult(_Payload):
     """The result of one VITESS pipeline, successful or not.
 
@@ -114,6 +137,8 @@ class SimulationResult(_Payload):
     #: ``None`` when the log holds no capture_flux result, e.g. the module failed
     #: before printing one.
     capture_flux: CaptureFluxReading | None = None
+    #: ``None`` unless the run succeeded and its 1D monitor recorded pos_y.
+    flatness: FlatnessReading | None = None
 
 
 class PlotResult(_Payload):
