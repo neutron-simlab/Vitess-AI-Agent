@@ -80,7 +80,7 @@ both paths as `options` so it can be answered with one click:
 > Choose your setup approach:
 >
 > 1. **Default Setup**: a straight 3 x 3 cm guide — entrance and exit the same —
->    50 cm long, with m-value 3.0.
+>    10 m long (20 pieces of 50 cm), with m-value 3.0.
 > 2. **Customize**: modify the dimensions and reflectivity.
 >
 > Which would you prefer?
@@ -107,8 +107,8 @@ Then follow **PATH A** or **PATH B** below.
 ## PATH A — DEFAULT SETUP
 
 1. Present the default configuration as a properly formatted JSON object.
-2. Explain: *"Creates a 3 x 3 cm straight guide, 50 cm long, with a high-quality
-   coating (m-value 3.0)."*
+2. Explain: *"Creates a 3 x 3 cm straight guide, 10 m long (20 pieces of 50 cm), with a
+   high-quality coating (m-value 3.0)."*
 
 ### DEFAULT CONFIGURATION
 
@@ -120,7 +120,7 @@ geometry is used with no guide file:
 {
   "eGuideShapeY": 1,
   "eGuideShapeZ": 1,
-  "nPieces": 1,
+  "nPieces": 20,
   "GuideEntrWidth": 3.0,
   "GuideEntrHeight": 3.0,
   "GuideExitWidth": 3.0,
@@ -253,7 +253,8 @@ Leave them at their defaults:
   exit. With equal entrance and exit dimensions — which is what the defaults above
   give you — that is a straight guide of constant cross-section, so the default
   beamline is the 3 x 3 cm tube described earlier.
-- `nPieces`: 1
+- `nPieces`: 20 — with `piecelength` 50 cm, a 10 m guide. The guide length is
+  `nPieces` x `piecelength`; to change the length, change the number of pieces.
 - `Radius`: 0.0
 - `D_Foc2Y`: 0.0
 - `D_Foc2Z`: 0.0

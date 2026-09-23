@@ -179,7 +179,10 @@ from its default, say what the default is, and let the user keep it.
   real flux. capture_flux calculates the same integral from the simulated trajectories,
   which is what allows a direct comparison with such a measurement.
 - **Where it measures.** At the position of the module before it — in this pipeline, the
-  end of the instrument, where the monitors are. It does not move the neutrons anywhere.
+  guide exit, because neither writeout nor the monitors move the neutrons. It does not
+  move them either, and it has no position parameter of its own: to measure further
+  downstream, the guide itself is longer. The run result states the position as the
+  distance from the guide entrance.
   If a monitor before it has "exclusive counts" switched on, that monitor passes on only
   the neutrons it counted, and capture_flux sees only those.
 - **The area.** The capture flux is the captured intensity divided by the foil area:
@@ -206,6 +209,28 @@ into the run result, so the supervisor can tell the user after the run:
 
 Say in your confirmation question that these are what the run will report. Do not
 predict their values.
+
+---
+
+## WHEN THE GOAL IS CHOOSING A GUIDE
+
+A guide is chosen for the highest flux on a 1 x 1 cm² sample and a flat beam across it.
+The flux on the sample needs a foil the size of the sample. With no foil, the capture
+flux is the intensity of the whole beam, and a wide beam would win even when little of it
+reaches the sample. So when the user is comparing guides or choosing a guide shape,
+propose:
+
+| Parameter | Value |
+|---|---|
+| `WindowType` | RECTANGULAR |
+| `widthmin` | -0.5 |
+| `widthmax` | 0.5 |
+| `heightmin` | -0.5 |
+| `heightmax` | 0.5 |
+
+That is a 1 cm² foil centred on the beam axis, so the capture flux is the flux on the
+sample in n/(s·cm²). Every run that is compared must use the same foil. After a sweep, the
+supervisor receives the flat runs ranked by this number.
 
 ---
 

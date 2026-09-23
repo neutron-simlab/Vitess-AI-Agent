@@ -245,6 +245,39 @@ default; a short run deserves fewer.
 
 ---
 
+## WHEN THE GOAL IS CHOOSING A GUIDE: IS THE BEAM FLAT?
+
+A guide is chosen for the highest flux on a 1 x 1 cm² sample **and** a flat beam across
+it. After every run whose 1D monitor measures `POS_Y`, the server judges the flatness
+itself: the central 1 cm of the horizontal position, in 0.1 cm bins, every bin within
+10 % of their mean, allowing for each bin's statistical error. The verdict comes back
+with the run's result: PASS, FAIL, or INCONCLUSIVE.
+
+The server can only judge a monitor set up for it:
+
+| Parameter | Value | Why |
+|---|---|---|
+| `eParX` | 1 (POS_Y) | horizontal position |
+| `xMin` | -2.0 | |
+| `xMax` | 2.0 | |
+| `nBinsX` | 40 | 0.1 cm bins, so ±0.5 cm fall exactly on bin edges |
+
+With the default 100 bins each bin is 0.04 cm wide, and the server reports the flatness as
+"not judged". So when the user is comparing guides, choosing a guide shape, or asks
+whether the beam is flat, uniform or homogeneous, propose exactly these four values and
+say why. Every run that is compared must use the same monitor settings.
+
+INCONCLUSIVE means the simulation had too few trajectories to decide, not that the beam
+is bad. More trajectories fix it; changing the bins does not, because the bin width is
+part of the criterion.
+
+**Where it measures.** The monitor records the neutrons where the module before it left
+them — in this pipeline, the guide exit. It has no position parameter of its own. To
+measure further downstream, the guide itself is longer; the run result states the
+position as the distance from the guide entrance.
+
+---
+
 ## THE OUTPUT FILE NAME
 
 `fMonitorFilename` is a **plain file name**, such as `monitor1D.dat`. It is **not** a

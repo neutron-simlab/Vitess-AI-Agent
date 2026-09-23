@@ -43,12 +43,17 @@ class GuideParameters(VitessParameterModel):
         json_schema_extra={"flag": "-S"}
     )]
     
-    # Guide piece configuration
+    # Guide piece configuration. Not the C default (1): the guide length is
+    # nPieces x piecelength, and the default guide is 10 m, the distance guide
+    # shapes are compared at. Many 50 cm pieces rather than one 10 m piece, so
+    # that switching to a curved or focusing shape keeps both the length and
+    # enough pieces to approximate it.
     nPieces: Annotated[int, Field(
-        default=1,
+        default=20,
         gt=0,
-        description=("-N [-] Number of guide pieces. "
-                    "For VT_CONSTANT and VT_LINEAR usually 1 piece. "
+        description=("-N [-] Number of guide pieces. The guide length is nPieces x piecelength; "
+                    "the default, 20 pieces of 50 cm, is a 10 m guide. "
+                    "VT_CONSTANT and VT_LINEAR may be one piece or many with the same geometry. "
                     "For VT_CURVED, VT_PARABOLIC, VT_ELLIPTIC, and VT_LIN_CURV multiple pieces are required "
                     "to approximate the curved geometry."),
         json_schema_extra={"flag": "-N"}

@@ -284,7 +284,7 @@ def test_a_sweep_run_line_carries_the_capture_flux(
         },
     )
 
-    line, _events, reference = asyncio.run(
+    line, _events, reference, _result = asyncio.run(
         _run_one(
             VitessGateway(raw_tools(run_simulation=_reading_payload)),
             entry,
@@ -298,4 +298,7 @@ def test_a_sweep_run_line_carries_the_capture_flux(
 
     assert reference is not None
     assert line.startswith("- baseline: completed (")
-    assert line.endswith(f"). {EXPECTED_SENTENCE}")
+    assert line.endswith(
+        "). Measured at the guide exit, 10.00 m from the guide entrance. "
+        f"{EXPECTED_SENTENCE}"
+    )

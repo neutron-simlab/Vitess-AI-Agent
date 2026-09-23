@@ -42,7 +42,8 @@ __all__ = ["MAX_SWEEP_RUNS", "SimulationPlanEntry"]
 
 #: One limit shared by variant collection, matrix expansion and execution. A
 #: module cannot contribute more variants than any valid sweep could consume.
-MAX_SWEEP_RUNS = 32
+#: 36 so a full 6 x 6 grid of two parameters fits.
+MAX_SWEEP_RUNS = 36
 
 
 class SimulationPlanEntry(BaseModel):

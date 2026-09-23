@@ -86,6 +86,13 @@ cmd_mcp_logs() { ## Follow the MCP server log
     "${COMPOSE[@]}" logs -f vitess-mcp "$@"
 }
 
+# The VITESS binaries live only in this container, so a test fixture written by
+# VITESS itself (tests/data/README.md) has to be produced here.
+cmd_mcp_exec() { ## Run a command inside the MCP container, e.g. 'vitess mcp-exec sh -c "..."'
+    [ "$#" -gt 0 ] || die "give the command to run"
+    "${COMPOSE[@]}" exec -T vitess-mcp "$@"
+}
+
 cmd_ps() { ## Show what is running
     "${COMPOSE[@]}" ps
 }

@@ -100,3 +100,49 @@ run rectangular -R1.798 -t2 -r0.0 -y0.0 -z0.0 -w-3.0 -W3.0 -h-3.0 -H3.0 -l1.0 -L
 
 With no foil the capture flux equals the captured intensity, because
 capture_flux divides by an assumed 1 cm^2; `test_capture_flux.py` asserts it.
+
+## The flatness monitor files
+
+`monitor1D-flatness-*.dat` are horizontal-position profiles (`-X1`, `pos_y`)
+written by VITESS 3.8's own `source` and `monitor1D`, from the same revision and
+the same constant source as the files above, and read by
+`test_profile_flatness.py`. The source is a uniformly bright 3 cm x 3 cm
+moderator seen through a propagation window 200 cm away, so the beam is flat
+across the window; the window width (`-w`) and the trajectory count (`-n`) are
+what differ:
+
+| File | Window | Trajectories | Bins | Verdict |
+|---|---|---|---|---|
+| `monitor1D-flatness-pass.dat` | 2 cm | 10^6 | 40 | pass |
+| `monitor1D-flatness-half-edges.dat` | 0.9 cm | 10^6 | 40 | fail: the two edge bins are half filled |
+| `monitor1D-flatness-empty-edges.dat` | 0.6 cm | 10^6 | 40 | fail: four empty bins |
+| `monitor1D-flatness-inconclusive.dat` | 2 cm | 10^4 | 40 | inconclusive: the same flat beam, too few trajectories to decide |
+| `monitor1D-flatness-100-bins.dat` | 2 cm | 10^4 | 100 | not judged: 0.04 cm bins |
+
+Produced in the MCP container with `./vitess mcp-exec sh < script.sh`, after
+copying `SrcConst.mod` and `constant.dat` into `/tmp/flat`:
+
+```sh
+V=/vitess/MODULES; S=_Linux_$(uname -m); P=/tmp/flat
+cd $P
+export GSL_RNG_SEED=1 GSL_RNG_TYPE=ran3
+
+# $1 output name, $2 trajectories, $3 window width [cm], $4 bins
+run() {
+  $V/source$S -S1 --Z1 --U1.0e-25 --G1 --T0 --B10000 --P$P --N1 --L$P/log-$1-01 \
+      -a$P/SrcConst.mod -n$2 -l1 -m1 -M10 -d1 -b0.0 -c0.0 -y0.5 -z0.5 -D200 \
+      -w$3 -h2 -i0 -s200 -X1 -Y1 -V1 -P100 -A0 -k0 \
+  | $V/monitor1D$S --Z1 --U1.0e-25 --G1 --T0 --B10000 --P$P --N2 --L$P/log-$1-02 \
+      -O$P/$1.dat -X1 -w-2.0 -W2.0 -x$4 -p1 -e0 --Fno_file
+}
+
+run flatness-pass          1e6 2   40
+run flatness-half-edges    1e6 0.9 40
+run flatness-empty-edges   1e6 0.6 40
+run flatness-inconclusive  1e4 2   40
+run flatness-100-bins      1e4 2   100
+```
+
+The 100-bin file is also the reason the bin width is part of the criterion: the
+beam in it is exactly as flat as in the others, and its worst 0.04 cm bin is
+still 15.6 % from the mean, by noise alone.
