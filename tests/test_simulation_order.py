@@ -488,6 +488,10 @@ def test_the_guided_factory_passes_the_gateway_to_the_facade_builder(
         "generate_monitor1d_plot",
         "generate_monitor2d_plot",
     ]
+    assert [item.model_name for item in captured["fallback_models"]] == [
+        "80 - MiMo-V2.6-Pro-RL on Juwels Booster",
+        "01 - GPT-OSS-120b - an open model released by OpenAI in August 2025",
+    ]
 
 
 def test_the_guided_graph_adds_documentation_tools_and_the_matching_policy(

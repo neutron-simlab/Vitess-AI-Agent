@@ -53,11 +53,10 @@ __all__ = [
     "build_module_specialist",
 ]
 
-#: Pinned, like juena's specialists. The user's model choice is the
-#: supervisor's; turning a conversation into validated parameters is the
-#: application's job and should not change under it.
+#: Pinned independently of the UI selection. The model benchmark exercises
+#: this role directly; Qwen3.8-Flash-Next is the selected production primary.
 SPECIALIST_PROVIDER = Provider.BLABLADOR.value
-SPECIALIST_MODEL = BlabladorModelName.GPT_OSS.value
+SPECIALIST_MODEL = BlabladorModelName.QWEN38_FLASH_NEXT.value
 
 #: No filesystem at all. A module specialist's whole job is a conversation and
 #: one validation call, and `FilesystemMiddleware` otherwise binds eight tools

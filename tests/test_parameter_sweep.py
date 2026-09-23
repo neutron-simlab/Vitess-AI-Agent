@@ -1044,6 +1044,10 @@ def test_the_factory_selects_its_facade_through_the_allowlist(
         "write_simulation_matrix",
         "run_batch_from_matrix",
     }
+    assert [item.model_name for item in captured["fallback_models"]] == [
+        "80 - MiMo-V2.6-Pro-RL on Juwels Booster",
+        "01 - GPT-OSS-120b - an open model released by OpenAI in August 2025",
+    ]
 
 
 def test_the_sweep_graph_adds_documentation_tools_and_the_matching_policy(

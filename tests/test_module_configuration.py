@@ -37,6 +37,7 @@ from vitess_ai.agents.specialists.module_middleware import (
 )
 from vitess_ai.agents.specialists.module_specialist import (
     FILESYSTEM_TOOLS,
+    SPECIALIST_MODEL,
     build_module_prompt,
 )
 from vitess_ai.agents.specialists.capture_flux.tools import build_tools as capture_flux_tools
@@ -49,6 +50,7 @@ from vitess_ai.cli.arguments import (
     ParameterConversionError,
     parameters_to_arguments,
 )
+from vitess_ai.config import Config
 from vitess_ai.modules.catalog import cli_executables, execution_order, upload_modules
 from vitess_ai.modules.parameters import PARAMETER_MODELS, parameter_model
 from vitess_ai.retrieval import SPECIALIST_RAG_TOOLS, specialist_rag_tools
@@ -73,6 +75,20 @@ from doubles import (
     stage_uploads,
     swept_modules,
 )
+
+
+def test_selected_model_policy_applies_to_specialists_and_fallbacks() -> None:
+    qwen = "02 - Qwen3.8-Flash-Next-NVFP4, general purpose large model"
+    assert Config.DEFAULT_MODEL == qwen
+    assert Config.BLABLADOR_DEFAULT_MODEL == qwen
+    assert SPECIALIST_MODEL == Config.DEFAULT_MODEL
+    assert Config.FALLBACK_MODELS == (
+        ("blablador", "80 - MiMo-V2.6-Pro-RL on Juwels Booster"),
+        (
+            "blablador",
+            "01 - GPT-OSS-120b - an open model released by OpenAI in August 2025",
+        ),
+    )
 
 OTHER_THREAD_ID = "44444444-4444-4444-8444-444444444444"
 

@@ -21,7 +21,7 @@ from pathlib import Path
 from uuid import UUID
 
 import juena_core
-from juena_core.schema.llm_models import BlabladorModelName
+from juena_core.schema.llm_models import BlabladorModelName, Provider
 
 __all__ = ["Config", "configure_core"]
 
@@ -48,6 +48,15 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
     )
 
 
+def _pipe_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Read model ids without treating the commas inside them as separators."""
+
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return tuple(part.strip() for part in value.split("|") if part.strip())
+
+
 class Config:
     """Read once, at startup, by the process that is about to serve."""
 
@@ -58,12 +67,23 @@ class Config:
         "BLABLADOR_BASE_URL", "https://api.helmholtz-blablador.fz-juelich.de/v1"
     )
     DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "blablador")
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", BlabladorModelName.GPT_OSS.value)
+    DEFAULT_MODEL = os.getenv(
+        "DEFAULT_MODEL", BlabladorModelName.QWEN38_FLASH_NEXT.value
+    )
     OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini")
     BLABLADOR_DEFAULT_MODEL = os.getenv(
-        "BLABLADOR_DEFAULT_MODEL", BlabladorModelName.GPT_OSS.value
+        "BLABLADOR_DEFAULT_MODEL", BlabladorModelName.QWEN38_FLASH_NEXT.value
     )
-    FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER") or None
+    BLABLADOR_FALLBACK_MODELS = _pipe_list(
+        "BLABLADOR_FALLBACK_MODELS",
+        (
+            BlabladorModelName.MIMO_V26_PRO.value,
+            BlabladorModelName.GPT_OSS.value,
+        ),
+    )
+    FALLBACK_MODELS = tuple(
+        (Provider.BLABLADOR.value, model) for model in BLABLADOR_FALLBACK_MODELS
+    )
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "20000"))
     TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "120"))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
@@ -191,7 +211,10 @@ def configure_core() -> None:
             DATABASE_POOL_MAX_SIZE=Config.DATABASE_POOL_MAX_SIZE,
             SESSION_TTL_HOURS=Config.SESSION_TTL_HOURS,
             SESSION_COOKIE_SECURE=False,
-            FALLBACK_PROVIDER=Config.FALLBACK_PROVIDER,
+            # VITESS supplies its ordered fallback models directly when it
+            # assembles each graph. The legacy single-provider fallback is for
+            # applications that do not supply an explicit sequence.
+            FALLBACK_PROVIDER=None,
             # Core names this after what it times -- a specialist's execution
             # tool, whichever backend serves it. Here the backend is the MCP
             # server and the thing being timed is a VITESS pipeline.

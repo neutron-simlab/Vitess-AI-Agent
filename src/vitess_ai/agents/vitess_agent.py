@@ -46,6 +46,7 @@ from juena_core.server.agent.registry import register_agent_factory
 from juena_core.server.agent.runtime_model_middleware import RuntimeModelContext
 from juena_core.server.database.checkpointer import get_checkpointer
 from juena_core.server.database.store import get_store
+from vitess_ai.config import Config
 from vitess_ai.agents.delegation import with_module_delegation_boundary
 from vitess_ai.agents.specialists import compile_module_specialists
 from vitess_ai.mcp.connection import discover_vitess_tools, probe_server_health
@@ -189,7 +190,7 @@ async def create_vitess_agent(
         model=SUMMARIZER_MODEL,
         temperature=0.0,
     )
-    fallback_models = build_fallback_models()
+    fallback_models = build_fallback_models(Config.FALLBACK_MODELS)
     store = get_store()
 
     agent = build_vitess_graph(
