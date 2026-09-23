@@ -59,6 +59,7 @@ from vitess_ai.agents.advanced_mode.tools import (
 from vitess_ai.agents.delegation import with_module_delegation_boundary
 from vitess_ai.agents.specialists import compile_sweep_specialists
 from vitess_ai.agents.vitess_agent import VITESS_FILESYSTEM_TOOLS, project_root
+from vitess_ai.config import Config
 from vitess_ai.mcp.connection import discover_vitess_tools, probe_server_health
 from vitess_ai.retrieval import orchestrator_documentation
 from vitess_ai.run import VitessGateway
@@ -184,7 +185,7 @@ async def create_advanced_mode_agent(
         model=SUMMARIZER_MODEL,
         temperature=0.0,
     )
-    fallback_models = build_fallback_models()
+    fallback_models = build_fallback_models(Config.FALLBACK_MODELS)
     store = get_store()
 
     facade = build_vitess_tools(gateway, project_root=root)

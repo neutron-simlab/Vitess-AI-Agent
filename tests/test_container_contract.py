@@ -66,3 +66,21 @@ def test_langsmith_settings_from_dotenv_reach_the_application_container() -> Non
         "LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}"
         in compose
     )
+
+
+def test_selected_model_order_reaches_the_application_container() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert (
+        "DEFAULT_MODEL=${DEFAULT_MODEL:-02 - Qwen3.8-Flash-Next-NVFP4, "
+        "general purpose large model}"
+    ) in compose
+    assert (
+        "BLABLADOR_DEFAULT_MODEL=${BLABLADOR_DEFAULT_MODEL:-"
+        "02 - Qwen3.8-Flash-Next-NVFP4, general purpose large model}"
+    ) in compose
+    assert (
+        "BLABLADOR_FALLBACK_MODELS=${BLABLADOR_FALLBACK_MODELS:-"
+        "80 - MiMo-V2.6-Pro-RL on Juwels Booster|01 - GPT-OSS-120b - an open "
+        "model released by OpenAI in August 2025}"
+    ) in compose
