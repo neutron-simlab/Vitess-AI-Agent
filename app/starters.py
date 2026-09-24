@@ -46,6 +46,22 @@ _STARTERS = (
         agent="advanced_mode",
     ),
     Starter(
+        label="Find the best guide shape",
+        prompt=(
+            "Help me find the best guide shape: the highest capture flux with a "
+            "beam that stays flat across the 1 cm sample. I will upload my READIN "
+            "trajectory file; read it with weight 1.0. Keep the guide linear in "
+            "both planes with a square cross-section (width = height), and sweep "
+            "every inlet size 3, 4, 5, 6, 7, 8 cm against every outlet size 3, 4, "
+            "5, 6, 7, 8 cm: a full 6 x 6 grid, 36 runs. Judge flatness on the "
+            "horizontal position profile at the guide exit: over the central 1 cm, "
+            "every 0.1 cm bin within 10 % of the mean. Leave everything else at "
+            "its default. When the sweep is done, show me the 5 guides with the "
+            "highest capture flux and the flatness verdict of each."
+        ),
+        agent="advanced_mode",
+    ),
+    Starter(
         label="Explain a flag",
         prompt="What does the -z option do, and which modules accept it?",
         agent="advanced_mode",
