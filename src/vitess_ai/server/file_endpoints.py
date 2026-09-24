@@ -20,6 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from juena_core.server.api.endpoints import ThreadActivity
 from juena_core.server.chat.repository import ChatNotFoundError, get_owned_chat
 from juena_core.server.database.connection import get_db_session
 from juena_core.server.identity import Principal, PrincipalDependency
@@ -43,11 +44,21 @@ async def _read_upload_bytes(upload: UploadFile, max_bytes: int) -> bytes:
 
 
 def build_file_router(
-    principal: PrincipalDependency, store: UploadStore
+    principal: PrincipalDependency,
+    store: UploadStore,
+    *,
+    thread_activity: ThreadActivity | None = None,
 ) -> APIRouter:
     """A router over one upload store, authenticating with one principal."""
 
     router = APIRouter(prefix="/files", tags=["files"])
+    thread_activity = thread_activity or ThreadActivity()
+
+    def _reserve(thread_id: UUID) -> str:
+        canonical = str(thread_id)
+        if not thread_activity.reserve_run(canonical):
+            raise HTTPException(status_code=409, detail="Thread deletion is in progress")
+        return canonical
 
     async def _owned(session: AsyncSession, user: Principal, thread_id: UUID) -> None:
         try:
@@ -74,9 +85,10 @@ def build_file_router(
     ) -> dict[str, Any]:
         """Write one input file into a thread's slot on the shared volume."""
 
-        await _owned(session, user, thread_id)
-        content = await _read_upload_bytes(upload, store.max_bytes)
+        reserved = _reserve(thread_id)
         try:
+            await _owned(session, user, thread_id)
+            content = await _read_upload_bytes(upload, store.max_bytes)
             staged = store.stage(
                 content,
                 filename=upload.filename or "",
@@ -87,6 +99,8 @@ def build_file_router(
             # 422, not 400: the request was well-formed and the file was not
             # acceptable. The message is written for the person who chose it.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            thread_activity.release_run(reserved)
         return staged.as_dict()
 
     @router.get("/{thread_id}")
@@ -98,11 +112,14 @@ def build_file_router(
     ) -> dict[str, Any]:
         """Everything staged for one thread, which is what the manifest shows."""
 
-        await _owned(session, user, thread_id)
+        reserved = _reserve(thread_id)
         try:
+            await _owned(session, user, thread_id)
             files = store.staged(thread_id, module)
         except UploadRefused as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        finally:
+            thread_activity.release_run(reserved)
         return {"files": [item.as_dict() for item in files]}
 
     @router.delete("/{thread_id}/{module}/{filename}")
@@ -115,11 +132,14 @@ def build_file_router(
     ) -> dict[str, Any]:
         """Remove one staged file, so a wrong slot can be corrected."""
 
-        await _owned(session, user, thread_id)
+        reserved = _reserve(thread_id)
         try:
+            await _owned(session, user, thread_id)
             removed = store.remove(thread_id, module, filename)
         except UploadRefused as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            thread_activity.release_run(reserved)
         if not removed:
             raise HTTPException(status_code=404, detail="No such staged file")
         return {"removed": filename, "module": module}

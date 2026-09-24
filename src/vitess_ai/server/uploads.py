@@ -228,13 +228,22 @@ class UploadStore:
         path.unlink()
         return True
 
-    def delete_thread(self, thread_id: UUID) -> None:
+    def delete_thread(self, thread_id: str) -> None:
         """Delete this thread's uploads and simulation outputs."""
 
+        try:
+            canonical_thread_id = str(UUID(thread_id))
+        except (TypeError, ValueError, AttributeError):
+            return
+        # Every VITESS writer requires canonical UUIDs. Normalising here would
+        # let a legacy/noncanonical chat id delete another chat's workspace.
+        if thread_id != canonical_thread_id:
+            return
+
         root = self._root.resolve()
-        directory = (root / str(thread_id)).resolve()
-        if directory.parent != root:
-            raise ValueError(f"Thread workspace is outside {root}")
+        directory = root / canonical_thread_id
+        if directory.is_symlink():
+            raise ValueError("Thread workspace must not be a symbolic link")
         if directory.exists():
             shutil.rmtree(directory)
 

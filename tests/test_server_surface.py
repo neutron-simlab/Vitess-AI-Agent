@@ -23,7 +23,9 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
+
+from juena_core.server.api.endpoints import ThreadActivity
 
 from vitess_ai.config import Config, configure_core
 from vitess_ai.modules.catalog import upload_modules
@@ -147,11 +149,13 @@ def test_the_service_registers_project_cleanup_for_thread_deletion(
         " captured = {};"
         " core_service.create_app = lambda **kwargs: captured.update(kwargs) or object();"
         " import vitess_ai.server.service as service;"
-        " print(json.dumps(captured['workspace'].delete is service._delete_thread_workspace))",
+        " print(json.dumps(["
+        " captured['workspace'].delete is service._delete_thread_workspace,"
+        " captured['thread_activity'] is service.thread_activity]))",
         tmp_path,
     )
 
-    assert json.loads(printed.splitlines()[-1]) is True
+    assert json.loads(printed.splitlines()[-1]) == [True, True]
 
 
 # --------------------------------------------------------------------------
@@ -482,7 +486,7 @@ def test_deleting_a_thread_removes_its_whole_project_directory(
     sibling.parent.mkdir(parents=True)
     sibling.write_bytes(b"keep\n")
 
-    store.delete_thread(THREAD)
+    store.delete_thread(str(THREAD))
 
     assert not (store.root / str(THREAD)).exists()
     assert sibling.read_bytes() == b"keep\n"
@@ -498,8 +502,38 @@ def test_deleting_a_thread_refuses_a_workspace_symlink(
     store.root.mkdir()
     (store.root / str(THREAD)).symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(ValueError, match="outside"):
-        store.delete_thread(THREAD)
+    with pytest.raises(ValueError, match="symbolic link"):
+        store.delete_thread(str(THREAD))
+
+    assert marker.read_bytes() == b"keep\n"
+
+
+def test_deleting_a_thread_refuses_a_symlink_to_a_sibling_workspace(
+    store: UploadStore,
+) -> None:
+    other = uuid4()
+    sibling = store.root / str(other)
+    sibling.mkdir(parents=True)
+    marker = sibling / "keep.dat"
+    marker.write_bytes(b"keep\n")
+    (store.root / str(THREAD)).symlink_to(sibling, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        store.delete_thread(str(THREAD))
+
+    assert marker.read_bytes() == b"keep\n"
+
+
+def test_deleting_a_noncanonical_id_does_not_map_to_another_workspace(
+    store: UploadStore,
+) -> None:
+    canonical = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    workspace = store.root / str(canonical)
+    workspace.mkdir(parents=True)
+    marker = workspace / "keep.dat"
+    marker.write_bytes(b"keep\n")
+
+    store.delete_thread(str(canonical).upper())
 
     assert marker.read_bytes() == b"keep\n"
 
@@ -599,6 +633,45 @@ def test_the_upload_route_bounds_the_body_by_the_store_s_own_ceiling(
     )
 
     assert asked == [store.max_bytes] == [4242]
+
+
+def test_an_upload_cannot_start_while_the_thread_is_being_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vitess_ai.server import file_endpoints
+
+    async def owned(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(file_endpoints, "get_owned_chat", owned)
+    activity = ThreadActivity()
+    assert activity.reserve_delete(str(THREAD)) is True
+    store = UploadStore(
+        tmp_path / "projects", max_bytes=16, allowed_extensions=(".dat",)
+    )
+    router = build_file_router(lambda: None, store, thread_activity=activity)
+    route = next(
+        item
+        for item in router.routes
+        if getattr(item, "name", "") == "stage_file"
+    )
+
+    try:
+        with pytest.raises(HTTPException) as excinfo:
+            asyncio.run(
+                route.endpoint(
+                    thread_id=THREAD,
+                    module="readin",
+                    upload=SimpleNamespace(filename="beam.dat"),
+                    user=SimpleNamespace(id=uuid4()),
+                    session=None,
+                )
+            )
+    finally:
+        activity.release_delete(str(THREAD))
+
+    assert excinfo.value.status_code == 409
+    assert not store.root.exists()
 
 
 def test_an_interrupted_upload_is_neither_listed_nor_counted(

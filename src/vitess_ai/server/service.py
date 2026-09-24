@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from uuid import UUID
 
 from langchain_core._api import LangChainBetaWarning
 
 from juena_core.log import get_logger
 from juena_core.server.identity import local_principal
-from juena_core.server.service import ThreadWorkspace, create_app
+from juena_core.server.service import ThreadActivity, ThreadWorkspace, create_app
 from vitess_ai.config import Config, configure_core
 from vitess_ai.server.file_endpoints import build_file_router
 from vitess_ai.server.uploads import UploadStore
@@ -58,18 +57,20 @@ uploads = UploadStore(
     max_bytes=Config.MAX_UPLOAD_BYTES,
     allowed_extensions=Config.UPLOAD_EXTENSIONS,
 )
+thread_activity = ThreadActivity()
 
 
 async def _delete_thread_workspace(*, user_id: str, thread_id: str) -> None:
     """Remove exactly one UUID-named project directory from the shared volume."""
 
     del user_id
-    await asyncio.to_thread(uploads.delete_thread, UUID(thread_id))
+    await asyncio.to_thread(uploads.delete_thread, thread_id)
 
 
 app = create_app(
     principal=principal,
     workspace=ThreadWorkspace(delete=_delete_thread_workspace),
+    thread_activity=thread_activity,
     # A thread's staged files are already on the shared volume, which is the
     # only place they are of any use -- the VITESS binaries open them by path.
     # Copying them into graph state would produce a second, decoded copy that
@@ -81,5 +82,7 @@ app = create_app(
     ),
     title="vitess-ai",
     version="0.1.0",
-    extra_routers=(build_file_router(principal, uploads),),
+    extra_routers=(
+        build_file_router(principal, uploads, thread_activity=thread_activity),
+    ),
 )
