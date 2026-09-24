@@ -27,7 +27,7 @@ import json
 from datetime import datetime, timezone
 from enum import Enum
 from itertools import product
-from math import prod
+from math import isclose, prod
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 from uuid import UUID, uuid4
@@ -42,9 +42,12 @@ from juena_core.schema.interrupts import ExecutionEvidence
 from vitess_ai.agents.specialists.module_tools import validate_module_parameters
 from vitess_ai.cli.arguments import parameters_to_arguments
 from vitess_ai.mcp.payloads import SimulationResult
+from vitess_ai.mcp.profile_flatness import WINDOW_CENTRE_CM, WINDOW_WIDTH_CM
 from vitess_ai.modules.catalog import execution_order
 from vitess_ai.modules.parameters import parameter_model
 from vitess_ai.run import InternalSimulationRequest, VitessGateway
+from vitess_ai.schema import CaptureFluxParameters
+from vitess_ai.schema.base import VtWindowType
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
@@ -720,6 +723,11 @@ def guide_selection(
             not_judged.append(f"{entry.run_name} ({reading.verdict.replace('_', ' ')})")
         elif result.capture_flux is None:
             not_judged.append(f"{entry.run_name} (no capture flux)")
+        elif not _uses_flatness_sample_foil(entry):
+            not_judged.append(
+                f"{entry.run_name} (capture flux is not restricted to the "
+                "central 1 x 1 cm² sample)"
+            )
         else:
             ranked.append((result.capture_flux.capture_flux, entry))
     ranked.sort(key=lambda item: item[0], reverse=True)
@@ -729,9 +737,36 @@ def guide_selection(
         f"{rank}. {entry.run_name}: {flux:.3e} n/(s·cm²), "
         f"{guide_position(entry.modules['guide'].parameters)}"
         for rank, (flux, entry) in enumerate(ranked, start=1)
-    ] or ["No run passed the flatness check."]
+    ]
+    if not ranked:
+        passed = any(
+            result.flatness is not None and result.flatness.verdict == "pass"
+            for _entry, result in completed
+        )
+        lines.append(
+            "No flat run had capture flux for the central 1 x 1 cm² sample."
+            if passed
+            else "No run passed the flatness check."
+        )
     if not_judged:
         lines.append("Not judged: " + ", ".join(not_judged) + ".")
     if not_flat:
         lines.append("Not flat: " + ", ".join(not_flat) + ".")
     return "\n".join(lines)
+
+
+def _uses_flatness_sample_foil(entry: SimulationPlanEntry) -> bool:
+    """Whether capture_flux measured the same central 1 x 1 cm² sample."""
+
+    stored = _current_result("capture_flux", entry.modules["capture_flux"])
+    capture = CaptureFluxParameters.model_validate(stored.parameters)
+    half_width = WINDOW_WIDTH_CM / 2
+    low = WINDOW_CENTRE_CM - half_width
+    high = WINDOW_CENTRE_CM + half_width
+    return (
+        capture.WindowType == VtWindowType.RECTANGULAR
+        and isclose(capture.widthmin, low)
+        and isclose(capture.widthmax, high)
+        and isclose(capture.heightmin, low)
+        and isclose(capture.heightmax, high)
+    )

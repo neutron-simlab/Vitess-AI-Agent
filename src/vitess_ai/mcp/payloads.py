@@ -102,8 +102,8 @@ class FlatnessReading(_Payload):
     noise rule are in :mod:`vitess_ai.mcp.profile_flatness`.
     """
 
-    #: ``wrong_binning``: the file's bins do not tile the window in 0.1 cm
-    #: bins, so nothing was judged and the numbers below are ``None``.
+    #: ``wrong_binning``: the file does not use the supported -2..2 cm POS_Y
+    #: profile in 40 bins, so nothing was judged and the numbers below are ``None``.
     verdict: Literal["pass", "fail", "inconclusive", "wrong_binning"]
     #: cm, as read from the file.
     bin_width_cm: float

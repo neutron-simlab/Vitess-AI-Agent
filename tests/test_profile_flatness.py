@@ -17,6 +17,9 @@ from langgraph.types import Command
 
 from juena_core.artifacts import ArtifactStore, set_artifact_store_for_tests
 from vitess_ai.agents.advanced_mode.tools import build_batch_tools
+from vitess_ai.agents.specialists.capture_flux.tools import (
+    build_sweep_tools as capture_flux_sweep,
+)
 from vitess_ai.agents.specialists.guide.tools import build_sweep_tools as guide_sweep
 from vitess_ai.cli.arguments import parameters_to_arguments
 from vitess_ai.mcp.capture_flux_log import read_capture_flux
@@ -28,7 +31,7 @@ from vitess_ai.modules.catalog import cli_executables, execution_order
 from vitess_ai.plots import read_monitor_file
 from vitess_ai.run import VitessGateway
 from vitess_ai.schema import GuideParameters, Monitor1DParameters
-from vitess_ai.schema.base import VtGdeShape, VtMonPar
+from vitess_ai.schema.base import VtGdeShape, VtMonPar, VtWindowType
 from vitess_ai.state import SimulationOrderEvent
 from vitess_ai.tools import (
     build_vitess_tools,
@@ -51,6 +54,13 @@ from doubles import (
 
 DATA = Path(__file__).parent / "data"
 CAPTURE_FLUX_LOG = DATA / "capture_flux-rectangular.log"
+SAMPLE_FOIL = {
+    "WindowType": VtWindowType.RECTANGULAR,
+    "widthmin": -0.5,
+    "widthmax": 0.5,
+    "heightmin": -0.5,
+    "heightmax": 0.5,
+}
 
 
 def _fixture(name: str) -> Path:
@@ -86,6 +96,10 @@ def artifact_store(tmp_path: Path):
         # noise, not the beam, is what keeps it from passing, so it must not fail.
         ("inconclusive", "inconclusive"),
         ("100-bins", "wrong_binning"),
+        # A real failed sweep put the sample edges on the monitor edges. VITESS
+        # folded the adjacent lower interval into the first bin, making a flat
+        # profile look strongly edge-peaked.
+        ("boundary-artifact", "wrong_binning"),
     ],
 )
 def test_each_real_profile_gets_its_verdict(fixture: str, verdict: str) -> None:
@@ -111,6 +125,14 @@ def test_bins_other_than_the_criterion_s_are_not_judged() -> None:
     reading = _reading("100-bins")
 
     assert reading.bin_width_cm == pytest.approx(0.04)
+    assert reading.worst_deviation is None
+    assert reading.median_relative_error is None
+
+
+def test_the_sample_window_must_not_be_the_monitor_boundary() -> None:
+    reading = _reading("boundary-artifact")
+
+    assert reading.bin_width_cm == pytest.approx(0.1)
     assert reading.worst_deviation is None
     assert reading.median_relative_error is None
 
@@ -249,9 +271,9 @@ def _summary(fixture: str) -> str | None:
         ),
         (
             "100-bins",
-            "Horizontal flatness not judged: the 1D monitor's bins are 0.04 cm wide "
-            "and do not tile the central 1 cm in 0.1 cm bins; record pos_y from -2 "
-            "to 2 cm in 40 bins.",
+            "Horizontal flatness not judged: the 1D monitor must record pos_y "
+            "from -2 to 2 cm in 40 bins (0.1 cm each), keeping the central 1 cm "
+            "away from the monitor boundary; this file uses 0.04 cm bins.",
         ),
     ],
 )
@@ -342,13 +364,29 @@ def test_run_simulation_says_where_it_measured_and_how_flat(
 # ---------------------------------------------------------------------------
 
 
-def _run_sweep(tmp_path: Path, runs: list[tuple[str, int, str, float]]) -> str:
+def _run_sweep(
+    tmp_path: Path,
+    runs: list[tuple[str, int, str, float]],
+    *,
+    sample_foil: bool = True,
+) -> str:
     """Plan and run a sweep over guide lengths, one (name, pieces, fixture, flux) per run.
 
     The guide variants are recorded by the real guide sweep tool: 50 cm pieces,
     so 16 pieces is an 8 m guide.
     """
     variants = swept_modules(tmp_path)
+    if sample_foil:
+        variants.update(
+            _swept(
+                named_tool(
+                    capture_flux_sweep(project_root=tmp_path),
+                    "validate_capture_flux_variants",
+                ),
+                [SAMPLE_FOIL],
+                thread_id=THREAD_ID,
+            )
+        )
     variants.update(
         _swept(
             named_tool(
@@ -423,3 +461,21 @@ def test_a_sweep_without_a_flatness_reading_has_no_ranking(
     )
 
     assert "Guide selection" not in swept.update["messages"][0].text
+
+
+def test_flat_runs_are_not_ranked_by_unrestricted_whole_beam_flux(
+    tmp_path: Path, artifact_store: ArtifactStore
+) -> None:
+    text = _run_sweep(
+        tmp_path,
+        [("guide-10m", 20, "pass", 2.5e9)],
+        sample_foil=False,
+    )
+
+    assert "1. guide-10m" not in text
+    assert text.endswith(
+        "Guide selection: flat runs ranked by capture flux, highest first.\n"
+        "No flat run had capture flux for the central 1 x 1 cm² sample.\n"
+        "Not judged: guide-10m (capture flux is not restricted to the central "
+        "1 x 1 cm² sample)."
+    )

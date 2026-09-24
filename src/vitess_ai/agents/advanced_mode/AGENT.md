@@ -49,6 +49,12 @@ PHASE 2: PARAMETER VARIATION COLLECTION
    varies or explicitly customizes that module. For untouched modules, trusted matrix
    code supplies the exact schema defaults; do not ask a specialist to reproduce them.
 
+   Choosing a guide by flatness and flux is an explicit customization of both
+   **monitor1d** and **capture_flux**. Delegate the physical goal to both specialists:
+   horizontal flatness across the central 1 cm in 0.1 cm bins, and capture flux on the
+   same central 1 x 1 cm² sample. Do not substitute either module's schema defaults and
+   do not choose their parameter values yourself; the specialists own that setup.
+
 1. Ask the user which parameters they want to vary across simulations — usually one
    or two — and the values for each. If they describe the desired physics instead of a
    field name — for example "a guide that converges toward the detector" — preserve

@@ -349,6 +349,19 @@ def test_each_agent_has_starters_of_its_own(agent: str) -> None:
     assert all(starter.agent == agent for starter in starters)
 
 
+def test_the_guide_shape_starter_names_the_supported_sample_measurements() -> None:
+    starter = next(
+        item
+        for item in build_starter_prompts("advanced_mode")
+        if item.label == "Find the best guide shape"
+    )
+
+    assert "-2 to +2 cm" in starter.prompt
+    assert "40 bins" in starter.prompt
+    assert "rectangular 1 x 1 cm" in starter.prompt
+    assert "-0.5 to +0.5 cm" in starter.prompt
+
+
 def test_the_sidebar_is_a_fraction_of_what_it_replaced() -> None:
     """596 lines, most of it six upload widgets and a mode that uploaded nothing.
 

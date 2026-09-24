@@ -30,6 +30,9 @@ from vitess_ai.cli.arguments import ParameterConversionError, parameters_to_argu
 from vitess_ai.mcp.payloads import PlotResult, RunFile, SimulationResult
 from vitess_ai.mcp.profile_flatness import (
     BIN_WIDTH_CM,
+    MONITOR_BIN_COUNT,
+    MONITOR_MAX_CM,
+    MONITOR_MIN_CM,
     NOISE_SIGMAS,
     TOLERANCE,
     WINDOW_WIDTH_CM,
@@ -181,10 +184,11 @@ def flatness_summary(result: SimulationResult) -> str | None:
         return None
     if reading.verdict == "wrong_binning":
         return (
-            "Horizontal flatness not judged: the 1D monitor's bins are "
-            f"{reading.bin_width_cm:.3g} cm wide and do not tile the central "
-            f"{WINDOW_WIDTH_CM:g} cm in {BIN_WIDTH_CM:g} cm bins; record pos_y "
-            "from -2 to 2 cm in 40 bins."
+            "Horizontal flatness not judged: the 1D monitor must record pos_y "
+            f"from {MONITOR_MIN_CM:g} to {MONITOR_MAX_CM:g} cm in "
+            f"{MONITOR_BIN_COUNT} bins ({BIN_WIDTH_CM:g} cm each), keeping the "
+            f"central {WINDOW_WIDTH_CM:g} cm away from the monitor boundary; "
+            f"this file uses {reading.bin_width_cm:.3g} cm bins."
         )
     label = {
         "pass": "PASS",

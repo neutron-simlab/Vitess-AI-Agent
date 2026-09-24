@@ -5,9 +5,12 @@ sample, and whether the beam is flat across it. This is the second. The
 criterion is fixed, and every constant below is part of it:
 
 - the central 1 cm of ``pos_y``, centred on the beam axis;
-- in 0.1 cm bins. The bin width belongs to the criterion because "10 %" means
-  something different per width: a narrower bin is noisier and resolves finer
-  structure, so the same beam can pass in one binning and fail in another;
+- recorded from -2 to 2 cm in 40 bins, so the sample is ten whole 0.1 cm bins
+  away from the monitor boundary. VITESS folds the interval immediately below
+  a monitor range into its first bin, so the sample must not start there;
+- judged in 0.1 cm bins. The bin width belongs to the criterion because "10 %"
+  means something different per width: a narrower bin is noisier and resolves
+  finer structure, so the same beam can pass in one binning and fail in another;
 - no bin further than 10 % from the window's mean intensity.
 
 VITESS is a Monte Carlo simulation, and every bin carries a statistical error
@@ -38,6 +41,9 @@ from vitess_ai.plots import MonitorData
 
 __all__ = [
     "BIN_WIDTH_CM",
+    "MONITOR_BIN_COUNT",
+    "MONITOR_MAX_CM",
+    "MONITOR_MIN_CM",
     "NOISE_SIGMAS",
     "TOLERANCE",
     "WINDOW_WIDTH_CM",
@@ -49,6 +55,9 @@ AXIS_LABEL = "pos_y [cm]"
 WINDOW_CENTRE_CM = 0.0
 WINDOW_WIDTH_CM = 1.0
 BIN_WIDTH_CM = 0.1
+MONITOR_MIN_CM = -2.0
+MONITOR_MAX_CM = 2.0
+MONITOR_BIN_COUNT = 40
 TOLERANCE = 0.10
 NOISE_SIGMAS = 2.0
 
@@ -67,6 +76,16 @@ def read_flatness(data: MonitorData) -> FlatnessReading | None:
 
     # Rounded to the four decimals monitor1D prints its bin centres with.
     bin_width = round(float(data.x[1] - data.x[0]), 4)
+    expected_centres = np.linspace(
+        MONITOR_MIN_CM + BIN_WIDTH_CM / 2,
+        MONITOR_MAX_CM - BIN_WIDTH_CM / 2,
+        MONITOR_BIN_COUNT,
+    )
+    if data.x.size != MONITOR_BIN_COUNT or not np.allclose(
+        data.x, expected_centres, rtol=0, atol=_POSITION_SLACK_CM
+    ):
+        return FlatnessReading(verdict="wrong_binning", bin_width_cm=bin_width)
+
     low = WINDOW_CENTRE_CM - WINDOW_WIDTH_CM / 2
     high = WINDOW_CENTRE_CM + WINDOW_WIDTH_CM / 2
     # Whole bins only. A bin straddling the window edge would measure some

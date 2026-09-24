@@ -54,10 +54,13 @@ _STARTERS = (
             "both planes with a square cross-section (width = height), and sweep "
             "every inlet size 3, 4, 5, 6, 7, 8 cm against every outlet size 3, 4, "
             "5, 6, 7, 8 cm: a full 6 x 6 grid, 36 runs. Judge flatness on the "
-            "horizontal position profile at the guide exit: over the central 1 cm, "
-            "every 0.1 cm bin within 10 % of the mean. Leave everything else at "
-            "its default. When the sweep is done, show me the 5 guides with the "
-            "highest capture flux and the flatness verdict of each."
+            "horizontal position profile at the guide exit: configure monitor1D "
+            "for POS_Y from -2 to +2 cm in 40 bins, then judge the central 1 cm, "
+            "every 0.1 cm bin within 10 % of the mean. Measure capture flux on a "
+            "rectangular 1 x 1 cm sample spanning -0.5 to +0.5 cm in both POS_Y "
+            "and POS_Z. Leave everything else at its default. When the sweep is "
+            "done, show me the 5 guides with the highest sample capture flux and "
+            "the flatness verdict of each."
         ),
         agent="advanced_mode",
     ),

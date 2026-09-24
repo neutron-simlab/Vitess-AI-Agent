@@ -118,6 +118,13 @@ what differ:
 | `monitor1D-flatness-empty-edges.dat` | 0.6 cm | 10^6 | 40 | fail: four empty bins |
 | `monitor1D-flatness-inconclusive.dat` | 2 cm | 10^4 | 40 | inconclusive: the same flat beam, too few trajectories to decide |
 | `monitor1D-flatness-100-bins.dat` | 2 cm | 10^4 | 100 | not judged: 0.04 cm bins |
+| `monitor1D-flatness-boundary-artifact.dat` | guide output | 10^5 | 10 | not judged: the sample window is also the monitor boundary |
+
+The boundary-artifact file is from the guide sweep that motivated the guard. Its
+monitor covered exactly -0.5 to 0.5 cm. VITESS put the adjacent -0.6 to -0.5 cm
+interval into the first reported bin, so that bin is almost exactly twice its
+neighbours. The supported -2 to 2 cm monitor keeps this boundary behaviour outside
+the central sample window.
 
 Produced in the MCP container with `./vitess mcp-exec sh < script.sh`, after
 copying `SrcConst.mod` and `constant.dat` into `/tmp/flat`:
