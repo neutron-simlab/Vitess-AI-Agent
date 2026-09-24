@@ -138,6 +138,22 @@ def test_importing_the_service_registers_both_agents(tmp_path: Path) -> None:
     assert default == "vitess"
 
 
+def test_the_service_registers_project_cleanup_for_thread_deletion(
+    tmp_path: Path,
+) -> None:
+    printed = _in_a_fresh_process(
+        "import json;"
+        " import juena_core.server.service as core_service;"
+        " captured = {};"
+        " core_service.create_app = lambda **kwargs: captured.update(kwargs) or object();"
+        " import vitess_ai.server.service as service;"
+        " print(json.dumps(captured['workspace'].delete is service._delete_thread_workspace))",
+        tmp_path,
+    )
+
+    assert json.loads(printed.splitlines()[-1]) is True
+
+
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
@@ -452,6 +468,40 @@ def test_one_thread_cannot_see_another_s_staged_files(store: UploadStore) -> Non
     store.stage(b"b\n", filename="beam.dat", thread_id=THREAD, module="readin")
 
     assert store.staged(other) == []
+
+
+def test_deleting_a_thread_removes_its_whole_project_directory(
+    store: UploadStore,
+) -> None:
+    other = uuid4()
+    store.stage(b"beam\n", filename="beam.dat", thread_id=THREAD, module="readin")
+    output = store.root / str(THREAD) / "outputs" / str(uuid4()) / "result.dat"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"result\n")
+    sibling = store.root / str(other) / "outputs" / "keep.dat"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_bytes(b"keep\n")
+
+    store.delete_thread(THREAD)
+
+    assert not (store.root / str(THREAD)).exists()
+    assert sibling.read_bytes() == b"keep\n"
+
+
+def test_deleting_a_thread_refuses_a_workspace_symlink(
+    store: UploadStore, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "keep.dat"
+    marker.write_bytes(b"keep\n")
+    store.root.mkdir()
+    (store.root / str(THREAD)).symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="outside"):
+        store.delete_thread(THREAD)
+
+    assert marker.read_bytes() == b"keep\n"
 
 
 def test_a_wrong_slot_can_be_corrected(store: UploadStore) -> None:

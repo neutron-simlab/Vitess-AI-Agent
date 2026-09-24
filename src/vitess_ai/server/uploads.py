@@ -26,6 +26,7 @@ generation, and not one to reintroduce at the upload step.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -226,6 +227,16 @@ class UploadStore:
             return False
         path.unlink()
         return True
+
+    def delete_thread(self, thread_id: UUID) -> None:
+        """Delete this thread's uploads and simulation outputs."""
+
+        root = self._root.resolve()
+        directory = (root / str(thread_id)).resolve()
+        if directory.parent != root:
+            raise ValueError(f"Thread workspace is outside {root}")
+        if directory.exists():
+            shutil.rmtree(directory)
 
     def _require_upload_module(self, module: str) -> UploadSchema:
         try:

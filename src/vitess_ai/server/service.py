@@ -9,13 +9,15 @@ those files are real paths rather than text it can read.
 
 from __future__ import annotations
 
+import asyncio
 import warnings
+from uuid import UUID
 
 from langchain_core._api import LangChainBetaWarning
 
 from juena_core.log import get_logger
 from juena_core.server.identity import local_principal
-from juena_core.server.service import create_app
+from juena_core.server.service import ThreadWorkspace, create_app
 from vitess_ai.config import Config, configure_core
 from vitess_ai.server.file_endpoints import build_file_router
 from vitess_ai.server.uploads import UploadStore
@@ -57,12 +59,21 @@ uploads = UploadStore(
     allowed_extensions=Config.UPLOAD_EXTENSIONS,
 )
 
+
+async def _delete_thread_workspace(*, user_id: str, thread_id: str) -> None:
+    """Remove exactly one UUID-named project directory from the shared volume."""
+
+    del user_id
+    await asyncio.to_thread(uploads.delete_thread, UUID(thread_id))
+
+
 app = create_app(
     principal=principal,
-    # No `workspace`: a thread's staged files are already on the shared volume,
-    # which is the only place they are of any use -- the VITESS binaries open
-    # them by path. Copying them into graph state would produce a second,
-    # decoded copy that nothing reads.
+    workspace=ThreadWorkspace(delete=_delete_thread_workspace),
+    # A thread's staged files are already on the shared volume, which is the
+    # only place they are of any use -- the VITESS binaries open them by path.
+    # Copying them into graph state would produce a second, decoded copy that
+    # nothing reads.
     closing_note=(
         "The user's input files are staged on the project volume, not in this "
         "conversation. `inspect_thread_folders` lists them, and the paths it "
