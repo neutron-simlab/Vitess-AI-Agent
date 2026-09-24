@@ -33,6 +33,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from vitess_ai.modules.catalog import UploadSchema, module_spec, upload_modules
+from vitess_ai.workspace_lock import hold_thread_workspace_deletion
 
 __all__ = [
     "MAGIC_NUMBERS",
@@ -241,11 +242,12 @@ class UploadStore:
             return
 
         root = self._root.resolve()
-        directory = root / canonical_thread_id
-        if directory.is_symlink():
-            raise ValueError("Thread workspace must not be a symbolic link")
-        if directory.exists():
-            shutil.rmtree(directory)
+        with hold_thread_workspace_deletion(root, canonical_thread_id):
+            directory = root / canonical_thread_id
+            if directory.is_symlink():
+                raise ValueError("Thread workspace must not be a symbolic link")
+            if directory.exists():
+                shutil.rmtree(directory)
 
     def _require_upload_module(self, module: str) -> UploadSchema:
         try:

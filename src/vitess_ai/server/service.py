@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import warnings
 
+from fastapi import HTTPException
 from langchain_core._api import LangChainBetaWarning
 
 from juena_core.log import get_logger
@@ -20,6 +21,7 @@ from juena_core.server.service import ThreadActivity, ThreadWorkspace, create_ap
 from vitess_ai.config import Config, configure_core
 from vitess_ai.server.file_endpoints import build_file_router
 from vitess_ai.server.uploads import UploadStore
+from vitess_ai.workspace_lock import ThreadWorkspaceBusy
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 
@@ -64,7 +66,12 @@ async def _delete_thread_workspace(*, user_id: str, thread_id: str) -> None:
     """Remove exactly one UUID-named project directory from the shared volume."""
 
     del user_id
-    await asyncio.to_thread(uploads.delete_thread, thread_id)
+    try:
+        await asyncio.to_thread(uploads.delete_thread, thread_id)
+    except ThreadWorkspaceBusy as exc:
+        raise HTTPException(
+            status_code=409, detail="Thread has an active simulation"
+        ) from exc
 
 
 app = create_app(

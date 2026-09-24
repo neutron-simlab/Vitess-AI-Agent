@@ -29,6 +29,7 @@ from vitess_ai.mcp.server import (
 )
 from vitess_ai.mcp.settings import ServerSettings
 from vitess_ai.modules.catalog import cli_executables, execution_order
+from vitess_ai.workspace_lock import hold_thread_workspace_deletion
 
 THREAD_ID = "11111111-1111-4111-8111-111111111111"
 RUN_ID = "22222222-2222-4222-8222-222222222222"
@@ -208,6 +209,23 @@ def test_an_existing_run_directory_is_never_mixed_into_new_evidence(
         )
 
     assert stale.read_text(encoding="utf-8") == "old run"
+
+
+def test_a_deleted_thread_refuses_a_late_pipeline(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    with hold_thread_workspace_deletion(settings.project_root, THREAD_ID):
+        pass
+
+    with pytest.raises(ToolError, match="has been deleted"):
+        run_pipeline(
+            settings,
+            thread_id=THREAD_ID,
+            simulation_run_id=RUN_ID,
+            module_results=_parameters(),
+            execution_order=list(execution_order()),
+        )
+
+    assert not _run_directory(settings).exists()
 
 
 def test_a_validation_error_payload_is_refused_before_anything_starts(

@@ -59,6 +59,7 @@ from vitess_ai.mcp.settings import ServerSettings
 from vitess_ai.modules.catalog import cli_executables, upload_modules
 from vitess_ai.plots import MonitorFileError, read_monitor_file, render_monitor_png
 from vitess_ai.schema import Monitor1DParameters, Monitor2DParameters
+from vitess_ai.workspace_lock import ThreadWorkspaceDeleted, hold_thread_workspace
 
 __all__ = ["mcp", "SETTINGS", "run_pipeline", "inspect_thread", "render_plot"]
 
@@ -247,7 +248,7 @@ def _find_validation_error(module_results: Mapping[str, Any]) -> str | None:
     return None
 
 
-def run_pipeline(
+def _run_pipeline_locked(
     settings: ServerSettings,
     *,
     thread_id: str,
@@ -336,6 +337,29 @@ def run_pipeline(
             else None
         ),
     )
+
+
+def run_pipeline(
+    settings: ServerSettings,
+    *,
+    thread_id: str,
+    simulation_run_id: str,
+    module_results: Mapping[str, Mapping[str, Any]],
+    execution_order: Sequence[str],
+) -> SimulationResult:
+    """Run a pipeline while deletion is excluded across API and MCP processes."""
+
+    try:
+        with hold_thread_workspace(settings.project_root, thread_id):
+            return _run_pipeline_locked(
+                settings,
+                thread_id=thread_id,
+                simulation_run_id=simulation_run_id,
+                module_results=module_results,
+                execution_order=execution_order,
+            )
+    except (ThreadWorkspaceDeleted, ValueError, OSError) as exc:
+        raise ToolError(str(exc)) from exc
 
 
 def _read_run_flatness(
