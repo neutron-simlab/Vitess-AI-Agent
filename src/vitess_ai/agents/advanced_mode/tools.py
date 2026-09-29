@@ -1,24 +1,24 @@
-"""The trusted schema, planning and execution tools for a parameter sweep.
+"""The trusted tools that describe module settings, plan a sweep and run it.
 
-`write_simulation_matrix` expands the sweep and `run_batch_from_matrix` executes
-it. Between them sits the `simulation_plan` channel, and the point of the pair is
-what is **not** in either signature: no `module_results`, no `run_specs`, no
-`execution_order`, no `thread_id`. The first-generation batch tool took all four
-from the model (`agents/advanced_mode/tools.py:458`), so the sweep reached
-execution through model-authored parameters while the guided path was busy
-closing exactly that route.
+`write_simulation_matrix` works out every run in the sweep, and
+`run_batch_from_matrix` runs them. Between the two sits the `simulation_plan`
+record in the conversation state, and the point of the pair is what their
+inputs do **not** include: no `module_results`, no `run_specs`, no
+`execution_order`, no `thread_id`. The first version's batch tool took all four
+from the model, so the sweep ran VITESS with values the model typed, while the
+guided agent was being changed to stop exactly that.
 
-Two smaller things the first generation got wrong and this does not:
+Two smaller things the first version got wrong and this does not:
 
-*The matrix file is written, not read.* It was the input to execution --
-`run_batch_from_matrix` loaded it, converted it and ran it -- so a file anyone
-could edit decided what VITESS did. Here the file is **rendered from the plan**,
-the same way 03/CP1 renders a display command that is never executed: readable,
-checkable, downloadable, and not the thing that runs.
+*The matrix file is only written, never read back.* In the first version it was
+the input to the run -- the batch tool loaded it, converted it and ran it -- so
+a file anyone could edit decided what VITESS did. Here the file is **produced
+from the plan**, like the display copy of a command that is never itself run:
+readable, checkable, downloadable, and not the thing that runs.
 
-*`run_id` was the model's `run_name`.* Whatever the model called a run became a
-directory name on a shared volume. The two are separate fields now, and only one
-of them is an identifier.
+*The run id was the model's run name.* Whatever the model called a run became a
+folder name on a shared volume. They are separate fields now, and only one of
+them is an identifier.
 """
 
 from __future__ import annotations

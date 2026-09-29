@@ -1,9 +1,10 @@
-"""The sidebar: which agent, which conversation, and what is staged for it.
+"""The sidebar: which agent, which conversation, and which files are uploaded.
 
-596 lines in the first generation, most of it six per-module upload widgets and
-a path-only mode that uploaded nothing. The upload half now lives in
-`file_management.render_file_manifest`, over three slots, and what is left here
-is navigation: the agent, the model, the conversation list.
+In the first version this file was 596 lines, mostly six upload boxes, one per
+module, plus a mode that did not actually upload anything. Uploads now live in
+`file_management.render_file_manifest`, with three slots, and this file only
+holds the choices you move between: the agent, the model and the conversation
+list.
 """
 
 from __future__ import annotations

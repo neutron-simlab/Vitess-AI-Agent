@@ -1,14 +1,14 @@
-"""Which parameter model belongs to which VITESS module.
+"""Which settings model belongs to which VITESS module.
 
-Kept out of `catalog.py` on purpose: the catalog imports pydantic and nothing
-else, and a test asserts it, because the whole reason the first-generation
-agent grew two copies of the executable mapping was that its catalog imported
-an agent class. This mapping imports the parameter models, so it lives
-beside the catalog rather than inside it.
+This is kept out of `catalog.py` on purpose. The catalog imports pydantic and
+nothing else, and a test checks that, because the first version ended up with
+two copies of the module-to-program list precisely because its catalog imported
+an agent class. This mapping has to import the settings models, so it lives
+next to the catalog rather than inside it.
 
-It is a second table keyed by module name, and the way two such tables drift is
-that nobody compares them. So `test_every_executable_module_has_a_parameter_model`
-does, against `execution_order()`.
+It is a second table keyed by module name, and two such tables drift apart when
+nobody compares them. So `test_every_executable_module_has_a_parameter_model`
+compares them, against `execution_order()`.
 """
 
 from __future__ import annotations

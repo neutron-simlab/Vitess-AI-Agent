@@ -1,4 +1,4 @@
-"""Shell-free VITESS command construction."""
+"""Building VITESS commands as plain lists of words, never as shell text."""
 
 from vitess_ai.cli.arguments import (
     ParameterConversionError,

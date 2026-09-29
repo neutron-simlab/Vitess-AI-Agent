@@ -1,33 +1,34 @@
-"""Judge whether a run's horizontal 1D profile is flat across the sample.
+"""Decide whether a run's horizontal 1D profile is flat across the sample.
 
 Guide shapes are compared on two numbers: the capture flux on a 1 x 1 cm^2
-sample, and whether the beam is flat across it. This is the second. The
-criterion is fixed, and every constant below is part of it:
+sample, and whether the beam is flat across it. This file does the second. The
+test is fixed, and every constant below is part of it:
 
 - the central 1 cm of ``pos_y``, centred on the beam axis;
 - recorded from -2 to 2 cm in 40 bins, so the sample is ten whole 0.1 cm bins
-  away from the monitor boundary. VITESS folds the interval immediately below
-  a monitor range into its first bin, so the sample must not start there;
-- judged in 0.1 cm bins. The bin width belongs to the criterion because "10 %"
-  means something different per width: a narrower bin is noisier and resolves
-  finer structure, so the same beam can pass in one binning and fail in another;
-- no bin further than 10 % from the window's mean intensity.
+  away from the edge of the monitor. VITESS counts neutrons that land just
+  below a monitor's range in its first bin, so the sample must not start there;
+- judged in 0.1 cm bins. The bin width is part of the test because "10 %" means
+  something different for each width: a narrower bin is noisier and shows finer
+  detail, so the same beam can pass with one bin width and fail with another;
+- no bin more than 10 % away from the average intensity in the window.
 
-VITESS is a Monte Carlo simulation, and every bin carries a statistical error
-(the monitor file's third column). A flat beam run with too few trajectories
-has bins 10 % off by noise alone -- at the schema's default 0.04 cm bins and
-10^4 trajectories, the flat fixture's worst bin is 15.6 % off. So the verdict
-allows for each bin's error, two standard deviations either way:
+VITESS is a Monte Carlo simulation (it follows many random neutron paths), so
+every bin has a statistical error (the monitor file's third column). A flat beam
+simulated with too few trajectories has bins 10 % off from noise alone: at the
+schema's default 0.04 cm bins and 10^4 trajectories, the flat test file's worst
+bin is 15.6 % off. So the verdict allows for each bin's error, two standard
+deviations either way:
 
-    pass          every bin is inside 10 % even at the far end of its error
+    pass          every bin is within 10 % even at the far end of its error
     fail          some bin is outside 10 % even at the near end of its error
     inconclusive  neither; more trajectories would decide it
 
-An empty bin inside the window is a hole in the beam. It needs no rule of its
-own: its deviation is -100 % with no error, so it fails like any other bin.
+An empty bin inside the window is a hole in the beam. It needs no special rule:
+it is -100 % off with no error, so it fails like any other bin.
 
-The fixtures ``tests/data/monitor1D-flatness-*.dat`` are real VITESS 3.8
-output; ``tests/data/README.md`` records how each was made.
+The test files ``tests/data/monitor1D-flatness-*.dat`` are real VITESS 3.8
+output; ``tests/data/README.md`` records how each one was made.
 """
 
 from __future__ import annotations

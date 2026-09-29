@@ -1,23 +1,23 @@
-"""The boundary a VITESS module specialist is invoked across.
+"""What passes between the supervisor and a module specialist, in each direction.
 
 Core's :class:`~juena_core.agents.delegation.SpecialistDelegate` names exactly
-what may cross in each direction -- `messages` and `files` -- and builds both
-from scratch rather than filtering, so a state field added upstream is absent by
-default instead of crossing until someone notices. That is still the rule here.
+what may pass each way -- `messages` and `files` -- and builds both from
+scratch rather than filtering out what should not pass. So a field added to the
+state elsewhere stays behind by default, instead of slipping through until
+someone notices. That is still the rule here.
 
-v2 adds **one** field, in **one** direction: a specialist returns the
-`module_results` entry it validated. Without it a guide specialist can validate
-a `GuideParameters` and have nowhere to put it, and the only remaining route to
-the command builder is the model retyping the numbers -- the path 03/CP1 exists
-to close.
+This app adds **one** field, in **one** direction: a specialist hands back the
+`module_results` entry it checked. Without it, the guide specialist could check
+a `GuideParameters` and have nowhere to put it, and the only way left to the
+command builder would be the model retyping the numbers -- exactly what must not
+happen.
 
-And it returns **only its own module's entry**. A specialist that came back
-holding five entries would be able to overwrite configurations it merely
-inherited, which is the same argument `findings_delta` already makes for files.
-Here it is stronger, because the entry is not inherited at all: nothing sends
-`module_results` inbound, so the guide specialist has no legitimate way to know
-what read-in decided, and an entry under another module's name can only be
-something it made up.
+And it hands back **only its own module's entry**. A specialist that came back
+holding entries for other modules could overwrite settings it merely received,
+the same argument `findings_delta` already makes for files. Here the argument
+is stronger, because nothing is received at all: `module_results` is never sent
+to a specialist, so the guide specialist has no honest way to know what read-in
+decided, and an entry under another module's name can only be made up.
 """
 
 from __future__ import annotations

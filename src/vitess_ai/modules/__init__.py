@@ -1,4 +1,4 @@
-"""The VITESS module catalog: pure data, no agent imports."""
+"""The list of VITESS modules: plain data, with no agent code imported."""
 
 from vitess_ai.modules.catalog import (
     MODULES,

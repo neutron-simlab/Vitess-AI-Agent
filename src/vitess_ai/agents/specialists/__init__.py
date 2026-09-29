@@ -1,12 +1,13 @@
-"""The six VITESS module specialists, listed explicitly.
+"""The six VITESS module specialists, listed one by one.
 
-Six imports and six entries. The catalog (03/CP2) is a data table about
-physics modules and it deliberately no longer carries an ``agent_class`` or a
-``tool_factory`` -- that field is why importing the catalog used to drag in the
-whole agent framework, and why two hand-maintained copies of the executable
-mapping existed to avoid it. Which agent configures which module is decided
-here instead, in writing, which is JueNA's rule for agents unchanged: a package,
-a builder import, one explicit entry. No discovery, no registry.
+Six imports and six entries. The module catalog is a table of data about the
+physics modules, and on purpose it no longer names each module's agent
+(``agent_class`` or ``tool_factory``). That field is why reading the catalog
+used to load the whole agent framework, and why two hand-kept copies of the
+module-to-program list existed to avoid it. Which agent sets up which module is
+decided here instead, written out, following JueNA's rule for agents: a
+package, an import of its builder, one explicit entry. Nothing is discovered
+automatically.
 """
 
 from __future__ import annotations

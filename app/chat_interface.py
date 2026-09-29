@@ -1,14 +1,17 @@
-"""The chat page.
+"""The main chat page: the message history, the input box and the starter
+questions.
 
-The stream loop, the chunk classifiers and the question card are
-`juena_core.ui.streaming`'s -- they implement the SSE contract core's server
-emits. What is left here is the layout and the starter chips.
+Receiving the agent's reply as it streams in, and drawing it, is done by
+juena-core (`juena_core.ui.streaming`), because that code has to match what
+core's server sends. This file only lays out the page and shows the starter
+questions.
 
-There is no approval card. juena-chatbot has one because a model there proposes
-a shell command for a person to approve; VITESS runs a trusted binary with
-parameters a validator has already accepted, so the thing being confirmed is
-the *configuration*, and that happens in the conversation itself -- the
-specialist presents it and calls `ask_user` before recording anything.
+There is no "approve this command" card. juena-chatbot needs one because its
+model can suggest a shell command that a person must approve before it runs.
+Here VITESS is a trusted program, and its settings are checked before it runs,
+so what the user confirms is the settings themselves. That happens in the chat:
+the agent in charge of a module shows its settings and asks with `ask_user`
+before saving anything.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Execute a VITESS pipeline from argument vectors without a shell."""
+"""Run the chain of VITESS programs from lists of command words, with no shell."""
 
 from __future__ import annotations
 

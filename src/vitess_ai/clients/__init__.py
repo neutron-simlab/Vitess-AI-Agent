@@ -1,4 +1,4 @@
-"""The HTTP client the UI talks to the API with."""
+"""The code the web page uses to talk to the API."""
 
 from vitess_ai.clients.client import VitessClient
 

@@ -1,17 +1,17 @@
-"""This deployment's settings, and the one call that hands core its own.
+"""This setup's settings, and the one call that passes juena-core its own.
 
-**An application extends core's configuration by not extending it.** Core defines
-a frozen `CoreSettings` that reads nothing, and `configure()` installs it once at
-startup. This module keeps its own `Config` — its `os.getenv` calls, its defaults
-and its `validate_required()` — because what has to be validated here is not what
-has to be validated in juena-chatbot's deployment: there is no SAML, no Podman,
-and there is a VITESS project volume two containers have to agree about.
+**This app keeps its own settings beside core's instead of extending them.**
+Core defines a fixed `CoreSettings` that reads nothing by itself, and
+`configure()` installs it once at startup. This file keeps its own `Config` --
+reading environment variables, holding defaults and checking them in
+`validate_required()` -- because what must be checked here is different from
+juena-chatbot: there is no SAML login and no Podman, but there is a VITESS
+project folder that two containers must agree on.
 
-`validate_required()` is called by the API and UI process entrypoints, not at
-import. 01/CP1 exists because the first-generation `juena` package ran
-`Config.initialize()` at module scope, so importing *any* module loaded `.env`
-and could raise — and `get_logger`, imported nearly everywhere, imported
-`Config`. Nothing here runs on import.
+`validate_required()` is called when the API or the web page starts, not when
+this file is imported. The first version loaded `.env` the moment any of its
+files was imported, so even importing the logging helper, which almost every
+file does, could fail. Nothing here runs on import.
 """
 
 from __future__ import annotations

@@ -1,26 +1,25 @@
-"""Which VITESS modules exist, in what order, and what each one accepts.
+"""Which VITESS modules exist, the order they run in, and what each one accepts.
 
-This is a data table, not a registry. The distinction matters, because JüNA's
-rule is that adding an *agent* requires a package, a builder import and one
-explicit entry -- no discovery, no registry. That rule is about agents. These
-rows are about VITESS physics modules, and four unrelated callers need the same
-handful of facts about them: the command generator needs the executable, the
-file store needs to know what may be uploaded, the sidebar needs a label and an
-order, and the specialists need their own row.
+This is a plain table of data, not a registry that finds things by itself. The
+difference matters because of a JueNA rule: adding an *agent* takes a package,
+an import of its builder and one explicit entry -- nothing is discovered
+automatically. That rule is about agents. These rows are about VITESS's physics
+modules, and four unrelated parts of the code need the same few facts about
+them: the command builder needs the program to run, the file store needs to
+know what may be uploaded, the sidebar needs a label and an order, and each
+module's specialist agent needs its own row.
 
-Without this table each of those grows its own copy. Two such copies existed in
-the first-generation agent -- ``FALLBACK_MODULE_EXECUTABLES`` in
-``mcp/supervisor_tools.py`` and ``FALLBACK_MODULE_TYPES`` in
-``server/file_storage.py`` -- and they existed for a reason worth not repeating:
-the old catalog carried an ``agent_class``, so importing it imported LangChain,
-and a FastMCP server that wanted a five-entry ``{module: executable}`` mapping
-dragged in the whole agent framework to get it. The fallbacks were the escape.
+Without this table, each of those parts grows its own copy. The first version
+had two such copies, for a reason worth not repeating: its catalog also named
+each module's agent class, so reading the catalog loaded the whole agent
+framework (LangChain). The MCP server only wanted a short module-to-program
+list, so it and the file store each kept a copy of their own to avoid that.
 
-So: **this module imports pydantic and nothing else**, and a test asserts that
-importing it pulls in neither ``langchain`` nor ``deepagents``. ``agent_class``,
-``tool_factory`` and ``validation_tool_patterns`` are gone. The five module
-specialists will be built by five explicit builders in the simulator checkpoint,
-listed one line each, with JüNA's rule unchanged.
+So **this file imports pydantic and nothing else**, and a test checks that
+loading it pulls in neither ``langchain`` nor ``deepagents``. The agent fields
+(``agent_class``, ``tool_factory``, ``validation_tool_patterns``) are gone.
+The module specialists are listed one by one, each with its own builder, in
+``agents/specialists/__init__.py``, following the JueNA rule above.
 """
 
 from __future__ import annotations

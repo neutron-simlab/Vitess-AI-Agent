@@ -1,4 +1,4 @@
-"""Private state channels owned by the VITESS application bridge."""
+"""Extra values the VITESS app stores with each conversation, for its own code only."""
 
 from __future__ import annotations
 
