@@ -45,6 +45,9 @@ from vitess_ai.agents.specialists.module_tools import omitted_file_value
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
 from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
 from vitess_ai.agents.specialists.readin.tools import build_tools as readin_tools
+from vitess_ai.agents.specialists.sample_elasticisotr.tools import (
+    build_tools as sample_elasticisotr_tools,
+)
 from vitess_ai.agents.specialists.writeout.tools import build_tools as writeout_tools
 from vitess_ai.cli.arguments import (
     ParameterConversionError,
@@ -61,6 +64,7 @@ from vitess_ai.schema import (
     ReadInParameters,
     WriteoutParameters,
 )
+from vitess_ai.schema.sample_elasticisotr_module import SHIPPED_DEFAULT
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
@@ -105,7 +109,7 @@ def test_every_executable_module_has_exactly_one_parameter_model() -> None:
     validates their parameters. `run_simulation` needs both to agree for every
     module it is about to execute.
     """
-    assert tuple(PARAMETER_MODELS) == execution_order()
+    assert tuple(PARAMETER_MODELS) == execution_order(include_optional=True)
 
 
 def test_asking_for_a_model_that_is_not_there_raises() -> None:
@@ -118,7 +122,7 @@ def test_asking_for_a_model_that_is_not_there_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_every_model_converts_to_flag_value_arguments(module: str) -> None:
     """One token per argument, each a flag with its value attached.
 
@@ -126,11 +130,17 @@ def test_every_model_converts_to_flag_value_arguments(module: str) -> None:
     execution time -- by which point the specialist has gone.
     """
     model = parameter_model(module)
-    defaults = model() if module != "readin" else model(
-        sInputFileName=["/data/projects/x/uploads/readin/beam.dat"],
-        Weight=[1.0],
-        sInstrInfIn=None,
-    )
+    if module == "readin":
+        defaults = model(
+            sInputFileName=["/data/projects/x/uploads/readin/beam.dat"],
+            Weight=[1.0],
+            sInstrInfIn=None,
+        )
+    elif module == "sample_elasticisotr":
+        # Its schema defaults are the C initialisers, which do not run.
+        defaults = model(**SHIPPED_DEFAULT)
+    else:
+        defaults = model()
 
     arguments = parameters_to_arguments(defaults)
 
@@ -1005,9 +1015,9 @@ def test_the_five_specialists_are_the_five_executable_modules(
         fallback_models=[],
     )
 
-    assert [spec["module"] for spec in specialists] == list(execution_order())
+    assert [spec["module"] for spec in specialists] == list(execution_order(include_optional=True))
     assert [spec["name"] for spec in specialists] == [
-        f"{module}-specialist" for module in execution_order()
+        f"{module}-specialist" for module in execution_order(include_optional=True)
     ]
 
 
@@ -1025,8 +1035,18 @@ def test_the_five_specialists_are_the_five_executable_modules(
 #: while the deliberate override it exists to protect had quietly been lost.
 PROMPT_OVERRIDES_SCHEMA = {("readin", "sInstrInfIn"): None}
 
+#: Modules whose whole default block is something other than the schema
+#: defaults, and what it must be instead.
+#:
+#: The sample's schema defaults are the C initialisers: no shape and no
+#: scattering, which VITESS cannot run. Its Default setup is VITESS's own
+#: default sample, which `use_sample_elasticisotr_defaults` records from
+#: `SHIPPED_DEFAULT`. Asserted value for value, like `PROMPT_OVERRIDES_SCHEMA`,
+#: so the prompt cannot drift from what the tool records.
+PROMPT_DEFAULT_BLOCK_IS_NOT_THE_SCHEMA = {"sample_elasticisotr": SHIPPED_DEFAULT}
 
-@pytest.mark.parametrize("module", execution_order())
+
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_the_default_configuration_in_each_prompt_is_the_schema_default(
     module: str,
 ) -> None:
@@ -1049,6 +1069,13 @@ def test_the_default_configuration_in_each_prompt_is_the_schema_default(
     claimed = json.loads(re.sub(r"//.*", "", block.group(1)))
 
     model = parameter_model(module)
+    if module in PROMPT_DEFAULT_BLOCK_IS_NOT_THE_SCHEMA:
+        required = model(**PROMPT_DEFAULT_BLOCK_IS_NOT_THE_SCHEMA[module])
+        assert claimed == required.model_dump(mode="json"), (
+            f"{module}/AGENT.md's default block is not the configuration its "
+            "defaults tool records"
+        )
+        return
     for field_name, value in claimed.items():
         assert field_name in model.model_fields, (
             f"{module}/AGENT.md names {field_name}, which {model.__name__} has no field for"
@@ -1123,7 +1150,7 @@ def test_a_specialists_own_messages_never_reach_the_user() -> None:
     assert from_supervisor != []
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_every_prompt_puts_the_setup_choice_through_ask_user(module: str) -> None:
     """Default-or-custom is the first question, and it has to be askable.
 
@@ -1148,7 +1175,7 @@ def _setup_choice(module: str) -> str:
     return _agent_md(module).split("## STEP 0")[1].split("## PATH A")[0]
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_the_setup_choice_says_what_the_defaults_actually_are(module: str) -> None:
     """"Optimal default values" is not a thing anyone can choose.
 
@@ -1184,7 +1211,7 @@ def test_the_setup_choice_says_what_the_defaults_actually_are(module: str) -> No
             )
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_the_setup_choice_names_no_enum_value_the_default_is_not(module: str) -> None:
     """The drift that already happened once, in the place no test was looking.
 
@@ -1222,7 +1249,7 @@ def test_the_setup_choice_names_no_enum_value_the_default_is_not(module: str) ->
             )
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_every_prompt_keeps_the_configuration_inside_the_question(module: str) -> None:
     """Nothing may tell the model to show the configuration on its own."""
     text = _agent_md(module)
@@ -1238,7 +1265,7 @@ def test_every_prompt_keeps_the_configuration_inside_the_question(module: str) -
         assert banned not in text, f"{module}/AGENT.md still says: {banned}"
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
     module: str,
 ) -> None:
@@ -1249,7 +1276,7 @@ def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
     )
 
     assert parameter_model(module).__name__ in prompt
-    for other in execution_order():
+    for other in execution_order(include_optional=True):
         if other != module:
             assert parameter_model(other).__name__ not in prompt
 
@@ -1280,6 +1307,9 @@ def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
             project_root=tmp_path, documentation_tools=documentation
         ),
         "capture_flux": lambda: capture_flux_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
+        "sample_elasticisotr": lambda: sample_elasticisotr_tools(
             project_root=tmp_path, documentation_tools=documentation
         ),
     }
@@ -1321,7 +1351,7 @@ def _field_names(model: type[BaseModel]) -> set[str]:
     return names
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     module: str, tmp_path: Path
 ) -> None:
@@ -1350,7 +1380,7 @@ def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     not_tools = (
         _field_names(parameter_model(module))
         | set(SpecialistReport.model_fields)
-        | set(execution_order())
+        | set(execution_order(include_optional=True))
         | {spec.name for spec in upload_modules()}
         | set(cli_executables().values())
         | PROSE_WORDS_THAT_LOOK_LIKE_TOOLS
@@ -1392,7 +1422,7 @@ def test_tool_candidate_parser_covers_invented_and_one_word_tools(
     assert TOOL_SHAPED.findall(f"`{invented_tool}`") == [invented_tool]
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_validation_tool_description_requires_confirmation(
     module: str, tmp_path: Path
 ) -> None:
@@ -1423,7 +1453,7 @@ def test_default_tool_accepts_no_parameters_and_records_exact_schema_defaults(
     assert recorded.parameters == parameter_model(module)().model_dump(mode="json")
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
     module: str, offline_model: Any, tmp_path: Path
 ) -> None:
@@ -1841,7 +1871,7 @@ def test_every_prompt_carries_the_same_order_of_work_word_for_word() -> None:
     The sequence is authored once and pasted into all five, and this is what
     keeps them identical -- an edit to one has to be an edit to all five.
     """
-    texts = {module: _order_of_work(module) for module in execution_order()}
+    texts = {module: _order_of_work(module) for module in execution_order(include_optional=True)}
     distinct = set(texts.values())
 
     assert len(distinct) == 1, (
@@ -1872,7 +1902,7 @@ def test_the_two_modules_that_read_a_file_are_told_to_re_read_the_store() -> Non
     """
     carrying = {
         module
-        for module in execution_order()
+        for module in execution_order(include_optional=True)
         if "## SAY WHICH FILE YOU ARE USING" in _prompt_text(module)
     }
     blocks = {
@@ -1887,7 +1917,7 @@ def test_the_two_modules_that_read_a_file_are_told_to_re_read_the_store() -> Non
     assert "call `list_staged_files()` **again**" in blocks["readin"]
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) -> None:
     """The contradictions, named so they cannot come back one at a time."""
     text = _prompt_text(module)
@@ -1916,7 +1946,7 @@ def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) ->
     ) == 2
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_no_prompt_names_a_findings_file_no_specialist_can_write(module: str) -> None:
     """`read_file` went, and the paragraph that described it had to go with it.
 

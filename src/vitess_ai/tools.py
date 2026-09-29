@@ -37,7 +37,7 @@ from vitess_ai.mcp.profile_flatness import (
     TOLERANCE,
     WINDOW_WIDTH_CM,
 )
-from vitess_ai.modules.catalog import execution_order
+from vitess_ai.modules.catalog import SAMPLE_MODULE, execution_order, optional_modules
 from vitess_ai.modules.parameters import parameter_model
 from vitess_ai.schema import GuideParameters
 from vitess_ai.schema.base import VtGdeShape
@@ -98,7 +98,15 @@ class _InspectArguments(_FacadeArguments):
 
 
 class _PlanArguments(_FacadeArguments):
-    pass
+    include_sample: bool = Field(
+        default=False,
+        description=(
+            "True when the user wants a sample in the beam: sample_elasticisotr, "
+            "right after the guide, and every module after it then sees only what "
+            "the sample scattered. Leave it false to simulate the beam itself -- "
+            "guide comparisons, capture flux, beam flatness."
+        ),
+    )
 
 
 class _PlotArguments(_FacadeArguments):
@@ -234,21 +242,36 @@ def guide_position(guide: Mapping[str, Any]) -> str:
 
 
 def readings_summary(
-    result: SimulationResult, guide: Mapping[str, Any] | None
+    result: SimulationResult,
+    guide: Mapping[str, Any] | None,
+    *,
+    after_sample: bool = False,
 ) -> str | None:
     """The run's readings, led by where they were taken; ``None`` if it has none.
 
     Both run paths append this to their tool message, so the supervisor can
     report the numbers without a log or a monitor file in its context.
+
+    ``after_sample`` is for a run that included the sample. The readings were
+    then taken after it, not at the guide exit, and they describe the neutrons
+    it scattered rather than the beam. The flatness verdict is left out: it
+    judges whether a beam is flat, and the sample has replaced the beam.
     """
-    readings = [
-        sentence
-        for sentence in (capture_flux_summary(result), flatness_summary(result))
-        if sentence
-    ]
+    sentences = (
+        (capture_flux_summary(result),)
+        if after_sample
+        else (capture_flux_summary(result), flatness_summary(result))
+    )
+    readings = [sentence for sentence in sentences if sentence]
     if not readings:
         return None
-    if guide is not None:
+    if after_sample:
+        readings.insert(
+            0,
+            "Measured after the sample, so these readings describe the neutrons "
+            "it scattered, not the beam.",
+        )
+    elif guide is not None:
         readings.insert(0, f"Measured {guide_position(guide)}.")
     return " ".join(readings)
 
@@ -309,7 +332,10 @@ def _configured_arguments(
             + ", ".join(missing)
             + ". Delegate to their specialists before running the simulation."
         )
-    unplanned = sorted(set(stored) - set(planned))
+    # An optional module the plan left out is not refused, only not run: its
+    # configuration is from an earlier plan that included it, and stored
+    # configurations are never removed. Anything else unplanned is a mistake.
+    unplanned = sorted(set(stored) - set(planned) - optional_modules())
     if unplanned:
         raise ValueError(
             "These configurations belong to no planned module: "
@@ -510,12 +536,15 @@ def _select_run(
 PLAN_DESCRIPTION = (
     "Return the VITESS modules this simulation needs, in the order they must be "
     "configured and run. Call this before delegating to any module specialist. "
-    "run_simulation will not run a pipeline that was never planned."
+    "run_simulation will not run a pipeline that was never planned. Set "
+    "include_sample when the user wants a sample in the beam."
 )
 
 
 @tool("plan_simulation", args_schema=_PlanArguments, description=PLAN_DESCRIPTION)
-def plan_simulation(runtime: ToolRuntime[Any, Any]) -> Command:
+def plan_simulation(
+    runtime: ToolRuntime[Any, Any], include_sample: bool = False
+) -> Command:
     """Record the pipeline order, from the catalog, as a checked precondition.
 
     The first-generation simulator held this order in graph edges, and losing
@@ -528,8 +557,12 @@ def plan_simulation(runtime: ToolRuntime[Any, Any]) -> Command:
     reads it back from state. **Both ends are server-owned**, which is the only
     reason comparing them proves anything: a model that skipped this call gets a
     refusal rather than a pipeline in whatever order it happened to delegate.
+
+    ``include_sample`` is the one choice the model makes here, and it chooses
+    only *whether* the sample runs; where it runs -- right after the guide --
+    still comes from the catalog.
     """
-    planned = list(execution_order())
+    planned = list(execution_order(include_optional=include_sample))
     plan_event = SimulationOrderEvent(
         kind="plan", execution_order=tuple(planned)
     ).model_dump(mode="json")
@@ -696,6 +729,7 @@ def build_vitess_tools(
             ModuleConfigurationResult.model_validate(stored_guide).parameters
             if stored_guide
             else None,
+            after_sample=SAMPLE_MODULE in planned,
         )
         if summary:
             message += f" {summary}"

@@ -16,11 +16,13 @@ from pydantic import ValidationError
 from vitess_ai.cli.command import generate_cli_command
 from vitess_ai.modules.catalog import (
     MODULES,
+    SAMPLE_MODULE,
     ModuleSpec,
     UploadSchema,
     cli_executables,
     execution_order,
     module_spec,
+    optional_modules,
     upload_modules,
 )
 from vitess_ai.schema import (
@@ -31,11 +33,21 @@ from vitess_ai.schema import (
 
 
 EXECUTES = ("readin", "guide", "writeout", "monitor1d", "monitor2d", "capture_flux")
+EXECUTES_WITH_SAMPLE = (
+    "readin",
+    "guide",
+    "sample_elasticisotr",
+    "writeout",
+    "monitor1d",
+    "monitor2d",
+    "capture_flux",
+)
 UPLOADS = ("readin", "instrument", "guide")
 CATALOG = (
     "readin",
     "instrument",
     "guide",
+    "sample_elasticisotr",
     "writeout",
     "monitor1d",
     "monitor2d",
@@ -93,8 +105,8 @@ def test_importing_the_catalog_does_not_import_the_agent_framework() -> None:
     assert result.stdout.split() == ["False", "False"]
 
 
-def test_catalog_contains_exactly_the_seven_known_modules() -> None:
-    """An inert eighth row must not disappear between the capability filters."""
+def test_catalog_contains_exactly_the_eight_known_modules() -> None:
+    """An inert ninth row must not disappear between the capability filters."""
     assert tuple(spec.name for spec in MODULES) == CATALOG
 
 
@@ -106,6 +118,7 @@ def test_catalog_models_expose_only_the_decided_data_fields() -> None:
         "order",
         "cli_executable",
         "accepts_upload",
+        "optional",
     )
     assert tuple(UploadSchema.model_fields) == (
         "mode",
@@ -162,7 +175,7 @@ def test_executables_are_basenames_not_paths() -> None:
     assert not offenders, f"catalog rows carrying a path or a shell variable: {offenders}"
 
 
-def test_only_the_six_pipeline_modules_run_a_binary() -> None:
+def test_only_the_seven_pipeline_modules_run_a_binary() -> None:
     """Named rather than blanket.
 
     "Every row has an executable" is false -- `instrument` uploads without
@@ -170,7 +183,7 @@ def test_only_the_six_pipeline_modules_run_a_binary() -> None:
     time it failed. So the set is named.
     """
     assert tuple(sorted(spec.name for spec in MODULES if spec.cli_executable)) == tuple(
-        sorted(EXECUTES)
+        sorted(EXECUTES_WITH_SAMPLE)
     )
     assert module_spec("instrument").cli_executable is None
 
@@ -223,6 +236,18 @@ def test_the_schema_still_owns_each_deleted_filename(
 
 def test_execution_order_is_the_pipeline_order() -> None:
     assert execution_order() == EXECUTES
+
+
+def test_the_sample_runs_only_when_asked_for_and_then_right_after_the_guide() -> None:
+    """A sample replaces the beam, so it cannot join every run as capture_flux did.
+
+    Without the flag the pipeline is exactly what it was before the sample
+    existed, so every guide comparison and flux measurement is unchanged.
+    """
+    assert execution_order(include_optional=True) == EXECUTES_WITH_SAMPLE
+    assert optional_modules() == {SAMPLE_MODULE} == {"sample_elasticisotr"}
+    assert module_spec(SAMPLE_MODULE).optional is True
+    assert [spec.name for spec in MODULES if spec.optional] == [SAMPLE_MODULE]
 
 
 def test_orders_are_unique_so_sorting_needs_no_tiebreak() -> None:

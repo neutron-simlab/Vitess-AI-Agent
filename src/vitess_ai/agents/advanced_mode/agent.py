@@ -92,6 +92,8 @@ Always delegate READIN because it must use the staged input path. Delegate anoth
 module only when the user varies or explicitly customizes it. Do not delegate guide,
 writeout, monitor1d, monitor2d, or capture_flux merely to obtain defaults: trusted matrix
 code creates their exact schema defaults without asking a model to copy parameter values.
+Delegate sample_elasticisotr only when the sweep includes the sample and the user varies
+or customizes it; an untouched sample gets VITESS's default sample the same way.
 
 Every result arrives as a `<specialist_report>` block paired with a
 `<verified_by_server>` block. The second block is written by the server from the actual

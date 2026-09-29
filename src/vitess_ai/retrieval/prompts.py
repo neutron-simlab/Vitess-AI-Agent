@@ -9,7 +9,9 @@ __all__ = [
     "SWEEP_RAG_POLICY",
 ]
 
-_RUNNABLE_MODULES = ", ".join(f"**{name}**" for name in execution_order())
+_RUNNABLE_MODULES = ", ".join(
+    f"**{name}**" for name in execution_order(include_optional=True)
+)
 _DOCUMENTED_ONLY_MODULES = ", ".join(
     f"**{name}**"
     for name in (
