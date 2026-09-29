@@ -9,6 +9,12 @@ class CaptureFluxParameters(VitessParameterModel):
     capture_flux sums the gold-foil capture flux, the integral of phi(lambda)
     weighted by lambda / lambda_ref, over the neutrons hitting the foil, and
     passes every neutron on unchanged.
+
+    The foil defaults to 1 x 1 cm centred on the beam -- the sample the guide
+    choice is judged on -- where capture_flux.c starts with no foil (c:38-48).
+    With no foil the area is taken as 1 cm^2 and the "flux" is the whole beam's
+    intensity; with this one it is the flux on the sample, in n/(s cm^2), and
+    a sweep can rank guides without customizing it.
     """
 
     ReferenceWavelength: Annotated[float, Field(
@@ -21,7 +27,7 @@ class CaptureFluxParameters(VitessParameterModel):
     )]
 
     WindowType: Annotated[VtWindowType, Field(
-        default=VtWindowType.NO_RESTRICTIONS,
+        default=VtWindowType.RECTANGULAR,
         description=("-t [-] Shape of the gold foil: NO_RESTRICTIONS (every neutron is counted "
                     "and the area is taken as 1 cm^2), CIRCULAR or RECTANGULAR."),
         json_schema_extra={"flag": "-t"}
@@ -47,25 +53,25 @@ class CaptureFluxParameters(VitessParameterModel):
     )]
 
     widthmin: Annotated[float, Field(
-        default=0.0,
+        default=-0.5,
         description="-w [cm] Minimal (right) y value of a rectangular foil.",
         json_schema_extra={"flag": "-w"}
     )]
 
     widthmax: Annotated[float, Field(
-        default=0.0,
+        default=0.5,
         description="-W [cm] Maximal (left) y value of a rectangular foil.",
         json_schema_extra={"flag": "-W"}
     )]
 
     heightmin: Annotated[float, Field(
-        default=0.0,
+        default=-0.5,
         description="-h [cm] Minimal (bottom) z value of a rectangular foil.",
         json_schema_extra={"flag": "-h"}
     )]
 
     heightmax: Annotated[float, Field(
-        default=0.0,
+        default=0.5,
         description="-H [cm] Maximal (top) z value of a rectangular foil.",
         json_schema_extra={"flag": "-H"}
     )]
@@ -99,7 +105,9 @@ class CaptureFluxParameters(VitessParameterModel):
         The geometry of the other shape is ignored (c:91-102), and with
         NO_RESTRICTIONS all of it is, while the flux is divided by an assumed
         1 cm^2. A radius set next to NO_RESTRICTIONS is a foil the user asked
-        for and would not get, so it is refused rather than dropped.
+        for and would not get, so it is refused rather than dropped. An ignored
+        field left at 0, capture_flux.c's own start, or at this schema's
+        default was not asked for, so it passes.
         """
         circle = {
             "winradius": self.winradius,
@@ -129,7 +137,11 @@ class CaptureFluxParameters(VitessParameterModel):
         else:
             ignored = {**circle, **rectangle}
 
-        set_but_ignored = [name for name, value in ignored.items() if value != 0.0]
+        fields = type(self).model_fields
+        set_but_ignored = [
+            name for name, value in ignored.items()
+            if value not in (0.0, fields[name].default)
+        ]
         if set_but_ignored:
             raise ValueError(
                 f"{', '.join(set_but_ignored)} would be ignored with WindowType "

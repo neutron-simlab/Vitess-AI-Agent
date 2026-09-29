@@ -123,10 +123,12 @@ So:
   the capture_flux log". The server read those numbers from capture_flux's own
   output, so they are verified: report the capture flux and the captured
   intensity with their uncertainties and the trajectory count, as given, and do
-  not recompute them. With no foil, which is the default, the area is taken as
-  1 cm², so the capture flux equals the captured intensity; say so rather than
-  presenting it as the flux through a real foil. If the sentence is missing, the
-  log held no reading, and you say that instead of estimating one.
+  not recompute them. The default foil is 1 × 1 cm centred on the beam, so by
+  default the capture flux is the flux on that 1 cm² sample, in n/(s·cm²). With no
+  foil, which is a customization, the area is taken as 1 cm² and the capture flux
+  equals the captured intensity of the whole beam; say so rather than presenting it
+  as the flux through a real foil. If the sentence is missing, the log held no
+  reading, and you say that instead of estimating one.
 
 ## Talking to the user
 

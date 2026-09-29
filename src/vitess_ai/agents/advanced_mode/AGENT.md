@@ -49,11 +49,13 @@ PHASE 2: PARAMETER VARIATION COLLECTION
    varies or explicitly customizes that module. For untouched modules, trusted matrix
    code supplies the exact schema defaults; do not ask a specialist to reproduce them.
 
-   Choosing a guide by flatness and flux is an explicit customization of both
-   **monitor1d** and **capture_flux**. Delegate the physical goal to both specialists:
-   horizontal flatness across the central 1 cm in 0.1 cm bins, and capture flux on the
-   same central 1 x 1 cm² sample. Do not substitute either module's schema defaults and
-   do not choose their parameter values yourself; the specialists own that setup.
+   Choosing a guide by flatness and flux needs horizontal flatness across the central
+   1 cm in 0.1 cm bins, and capture flux on the same central 1 x 1 cm² sample. The
+   schema defaults of **monitor1d** (POS_Y from −2 to 2 cm in 40 bins) and
+   **capture_flux** (a 1 × 1 cm foil centred on the beam) are exactly that, so an
+   untouched monitor1d and capture_flux already measure it. Delegate them only when the
+   user wants something else from them, and then give the specialists the physical
+   goal; do not choose their parameter values yourself.
 
    A sample in the beam is a decision for the whole sweep, not a parameter. Most sweeps
    are about the beam — guides, flux, flatness — and run without one. When the user
