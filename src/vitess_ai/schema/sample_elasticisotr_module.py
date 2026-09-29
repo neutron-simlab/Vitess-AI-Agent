@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated
 from pydantic import Field, model_validator
 from vitess_ai.schema.base import VitessParameterModel, VtSmplGeom
 
@@ -12,10 +12,16 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     probability, the absorption along its path and the solid angle fraction.
 
     Field names are the C globals; the components of a C vector carry X/Y/Z
-    or the file's own Hor/Vert. Defaults are the C initialisers, which do not
-    run on their own: with no geometry the module stops, and with no
-    scattering coefficient or range every neutron gets weight 0. A runnable
-    starting point is `SHIPPED_DEFAULT` below.
+    or the file's own Hor/Vert.
+
+    The defaults are VITESS's own default sample, not the C initialisers:
+    FILES/sample_files/sampleelastizotr_default.iso, the file the VITESS GUI
+    loads for this module, given as flags. The C initialisers do not run -- with
+    no geometry the module stops, and with no scattering coefficient or range
+    every neutron gets weight 0. The file's sample is a 3 cm cuboid 50 cm after
+    the module before, with the output frame moved to it. The file holds full
+    scattering ranges (2 and 2 degrees) that the module halves (c:562-563); the
+    flags take half-ranges, hence 1.0 and 1.0.
 
     Line references are to sample_elasticisotr.c at VITESS 6bd0e006. Every
     rule below was measured on that binary with VITESS's own module test 1
@@ -52,7 +58,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     eGeom: Annotated[VtSmplGeom, Field(
-        default=VtSmplGeom.VT_NO_GEOM,
+        default=VtSmplGeom.VT_CUBE,
         description=("-G [-] Shape of the sample: VT_CUBE (1), VT_CYL (2), VT_SPHERE (3) or "
                     "VT_HOL_CYL (4). VT_NO_GEOM (0) stops the module."),
         json_schema_extra={"flag": "-G"}
@@ -72,7 +78,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     ScatRangeHor: Annotated[float, Field(
-        default=0.0,
+        default=1.0,
         ge=0,
         description=("-e [deg] Horizontal HALF-range: neutrons are scattered into "
                     "[theta - e, theta + e]. Greater than 0 and at most 180. A parameter "
@@ -81,7 +87,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     ScatRangeVert: Annotated[float, Field(
-        default=0.0,
+        default=1.0,
         ge=0,
         description=("-f [deg] Vertical HALF-range: neutrons are scattered into "
                     "[phi - f, phi + f]. Greater than 0 and less than 90."),
@@ -89,7 +95,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     AbsorptionC: Annotated[float, Field(
-        default=0.0,
+        default=0.197,
         ge=0,
         description=("-m [1/cm/Ang] Macroscopic absorption cross section per Angstrom of "
                     "wavelength: density x absorption cross section, converted from the "
@@ -98,7 +104,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     ScatteringC: Annotated[float, Field(
-        default=0.0,
+        default=0.368,
         ge=0,
         description=("-T [1/cm] Macroscopic total scattering cross section: density x "
                     "scattering cross section. Must be greater than 0."),
@@ -106,7 +112,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     PosSampleX: Annotated[float, Field(
-        default=0.0,
+        default=50.0,
         description=("-x [cm] Sample centre along the beam, in the frame of the module "
                     "before (in this pipeline, from the guide exit)."),
         json_schema_extra={"flag": "-x"}
@@ -125,7 +131,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     Diameter: Annotated[float, Field(
-        default=0.0,
+        default=3.0,
         ge=0,
         description=("-t [cm] Thickness (x) of a cuboid, or the (outer) diameter of a "
                     "cylinder, hollow cylinder or sphere."),
@@ -133,14 +139,14 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     Height: Annotated[float, Field(
-        default=0.0,
+        default=3.0,
         ge=0,
         description="-h [cm] Height (z) of a cuboid, cylinder or hollow cylinder; 0 for a sphere.",
         json_schema_extra={"flag": "-h"}
     )]
 
     Width: Annotated[float, Field(
-        default=0.0,
+        default=3.0,
         ge=0,
         description=("-w [cm] Width (y) of a cuboid, or the inner diameter of a hollow "
                     "cylinder; 0 for a cylinder or a sphere."),
@@ -162,7 +168,7 @@ class SampleElasticIsotrParameters(VitessParameterModel):
     )]
 
     TranslOutX: Annotated[float, Field(
-        default=0.0,
+        default=50.0,
         description=("-X [cm] Origin of the output frame along the beam, in the input frame. "
                     "The modules after the sample measure from here; setting it to the "
                     "sample position puts the origin at the sample."),
@@ -258,7 +264,9 @@ class SampleElasticIsotrParameters(VitessParameterModel):
 
         A cylinder's width, a sphere's height and width, and a sphere's
         orientation angles change nothing (identical output). A value the user
-        gave and would not get is refused, as in capture_flux.
+        gave and would not get is refused, as in capture_flux. An ignored value
+        left at 0 or at its default -- the cuboid's -- was not asked for, so it
+        passes.
         """
         needed = {
             VtSmplGeom.VT_CUBE: ("Diameter", "Height", "Width"),
@@ -283,43 +291,14 @@ class SampleElasticIsotrParameters(VitessParameterModel):
             VtSmplGeom.VT_CYL: ("Width",),
             VtSmplGeom.VT_SPHERE: ("Height", "Width", "AnglSmplHor", "AnglSmplVert"),
         }.get(self.eGeom, ())
-        set_but_ignored = [name for name in ignored if getattr(self, name) != 0.0]
+        fields = type(self).model_fields
+        set_but_ignored = [
+            name for name in ignored
+            if getattr(self, name) not in (0.0, fields[name].default)
+        ]
         if set_but_ignored:
             raise ValueError(
                 f"{', '.join(set_but_ignored)} would be ignored for a {self.eGeom.name} "
                 "sample; set them to 0 or choose the shape they belong to"
             )
         return self
-
-
-#: VITESS's own default sample: FILES/sample_files/sampleelastizotr_default.iso,
-#: the file the VITESS GUI loads for this module, given as flags. The file
-#: holds full scattering ranges (2 and 2 degrees) that the module halves
-#: (c:562-563); the flags take half-ranges, hence 1.0 and 1.0. The Default
-#: setup records exactly this; it is not the schema default because the C
-#: initialisers above are the schema defaults.
-SHIPPED_DEFAULT: dict[str, Any] = {
-    "pSmplFileName": "sampleelastizotr_default.iso",
-    "Repetition": 1,
-    "iColor": -1,
-    "eGeom": VtSmplGeom.VT_CUBE,
-    "ScatMainHor": 0.0,
-    "ScatMainVert": 0.0,
-    "ScatRangeHor": 1.0,
-    "ScatRangeVert": 1.0,
-    "AbsorptionC": 0.197,
-    "ScatteringC": 0.368,
-    "PosSampleX": 50.0,
-    "PosSampleY": 0.0,
-    "PosSampleZ": 0.0,
-    "Diameter": 3.0,
-    "Height": 3.0,
-    "Width": 3.0,
-    "AnglSmplHor": 0.0,
-    "AnglSmplVert": 0.0,
-    "TranslOutX": 50.0,
-    "TranslOutY": 0.0,
-    "TranslOutZ": 0.0,
-    "AnglOutHor": 0.0,
-    "AnglOutVert": 0.0,
-}

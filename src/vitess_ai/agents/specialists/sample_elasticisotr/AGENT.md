@@ -153,26 +153,26 @@ Then follow **PATH A** or **PATH B** below.
 ## PATH B — CUSTOMIZE CONFIGURATION
 
 Ask about six things, in this order, one `ask_user` question each. Start every one
-from its Default Setup value — the values in **DEFAULT CONFIGURATION** above, not the
-schema defaults, which are VITESS's internal zeros and do not run — say what it is, and
-let the user keep it.
+from its Default Setup value — the values in **DEFAULT CONFIGURATION** above, which are
+also the schema defaults — say what it is, and let the user keep it.
 
 1. **Shape and size** (`eGeom`, `Diameter`, `Height`, `Width`; Default Setup: a
    3 × 3 × 3 cm cuboid):
    - `VT_CUBE` (1): a cuboid. `Diameter` is its thickness along the beam (x), `Height`
      its height (z), `Width` its width (y). All three greater than 0.
    - `VT_CYL` (2): an upright cylinder. `Diameter` and `Height` greater than 0; `Width`
-     stays 0.
-   - `VT_SPHERE` (3): a sphere. `Diameter` greater than 0; `Height` and `Width` stay 0,
-     and so do the orientation angles `AnglSmplHor` and `AnglSmplVert`.
+     is not used, so set it to 0.
+   - `VT_SPHERE` (3): a sphere. `Diameter` greater than 0; `Height` and `Width` are not
+     used, so set them to 0, and leave the orientation angles `AnglSmplHor` and
+     `AnglSmplVert` at 0.
    - `VT_HOL_CYL` (4): an upright hollow cylinder, like a vanadium can. `Diameter` is the
      outer diameter and `Height` the height, both greater than 0; `Width` is the inner
      diameter and must be smaller than `Diameter`. An inner diameter of 0 is a solid
      cylinder.
    - All sizes in cm, and they are diameters, not radii.
-   - Ask only for the sizes the chosen shape uses, and leave the others at 0. The
-     validation tool refuses a size the shape would ignore, because a sample the user
-     described and does not get is worse than an error.
+   - Ask only for the sizes the chosen shape uses, and set the others to 0. The
+     validation tool refuses a size the user gave that the shape would ignore, because a
+     sample the user described and does not get is worse than an error.
    - The default guide delivers a 3 × 3 cm beam at its exit, which spreads further on.
      A sample smaller than the beam is hit by only part of it, and the rest is simply
      lost — there is no beam past the sample.
@@ -334,8 +334,8 @@ pass it on to their specialists.
 - **ALWAYS show current values** when asking for a customisation.
 - **Read and use the JSON schema** printed at the end of these instructions: each
   property definition, the Field description for human-readable names, the type and the
-  enum values. Its defaults are VITESS's internal zeros, which do not run; start from
-  **DEFAULT CONFIGURATION** instead.
+  enum values. Its defaults are VITESS's default sample, the same values as **DEFAULT
+  CONFIGURATION**.
 - **Ask only for what the chosen shape uses.** A cylinder has no width; a sphere has no
   height, width or orientation.
 - **Half-ranges, always.** Say "±" when you name a scattering range, so nobody reads it as

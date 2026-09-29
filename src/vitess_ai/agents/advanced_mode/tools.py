@@ -48,7 +48,6 @@ from vitess_ai.modules.parameters import parameter_model
 from vitess_ai.run import InternalSimulationRequest, VitessGateway
 from vitess_ai.schema import CaptureFluxParameters
 from vitess_ai.schema.base import VtWindowType
-from vitess_ai.schema.sample_elasticisotr_module import SHIPPED_DEFAULT
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
@@ -70,14 +69,10 @@ __all__ = ["MAX_SWEEP_RUNS", "build_batch_tools", "describe_module_parameters"]
 MATRIX_FILENAME = "simulation_matrix.json"
 
 # READIN always needs a staged source path and therefore cannot be constructed
-# from its schema defaults. These five modules have complete, runnable defaults.
+# from its schema defaults. These six modules have complete, runnable defaults.
 AUTO_DEFAULT_MODULES = frozenset(
-    {"guide", "writeout", "monitor1d", "monitor2d", "capture_flux"}
+    {"guide", "sample_elasticisotr", "writeout", "monitor1d", "monitor2d", "capture_flux"}
 )
-# The sample is not among them: its schema defaults are the C initialisers,
-# which have no shape and scatter nothing. When a sweep includes it untouched,
-# it gets VITESS's own default sample instead -- what its specialist's Default
-# setup records, and still written by code rather than by the model.
 
 
 def _enum_type(annotation: Any) -> type[Enum] | None:
@@ -222,7 +217,7 @@ def _variants(
     required = [
         module
         for module in missing
-        if module not in AUTO_DEFAULT_MODULES and module != SAMPLE_MODULE
+        if module not in AUTO_DEFAULT_MODULES
     ]
     if required:
         raise ValueError(
@@ -239,10 +234,9 @@ def _variants(
     for module in planned:
         if module not in stored:
             model = parameter_model(module)
-            starting_point = SHIPPED_DEFAULT if module == SAMPLE_MODULE else {}
             variants[module] = [
                 validate_module_parameters(
-                    dict(starting_point),
+                    {},
                     module=module,
                     model=model,
                     schema_version=module_schema_version(model),

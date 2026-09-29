@@ -35,7 +35,6 @@ from vitess_ai.run import VitessGateway
 from vitess_ai.schema import SampleElasticIsotrParameters
 from vitess_ai.schema.base import VtSmplGeom
 from vitess_ai.schema.module_result import ModuleConfigurationResult
-from vitess_ai.schema.sample_elasticisotr_module import SHIPPED_DEFAULT
 from vitess_ai.schema.simulation_plan import SimulationPlanEntry
 from vitess_ai.state import SimulationOrderEvent
 from vitess_ai.tools import build_vitess_tools, plan_simulation
@@ -73,10 +72,6 @@ def artifact_store(tmp_path: Path):
     set_artifact_store_for_tests(None)
 
 
-def _shipped(**changes: Any) -> dict[str, Any]:
-    return {**SHIPPED_DEFAULT, **changes}
-
-
 def _flags(arguments: list[str]) -> dict[str, str]:
     return {argument[:2]: argument[2:] for argument in arguments}
 
@@ -97,21 +92,14 @@ def test_every_flag_the_c_module_reads_is_a_field_and_no_other() -> None:
     assert len(SampleElasticIsotrParameters.model_fields) == 23
 
 
-def test_the_schema_defaults_are_the_c_initialisers_and_do_not_run() -> None:
-    """c:53-70. No shape and no scattering: VITESS stops, or scatters nothing."""
-    initialisers = SampleElasticIsotrParameters.model_construct()
-
-    assert initialisers.eGeom == VtSmplGeom.VT_NO_GEOM
-    assert initialisers.ScatteringC == 0.0
-    assert (initialisers.ScatRangeHor, initialisers.ScatRangeVert) == (0.0, 0.0)
-    with pytest.raises(ValidationError, match="eGeom must name a shape"):
-        SampleElasticIsotrParameters()
-
-
-def test_vitess_s_default_sample_is_its_shipped_file_given_as_flags() -> None:
+def test_the_schema_defaults_are_vitess_s_default_sample_given_as_flags() -> None:
     """FILES/sample_files/sampleelastizotr_default.iso, whose full ranges 2 and 2
-    the module halves (c:562-563) -- so the flags carry 1 and 1."""
-    arguments = parameters_to_arguments(SampleElasticIsotrParameters(**SHIPPED_DEFAULT))
+    the module halves (c:562-563) -- so the flags carry 1 and 1.
+
+    Not the C initialisers (c:53-70): with no shape and no scattering those
+    stop VITESS or scatter nothing.
+    """
+    arguments = parameters_to_arguments(SampleElasticIsotrParameters())
 
     assert arguments == [
         "-Psampleelastizotr_default.iso", "-A1", "-c-1", "-G1",
@@ -140,6 +128,7 @@ def test_vitess_s_own_module_test_is_the_command_line_that_was_measured() -> Non
             Diameter=2,
             Height=2,
             Width=1.8,
+            TranslOutX=0,
         )
     )
     measured = "-A2 -c-1 -E0 -F0 -e45 -f12.5 -T0.309 -m0.103 -x5 -y0 -z0 -o0 -O0 " \
@@ -173,10 +162,7 @@ def test_vitess_s_own_module_test_is_the_command_line_that_was_measured() -> Non
         ({"eGeom": VtSmplGeom.VT_HOL_CYL, "Width": 3.0}, "inner diameter"),
         ({"eGeom": VtSmplGeom.VT_HOL_CYL, "Width": 3.5}, "inner diameter"),
         ({"eGeom": VtSmplGeom.VT_CYL, "Width": 0.7}, "Width would be ignored"),
-        (
-            {"eGeom": VtSmplGeom.VT_SPHERE, "Width": 0.0},
-            "Height would be ignored",
-        ),
+        ({"eGeom": VtSmplGeom.VT_SPHERE, "Height": 1.0}, "Height would be ignored"),
         (
             {"eGeom": VtSmplGeom.VT_SPHERE, "Height": 0.0, "Width": 0.0, "AnglSmplHor": 30},
             "AnglSmplHor would be ignored",
@@ -191,7 +177,7 @@ def test_a_sample_vitess_would_misread_is_refused(
     changes: dict[str, Any], message: str
 ) -> None:
     with pytest.raises(ValidationError, match=message):
-        SampleElasticIsotrParameters(**_shipped(**changes))
+        SampleElasticIsotrParameters(**changes)
 
 
 @pytest.mark.parametrize(
@@ -205,30 +191,19 @@ def test_a_sample_vitess_would_misread_is_refused(
         {"eGeom": VtSmplGeom.VT_HOL_CYL, "Width": 2.9},
         {"eGeom": VtSmplGeom.VT_CYL, "Width": 0.0},
         {"eGeom": VtSmplGeom.VT_SPHERE, "Height": 0.0, "Width": 0.0},
+        # The cuboid's sizes left at their defaults are not sizes anyone asked for.
+        {"eGeom": VtSmplGeom.VT_CYL},
+        {"eGeom": VtSmplGeom.VT_SPHERE},
         {"iColor": 0},
     ],
 )
 def test_the_neighbouring_valid_sample_is_accepted(changes: dict[str, Any]) -> None:
-    SampleElasticIsotrParameters(**_shipped(**changes))
+    SampleElasticIsotrParameters(**changes)
 
 
 # ---------------------------------------------------------------------------
 # The specialist's tools
 # ---------------------------------------------------------------------------
-
-
-def test_the_defaults_tool_records_vitess_s_default_sample(tmp_path: Path) -> None:
-    tool = named_tool(sample_tools(project_root=tmp_path), "use_sample_elasticisotr_defaults")
-
-    assert set(tool.args_schema.model_fields) == {"runtime"}
-    command = tool.func(runtime=runtime())
-    recorded = ModuleConfigurationResult.model_validate(
-        command.update["module_results"][SAMPLE_MODULE]
-    )
-
-    assert recorded.parameters == SampleElasticIsotrParameters(
-        **SHIPPED_DEFAULT
-    ).model_dump(mode="json")
 
 
 def test_the_parameter_file_name_must_be_a_name_not_a_path(tmp_path: Path) -> None:
@@ -237,8 +212,8 @@ def test_the_parameter_file_name_must_be_a_name_not_a_path(tmp_path: Path) -> No
     )
 
     with pytest.raises(AssertionError, match="plain file name"):
-        _validated(tool, _shipped(pSmplFileName="../elsewhere/sample.iso"))
-    assert SAMPLE_MODULE in _validated(tool, _shipped(pSmplFileName="my_sample.iso"))
+        _validated(tool, {"pSmplFileName": "../elsewhere/sample.iso"})
+    assert SAMPLE_MODULE in _validated(tool, {"pSmplFileName": "my_sample.iso"})
 
 
 def test_a_sweep_variant_keeps_vitess_s_default_sample_for_what_it_omits(
@@ -251,9 +226,10 @@ def test_a_sweep_variant_keeps_vitess_s_default_sample_for_what_it_omits(
     written = _swept(tool, [{"Diameter": 1.0, "Height": 1.0, "Width": 1.0}])
     (variant,) = written[SAMPLE_MODULE]
 
+    defaults = SampleElasticIsotrParameters()
     assert variant["parameters"]["Diameter"] == 1.0
-    assert variant["parameters"]["ScatteringC"] == SHIPPED_DEFAULT["ScatteringC"]
-    assert variant["parameters"]["PosSampleX"] == SHIPPED_DEFAULT["PosSampleX"]
+    assert variant["parameters"]["ScatteringC"] == defaults.ScatteringC
+    assert variant["parameters"]["PosSampleX"] == defaults.PosSampleX
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +242,7 @@ def _sample_result(tmp_path: Path, **changes: Any) -> dict[str, Any]:
         named_tool(
             sample_tools(project_root=tmp_path), "validate_sample_elasticisotr_parameters"
         ),
-        _shipped(**changes),
+        changes,
     )
 
 
@@ -421,9 +397,7 @@ def test_a_sweep_with_an_untouched_sample_runs_vitess_s_default_sample(
 
     for entry in command.update["simulation_plan"]:
         assert list(entry["modules"]) == WITH_SAMPLE
-        assert entry["modules"][SAMPLE_MODULE]["parameters"] == SampleElasticIsotrParameters(
-            **SHIPPED_DEFAULT
-        ).model_dump(mode="json")
+        assert entry["modules"][SAMPLE_MODULE]["parameters"] == SampleElasticIsotrParameters().model_dump(mode="json")
 
 
 def test_sample_variants_are_left_out_of_a_sweep_without_the_sample(
