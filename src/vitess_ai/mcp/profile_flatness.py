@@ -16,7 +16,7 @@ test is fixed, and every constant below is part of it:
 VITESS is a Monte Carlo simulation (it follows many random neutron paths), so
 every bin has a statistical error (the monitor file's third column). A flat beam
 simulated with too few trajectories has bins 10 % off from noise alone: at the
-schema's default 0.04 cm bins and 10^4 trajectories, the flat test file's worst
+0.04 cm bins (100 over the same range) and 10^4 trajectories, the flat test file's worst
 bin is 15.6 % off. So the verdict allows for each bin's error, two standard
 deviations either way:
 

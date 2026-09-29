@@ -24,7 +24,12 @@ from vitess_ai.agents.specialists.guide.tools import build_sweep_tools as guide_
 from vitess_ai.cli.arguments import parameters_to_arguments
 from vitess_ai.mcp.capture_flux_log import read_capture_flux
 from vitess_ai.mcp.payloads import FlatnessReading, SimulationResult
-from vitess_ai.mcp.profile_flatness import read_flatness
+from vitess_ai.mcp.profile_flatness import (
+    MONITOR_BIN_COUNT,
+    MONITOR_MAX_CM,
+    MONITOR_MIN_CM,
+    read_flatness,
+)
 from vitess_ai.mcp.server import run_pipeline
 from vitess_ai.mcp.settings import ServerSettings
 from vitess_ai.modules.catalog import cli_executables, execution_order
@@ -54,13 +59,6 @@ from doubles import (
 
 DATA = Path(__file__).parent / "data"
 CAPTURE_FLUX_LOG = DATA / "capture_flux-rectangular.log"
-SAMPLE_FOIL = {
-    "WindowType": VtWindowType.RECTANGULAR,
-    "widthmin": -0.5,
-    "widthmax": 0.5,
-    "heightmin": -0.5,
-    "heightmax": 0.5,
-}
 
 
 def _fixture(name: str) -> Path:
@@ -127,6 +125,18 @@ def test_bins_other_than_the_criterion_s_are_not_judged() -> None:
     assert reading.bin_width_cm == pytest.approx(0.04)
     assert reading.worst_deviation is None
     assert reading.median_relative_error is None
+
+
+def test_the_default_1d_monitor_is_the_one_the_criterion_judges() -> None:
+    """So a run nobody customized still gets a verdict instead of "not judged"."""
+    defaults = Monitor1DParameters()
+
+    assert (defaults.eParX, defaults.xMin, defaults.xMax, defaults.nBinsX) == (
+        VtMonPar.POS_Y,
+        MONITOR_MIN_CM,
+        MONITOR_MAX_CM,
+        MONITOR_BIN_COUNT,
+    )
 
 
 def test_the_sample_window_must_not_be_the_monitor_boundary() -> None:
@@ -368,22 +378,23 @@ def _run_sweep(
     tmp_path: Path,
     runs: list[tuple[str, int, str, float]],
     *,
-    sample_foil: bool = True,
+    capture_flux: dict[str, Any] | None = None,
 ) -> str:
     """Plan and run a sweep over guide lengths, one (name, pieces, fixture, flux) per run.
 
     The guide variants are recorded by the real guide sweep tool: 50 cm pieces,
-    so 16 pieces is an 8 m guide.
+    so 16 pieces is an 8 m guide. Every other module keeps its schema defaults
+    unless `capture_flux` gives that module a foil of its own.
     """
     variants = swept_modules(tmp_path)
-    if sample_foil:
+    if capture_flux is not None:
         variants.update(
             _swept(
                 named_tool(
                     capture_flux_sweep(project_root=tmp_path),
                     "validate_capture_flux_variants",
                 ),
-                [SAMPLE_FOIL],
+                [capture_flux],
                 thread_id=THREAD_ID,
             )
         )
@@ -418,6 +429,7 @@ def _run_sweep(
 def test_a_guide_sweep_ends_with_the_flat_runs_ranked_by_capture_flux(
     tmp_path: Path, artifact_store: ArtifactStore
 ) -> None:
+    """Only the guide varies: the default monitor and foil are the criterion's."""
     text = _run_sweep(
         tmp_path,
         [
@@ -469,7 +481,7 @@ def test_flat_runs_are_not_ranked_by_unrestricted_whole_beam_flux(
     text = _run_sweep(
         tmp_path,
         [("guide-10m", 20, "pass", 2.5e9)],
-        sample_foil=False,
+        capture_flux={"WindowType": VtWindowType.NO_RESTRICTIONS},
     )
 
     assert "1. guide-10m" not in text

@@ -59,13 +59,21 @@ def artifact_store(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_the_defaults_are_capture_flux_c_defaults() -> None:
-    """capture_flux.c:38-48: 1.798 A, no foil, every bound 0."""
+def test_the_default_foil_is_the_1_cm_sample_the_guide_choice_uses() -> None:
+    """capture_flux.c:38-48 starts with no foil; the default is the sample instead.
+
+    With no foil the "capture flux" is the whole beam's intensity over an
+    assumed 1 cm^2. The guide choice ranks the flux on a 1 x 1 cm sample, so
+    that is the default foil, and a run with every default measures it.
+    """
     defaults = CaptureFluxParameters()
 
     assert defaults.ReferenceWavelength == 1.798
-    assert defaults.WindowType == VtWindowType.NO_RESTRICTIONS
-    assert parameters_to_arguments(defaults)[:2] == ["-R1.798", "-t0"]
+    assert defaults.WindowType == VtWindowType.RECTANGULAR
+    assert parameters_to_arguments(defaults) == [
+        "-R1.798", "-t2", "-r0.0", "-y0.0", "-z0.0",
+        "-w-0.5", "-W0.5", "-h-0.5", "-H0.5", "-l0.0", "-L0.0",
+    ]
 
 
 def test_a_rectangular_foil_is_the_command_line_vitess_tests_itself_with() -> None:
@@ -96,6 +104,11 @@ def test_a_rectangular_foil_is_the_command_line_vitess_tests_itself_with() -> No
         {"WindowType": 1, "winradius": 0.5},
         {"WindowType": 1, "winradius": 0.5, "ywincenter": 1.0, "zwincenter": -1.0},
         {"WindowType": 2, "widthmin": -0.5, "widthmax": 0.5, "heightmin": -0.5, "heightmax": 0.5},
+        {"WindowType": 2, "widthmin": -3, "widthmax": 3, "heightmin": -3, "heightmax": 3},
+        # The rectangle left at its default is not a foil anyone asked for.
+        {"WindowType": 0},
+        # Nor at 0, capture_flux.c's own start.
+        {"WindowType": 0, "widthmin": 0, "widthmax": 0, "heightmin": 0, "heightmax": 0},
         {"lambdamin": 1.0, "lambdamax": 5.0},
         {"ReferenceWavelength": 0.0},
     ],
@@ -116,7 +129,14 @@ def test_a_complete_foil_or_window_is_accepted(parameters: dict) -> None:
             {"WindowType": 2, "widthmin": -1, "widthmax": 1, "heightmin": 1, "heightmax": 1},
             "heightmin smaller than heightmax",
         ),
-        ({"winradius": 2.0}, "winradius would be ignored with WindowType NO_RESTRICTIONS"),
+        (
+            {"WindowType": 0, "winradius": 2.0},
+            "winradius would be ignored with WindowType NO_RESTRICTIONS",
+        ),
+        (
+            {"WindowType": 0, "widthmax": 2.0},
+            "widthmax would be ignored with WindowType NO_RESTRICTIONS",
+        ),
         (
             {"WindowType": 1, "winradius": 1.0, "widthmax": 2.0},
             "widthmax would be ignored with WindowType CIRCULAR",

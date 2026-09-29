@@ -29,9 +29,11 @@ class Monitor1DParameters(VitessParameterModel):
     
     # Binning configuration
     nBinsX: Annotated[int, Field(
-        default=100,
+        default=40,
         gt=0,
-        description=("-x [-] Number of monitor channels on the x-axis. Must be > 0."),
+        description=("-x [-] Number of monitor channels on the x-axis. Must be > 0. "
+                    "The default 40 gives 0.1 cm bins over -2 to 2 cm, the binning the "
+                    "server's beam-flatness check judges."),
         json_schema_extra={"flag": "-x"}
     )]
     
