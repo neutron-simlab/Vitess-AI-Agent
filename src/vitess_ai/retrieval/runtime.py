@@ -1,13 +1,13 @@
-"""Connecting vitess-ai to the embedded `vitess_rag` index.
+"""Connecting vitess-ai to the `vitess_rag` search index on disk.
 
-Chroma stays, `vitess-rag` stays a submodule, and **core does not learn about
-either** -- the same rule that keeps core away from juena-rag. juena-chatbot
-searches its index over HTTP; this one is a directory on disk. Neither belongs
-in a library that knows what a specialist report is.
+Chroma stays, `vitess-rag` stays a git submodule, and **juena-core does not
+learn about either** -- the same rule that keeps core away from juena-rag.
+juena-chatbot searches its index over HTTP; this one is a folder on disk.
+Neither belongs in core, which is a general library shared by both apps.
 
-Every import of `vitess_rag` is inside a function. Chroma pulls in ONNX and a
-tokenizer, and a deployment that has turned retrieval off should not pay for
-them at import.
+Every import of `vitess_rag` happens inside a function. Chroma loads heavy
+machine-learning libraries (ONNX and a tokenizer), and a setup that has turned
+documentation search off should not pay for loading them.
 """
 
 from __future__ import annotations

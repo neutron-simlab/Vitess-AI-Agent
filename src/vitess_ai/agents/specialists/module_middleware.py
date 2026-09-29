@@ -1,9 +1,9 @@
-"""The hooks that run around a module specialist's model turns.
+"""The hooks that run around a module specialist's model calls.
 
 These are not tools: the model never calls them. `create_agent` runs them
-before or after each model call, or once when the specialist finishes, and
-`build_module_specialist` in `module_specialist.py` decides which ones a
-specialist gets and in what order.
+before or after each call to the model, or once when the specialist finishes,
+and `build_module_specialist` in `module_specialist.py` decides which hooks a
+specialist gets, and in what order.
 """
 
 from __future__ import annotations

@@ -1,12 +1,14 @@
-"""Build the VITESS documentation index. Run once, or after the docs change.
+"""Build the search index for the VITESS docs. Run once, or after the docs change.
 
     uv run python -m vitess_ai.retrieval.bootstrap
 
-Separate from serving on purpose. Indexing sends every documentation chunk to
-the embedding endpoint, which costs time and quota, and a server that did it at
-startup would do it on every restart. The serving process degrades gracefully
-without an index; this explicit indexing command still exits non-zero when the
-requested work fails so automation cannot record a failed build as successful.
+Building the index is kept apart from running the server on purpose. Building
+sends every piece of the documentation to the embedding service (which turns
+text into numbers that can be searched), and that costs time and quota; a server
+that did it at startup would repeat it on every restart. The server still works
+without an index, just without documentation search. This command, on the other
+hand, exits with an error when the build fails, so an automated job cannot
+record a failed build as a success.
 """
 
 from __future__ import annotations

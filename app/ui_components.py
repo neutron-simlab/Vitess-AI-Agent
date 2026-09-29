@@ -1,9 +1,9 @@
-"""Page furniture. Everything that renders a *message* is core's.
+"""The page header and a couple of style rules.
 
-`juena_core.ui.components` owns message, artifact and token rendering, because
-those implement the SSE contract core's server emits. What is left here is the
-header and two style rules -- the parts that are about this product looking
-like itself.
+Drawing chat messages, files the agent produced, and a reply as it streams in
+is done by juena-core (`juena_core.ui.components`), because that code has to
+match what core's server sends. What is left here is what makes this page look
+like VITESS AI Agent: the header and two style rules.
 """
 
 from __future__ import annotations

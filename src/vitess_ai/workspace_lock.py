@@ -1,4 +1,4 @@
-"""Cross-process exclusion between VITESS writers and thread deletion."""
+"""A lock so a conversation's files are never deleted while VITESS is writing them."""
 
 from __future__ import annotations
 

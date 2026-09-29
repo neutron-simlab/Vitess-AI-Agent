@@ -1,10 +1,11 @@
-"""The vitess-ai FastAPI application: core's factory, plus what is VITESS's.
+"""The vitess-ai web API: core's ready-made app, plus the VITESS-specific parts.
 
-The routes, the streaming vocabulary, the lifespans and the identity seam are
-`juena_core.server.service.create_app`'s. What is passed in here is what core
-cannot know: a single local user instead of an institute login, the upload route
-whose files a compiled binary opens, and the note that tells the supervisor
-those files are real paths rather than text it can read.
+The routes, the streaming format, startup and shutdown, and the hook that says
+who the user is all come from `juena_core.server.service.create_app`. What this
+file passes in is what core cannot know: a single local user instead of an
+institute login, the upload route for files a compiled program opens, and a note
+telling the supervisor agent that those files are real file paths, not text it
+can read.
 """
 
 from __future__ import annotations

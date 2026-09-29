@@ -243,6 +243,31 @@ def test_an_unrenamed_conversation_is_labelled_by_its_thread_rather_than_alike()
     assert label == "Chat abcdef12" == full_title
 
 
+def test_renaming_an_unrenamed_conversation_opens_an_empty_field() -> None:
+    """The row reads "Chat abcdef12", so the field must not read "New Chat"."""
+    from juena_core.ui.chat_storage import Chat
+    from streamlit.testing.v1 import AppTest
+
+    class Storage:
+        def get_chat(self, thread_id: str) -> Chat:
+            return Chat(thread_id=thread_id, agent_id="vitess")
+
+    def page() -> None:
+        import streamlit as st
+
+        from app.chat_list import _render_rename_editor
+
+        _render_rename_editor(st.session_state.chat_storage)
+
+    app = AppTest.from_function(page)
+    app.session_state["chat_storage"] = Storage()
+    app.session_state["editing_thread_id"] = "abcdef1234567890"
+    app.run()
+
+    assert not app.exception
+    assert app.text_input[0].value == ""
+
+
 def test_a_long_conversation_name_is_shortened_but_kept_whole_for_the_tooltip() -> None:
     name = "Guide sweep over eGuideShapeY with eight widths"
     label, full_title = chat_label(_Chat("abcdef1234567890", name))
