@@ -1,14 +1,15 @@
-"""Draw a parsed monitor file as a PNG.
+"""Draw a monitor file as a PNG image.
 
-PNG, not interactive Plotly JSON: the application registers the file with the
-same artifact store that already delivers images into the chat, so a plot
-arrives the way every other generated file does -- with a download button and a
-record of who may read it. The first-generation agent returned a Plotly figure
-as JSON in the tool result, which only its own page could render.
+A PNG, not an interactive Plotly chart: the image is registered with the same
+store for generated files that already delivers pictures into the chat, so a
+plot arrives like every other generated file -- with a download button and a
+record of who may see it. The first version sent a Plotly chart as JSON inside
+the tool result, which only its own page could draw.
 
-Matplotlib is used through its object interface with an explicit Agg canvas
-rather than through ``pyplot``. ``pyplot`` keeps a global figure registry that
-leaks between requests in a long-running server, and it wants a display.
+Matplotlib is used directly, drawing into memory with its Agg canvas, rather
+than through ``pyplot``. ``pyplot`` keeps a global list of open figures that
+leaks between requests in a server that runs for a long time, and it expects a
+screen to draw on.
 """
 
 from __future__ import annotations

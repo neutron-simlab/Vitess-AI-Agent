@@ -1,16 +1,14 @@
-"""The staged-file manifest: every slot at once, and what is in it.
+"""The sidebar panel that lists the input files for this conversation.
 
-**This is a status panel with upload controls, not an upload form.** The
-question it exists to answer is *"has read-in got everything it needs?"*, and
-that question is answered by looking rather than by asking the agent. The first
-generation's sidebar showed six upload widgets and nothing about what was
-already there, so the only way to find out was to send a message.
+Its main job is to answer one question at a glance: does the read-in step have
+every file it needs? You can see the answer here instead of asking the agent.
+Each slot also has buttons to add or remove files.
 
-Three slots, not six. `writeout`, `monitor1d` and `monitor2d` were declared as
-uploads under a mode that uploaded nothing: each set an output filename the
-parameter schema already owns, with its own flag and its own default. Those
-rows are gone (03/CP2), and no output filename appears here at all -- the three
-modules collect theirs conversationally, from the schema default.
+There are three slots. The first version had six, but three of those
+(writeout, monitor1d and monitor2d) never uploaded anything -- they only set
+the name of an output file, which each module's settings already decide. So
+they were removed, and those three modules now ask for their output file name
+in the chat.
 """
 
 from __future__ import annotations

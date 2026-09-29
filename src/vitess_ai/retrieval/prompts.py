@@ -1,4 +1,4 @@
-"""Prompt text about documentation retrieval, kept beside the tools it describes."""
+"""Instructions to the model about documentation search, kept next to the tools."""
 
 from vitess_ai.modules.catalog import execution_order
 

@@ -1,17 +1,17 @@
-"""What the five VITESS module specialists have in common.
+"""What the six VITESS module specialists have in common.
 
-Each of the five is an explicit builder in its own package, listing its own
-module, its own parameter model and its own `AGENT.md`. What they share is
-assembly, and it is shared rather than copied because the first-generation
-agent copied it: five `*_params_to_cli` functions that had already drifted, and
-five prompts that repeated the same paragraph with one word changed. Sharing
-the assembly is the opposite of a registry -- nothing here discovers anything,
-and adding a sixth module still means writing a package and adding one line to
+Each one has its own builder in its own package, which names its module, its
+settings model and its own `AGENT.md` prompt. What they share is how they are
+put together, and that is shared rather than copied because the first version
+copied it: five converters to command-line options that had already drifted
+apart, and five prompts that repeated the same paragraph with one word changed.
+Sharing this is not a registry -- nothing here finds anything automatically,
+and adding another module still means writing a package and adding one line to
 `compile_module_specialists`.
 
-This file is the assembly. The pieces it assembles sit beside it:
+This file puts a specialist together. The pieces it uses sit beside it:
 `module_tools.py` holds the tools the model calls, and `module_middleware.py`
-holds the hooks that run around the model's turns.
+holds the hooks that run around the model's calls.
 """
 
 from __future__ import annotations

@@ -1,17 +1,18 @@
-"""Core's client, plus the four upload routes that are this application's.
+"""Core's API client, plus the four file-upload routes only VITESS needs.
 
-`BaseAgentClient` already covers chats, streaming, resume, artifacts and
-interrupts -- the whole SSE contract. What it cannot know is `/files`, because
-staged input files are a VITESS idea: a real path on a shared volume that a
-compiled binary opens. `client_class` is the seam core provides for exactly
-this, and using it keeps the common constructor in one place without teaching
-core which extra endpoints a subclass owns.
+`BaseAgentClient` from juena-core already covers chats, streamed replies,
+resuming a paused chat, generated files and questions to the user. What it
+cannot know about is `/files`, because uploaded input files are a VITESS idea:
+a real file on a shared volume that a compiled program opens. Core's
+`client_class` option exists for exactly this kind of addition, so the shared
+setup code stays in core, and core does not need to know which extra routes a
+subclass adds.
 
-The UI never touches the volume directly. It is a separate process from the
-API -- in production a separate container -- and the only reason a path works
-at all is that both containers mount the same volume at the same place. Going
-through the route is what keeps one definition of which module a file belongs
-to, what may be uploaded, and how big it may be.
+The web page never touches the volume itself. It runs as a separate process
+from the API (a separate container in production), and a file path only works
+at all because both containers mount the same volume at the same place. Going
+through the API keeps one set of rules for which module a file belongs to, what
+may be uploaded and how big it may be.
 """
 
 from __future__ import annotations

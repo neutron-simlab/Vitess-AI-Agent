@@ -1,4 +1,4 @@
-"""VITESS documentation retrieval: an embedded Chroma index over the manual."""
+"""Searching the VITESS manual, using a Chroma search index stored on disk."""
 
 from vitess_ai.retrieval.bootstrap import bootstrap_rag_index
 from vitess_ai.retrieval.prompts import (

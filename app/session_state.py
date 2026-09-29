@@ -1,4 +1,4 @@
-"""Small, testable state transitions for the two-agent Streamlit page."""
+"""Small, tested helpers that pick which conversation and agent the page shows."""
 
 from __future__ import annotations
 

@@ -1,30 +1,30 @@
-"""Read a VITESS monitor data file, in any layout the schema can ask for.
+"""Read a VITESS monitor file, in any of the layouts its settings can produce.
 
-A monitor file is what a simulation is *for*: the 1D and 2D monitors write the
-intensity they recorded, and everything a scientist looks at afterwards comes
-from here.
+A monitor is a virtual detector, and its file is what a simulation is *for*: the
+1D and 2D monitors write the intensity they recorded, and everything a scientist
+looks at afterwards comes from here.
 
-Every layout below was measured against files written by VITESS 3.8's own
-``monitor1D`` and ``monitor2D`` -- the fixtures under ``tests/data/`` are those
-files. That matters, because the format is not one format:
+Every layout below was checked against real files written by VITESS 3.8's own
+``monitor1D`` and ``monitor2D`` programs; the test files under ``tests/data/``
+are those files. This matters because the format is not a single format:
 
-- **1D** is always four columns: bin centre, intensity, error, trajectories.
-- **2D** has five, chosen by ``Monitor2DParameters.format`` (``-F``).
-  ``matrix``, ``matrix_compact`` and ``matrix_integer`` write a row of x bin
-  centres and then one row per y bin -- **intensity only, no error and no
+- **1D** always has four columns: bin centre, intensity, error, trajectories.
+- **2D** has five layouts, chosen by ``Monitor2DParameters.format`` (``-F``).
+  ``matrix``, ``matrix_compact`` and ``matrix_integer`` write one row of x bin
+  centres and then one row per y bin, with **intensity only -- no error and no
   trajectory count**. ``xyz`` and ``xyz_compact`` write one row per cell, five
-  columns wide, keeping all three. The schema's default is ``matrix``.
+  columns wide, and keep all three. The default is ``matrix``.
 
-  ``matrix_integer`` differs again: its numbers are detector *counts* over the
-  source's measurement time, not a count rate in n/s, even though VITESS writes
-  the same "n/s" in the title. This reader returns what the file holds; a
-  caller that mixes the two is comparing counts with rates.
+  ``matrix_integer`` is different again: its numbers are detector *counts* over
+  the source's measurement time, not a rate in n/s, even though VITESS still
+  writes "n/s" in the title. This reader returns what the file holds, so code
+  that mixes the two is comparing counts with rates.
 
-Which is why this is not a port of the first-generation reader. That reader
-assumed the matrix layout, so an ``xyz`` file made it build a ragged array; and
-it was off by one in *both* layouts, taking the first row of data as an axis in
-2D and starting at the second bin in 1D. A dropped first bin is a real
-measurement missing from a plot, and nothing said so.
+That is why this is not a copy of the first version's reader. The old reader
+assumed the matrix layout, so an ``xyz`` file gave it a broken, uneven table. It
+was also off by one in *both* layouts: in 2D it took the first row of data as an
+axis, and in 1D it started at the second bin. A missing first bin is a real
+measurement missing from a plot, and nothing warned about it.
 """
 
 from __future__ import annotations

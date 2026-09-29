@@ -1,27 +1,29 @@
-"""Staged input files, written to the volume the VITESS binaries read.
+"""Uploaded input files, written to the shared volume the VITESS programs read.
 
-**This is not juena-chatbot's staged-input model, and it must not become it.**
-There, an attachment is decoded to text and lives in graph state under
-`/inputs/`, which is right for a model that reads it. Here the reader is
-`read_in`, a compiled binary that opens a path. So an upload is a real file at
+**This is not how juena-chatbot handles uploads, and it must not become that.**
+There, an attachment is decoded to text and kept in the conversation state under
+`/inputs/`, which is right when the model is the reader. Here the reader is
+`read_in`, a compiled program that opens a file path. So an upload is a real
+file at
 
     {project}/{thread_id}/uploads/{module}/{filename}
 
-and the same volume is mounted in the MCP container, which is what makes a path
-written here meaningful there.
+and the same volume is mounted in the MCP container, which is why a path written
+here also works there.
 
-Two consequences follow, and both are load-bearing:
+Two rules follow, and both matter:
 
-*Binary files are fine here and nowhere else.* `.h5` and `.nxs` are HDF5, and
-juena's chat-attachment path decodes with `raw.decode("utf-8-sig")` -- it would
-throw or mangle them into the transcript. This path never decodes; it writes
-bytes. It therefore needs its own policy rather than a shared text validator: a
-size ceiling, an extension allowlist and, for the binary formats, a magic number.
+*Binary files are allowed here and nowhere else.* `.h5` and `.nxs` files are
+HDF5, a binary format, and juena's chat-attachment code decodes uploads as text,
+which would fail on them or garble them into the chat. This code never decodes;
+it writes the bytes as they are. So it needs its own checks instead of the
+shared text checks: a size limit, a list of allowed file endings and, for the
+binary formats, a check of the file's first bytes (its "magic number").
 
-*The destination is asked for, not guessed.* `module` is required. A trajectory
-file landing in the guide slot produces a simulation that runs, completes and is
-physically wrong -- the same class of failure 03/CP1 removed from command
-generation, and not one to reintroduce at the upload step.
+*The target module is asked for, never guessed.* `module` is required. A
+trajectory file put in the guide slot gives a simulation that runs, finishes and
+is physically wrong -- the kind of silent failure already removed from command
+building, and not one to bring back at the upload step.
 """
 
 from __future__ import annotations

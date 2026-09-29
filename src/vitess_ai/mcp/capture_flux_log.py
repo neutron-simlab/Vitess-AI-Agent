@@ -1,16 +1,16 @@
 """Read capture_flux's result out of the simulation log.
 
 capture_flux writes no file of its own. Its whole result is three lines in its
-log (capture_flux.c:166,172-173), which `postprocess_logs` concatenates into
-``result.txt`` with every other module's log:
+log, which `postprocess_logs` joins into ``result.txt`` together with every
+other module's log:
 
     Reference wavelength:        1.798 A
     Captured intensity  :    2.485e+11 +/-    2.744e+09 n/s       by      10000 trajectories
     Capture flux        :    2.485e+11 +/-    2.744e+09 n/(s*cm^2)
 
-The server reads them here, where the file is, and returns them typed, so the
-number reaches the conversation without the model reading a log. The fixtures
-in ``tests/data/capture_flux-*.log`` are real VITESS 3.8 output.
+The server reads them here, where the file is, and returns them as typed values,
+so the numbers reach the conversation without the model having to read a log.
+The test files ``tests/data/capture_flux-*.log`` are real VITESS 3.8 output.
 """
 
 from __future__ import annotations

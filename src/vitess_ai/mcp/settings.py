@@ -1,13 +1,14 @@
-"""Where the MCP server finds VITESS and where it is allowed to write.
+"""Where the MCP server finds VITESS, and where it is allowed to write.
 
-Two paths and a listening address, read from the environment once at startup
-and then frozen. Both paths are also mount points in ``docker-compose.yml``,
-which is the only place they are set in a real deployment.
+Two folders, a listening address and a time limit, read from environment
+variables once at startup and then fixed. Both folders are also mount points in
+``docker-compose.yml``, which is the only place they are set in a real
+deployment.
 
-Deliberately not `juena_core.config`: this process runs no agent, and core's
-settings carry provider keys, a database URL and an artifact root that mean
-nothing here. Reading four variables directly is smaller than the seam that
-would share them.
+This deliberately does not use `juena_core.config`: this process runs no agent,
+and core's settings hold model provider keys, a database address and a folder
+for generated files, none of which mean anything here. Reading five variables
+directly is simpler than the plumbing it would take to share them.
 """
 
 from __future__ import annotations

@@ -1,30 +1,27 @@
-"""Turn one validated parameter model into the VITESS arguments it runs as.
+"""Turn one module's checked settings into the options VITESS runs with.
 
-The first-generation agent had five of these -- `readin_params_to_cli`,
-`guide_params_to_cli`, `writeout_params_to_cli` and one per monitor -- and they
-had already drifted apart: only writeout converted booleans to ``1``/``0``,
-only the monitors skipped a field whose flag was missing, and only read-in
-understood a field that carries one flag per list element. A parameter that
-moved between modules would therefore be spelled differently depending on which
-copy happened to convert it.
+The first version had five of these converters, one per module, and they had
+already drifted apart: only writeout wrote true/false as ``1``/``0``, only the
+monitors skipped a setting that had no flag (its command-line option), and only
+read-in handled a setting that needs one flag per list item. So the same setting
+could come out spelled differently, depending on which copy converted it.
 
-So there is one function, and it handles the three shapes the five schemas
-actually contain -- measured, not guessed:
+Now there is one function. It handles the three shapes the module settings
+schemas actually contain (checked against the schemas, not guessed):
 
 ======================  ===========================================
 ``sInputFileName``      a list whose flag is really three flags,
-``Weight``              ``"-A -B -D"``, one per element position
-``output_flags``        a nested model whose fields all share ``-c``
-``filter_limits``       a nested model whose fields each have their own
+``Weight``              ``"-A -B -D"``, one per position in the list
+``output_flags``        a group of settings that all share ``-c``
+``filter_limits``       a group of settings, each with its own flag
 everything else         one flag, one value
 ======================  ===========================================
 
-**A field with no flag raises.** The monitor converters skipped it with a
-comment explaining that a bare value would otherwise land in the command; the
-result is that a parameter the user asked for is silently absent from the
-simulation, which is 03/CP1's defect wearing different clothes. 03/CP0's flag
-test means this cannot happen without an edit to the schema, and if someone
-makes that edit the failure should be a loud one.
+**A setting with no flag is an error.** The old monitor converters quietly
+skipped it, so a setting the user asked for was simply missing from the
+simulation. A test already checks that every setting in the schemas has a flag,
+so this can only happen after someone edits a schema -- and then it should fail
+loudly.
 """
 
 from __future__ import annotations

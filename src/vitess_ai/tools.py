@@ -1,4 +1,4 @@
-"""Model-safe façade tools for the raw VITESS MCP service."""
+"""The tools the model may use, which call the raw VITESS tools on its behalf."""
 
 from __future__ import annotations
 

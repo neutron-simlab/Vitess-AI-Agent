@@ -1,24 +1,24 @@
 """How the application reaches the VITESS MCP server.
 
-The other half of this package: :mod:`vitess_ai.mcp.server` runs inside the
-``vitess-mcp`` container, and this module runs inside the application. They
-share the payload models and nothing else.
+This is the other half of this package: :mod:`vitess_ai.mcp.server` runs inside
+the ``vitess-mcp`` container, and this file runs inside the application. They
+share the data shapes in ``payloads`` and nothing else.
 
-**Discovery succeeds or construction fails.** juena-chatbot's Context7 does the
-opposite -- an unreachable optional server means one capability fewer -- and the
-difference is deliberate: without VITESS execution there is no product here, so
-an agent built with the tools missing would be a worse outcome than a container
-that refuses to start. Compose already gates this service on the MCP health
-route, so the normal case is that the server is up before anything asks.
+**Either the server's tools are found, or the app refuses to start.**
+juena-chatbot does the opposite for Context7 -- if that optional server cannot
+be reached, the app simply has one feature fewer -- and the difference is on
+purpose: without running VITESS there is no product here, so an agent built
+without those tools would be worse than a container that refuses to start.
+Docker Compose already starts this service only after the MCP server passes its
+health check, so normally the server is up before anything asks.
 
-There is no third option. Registering the tools anyway is not implementable:
-discovery is how their schemas are obtained, so there is nothing to register
-when it fails.
+There is no middle option. Adding the tools anyway is not possible: asking the
+server for its tools is how their descriptions are obtained, so when that fails
+there is nothing to add.
 
-``langchain.mcp`` is imported in exactly one place in the stack --
-``juena_core.mcp`` -- and this module goes through it. That is why a beta
-namespace moving is one module to fix rather than a search across two
-applications.
+``langchain.mcp`` is imported in exactly one place in the whole stack --
+``juena_core.mcp`` -- and this file goes through it. So if that beta package
+moves, one file needs fixing rather than a search across two applications.
 """
 
 from __future__ import annotations

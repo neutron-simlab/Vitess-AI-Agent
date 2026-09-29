@@ -1,33 +1,37 @@
-"""Assemble the VITESS advanced-mode sweep agent.
+"""Put together the VITESS advanced-mode agent, which runs parameter sweeps.
 
-**Two registered top-level agents, not one supervisor with two specialists.** `vitess`
-and `advanced_mode` differ in *interaction model*, not expertise: one is a guided
-conversation that calls `ask_user`, the other a long unattended sweep. A supervisor
-able to delegate to `advanced_mode` would run a forty-minute batch inside a tool call
-tied to the HTTP connection -- which is precisely the problem juena's background
-research subsystem exists to solve and which v2 is deliberately not inheriting. Two
-agent ids keep them on separate threads with separate checkpoints, and core's
-`/{agent_id}/stream` already takes the id.
+**Two separate top-level agents, not one supervisor with two helpers.** `vitess`
+and `advanced_mode` differ in *how they work with the user*, not in what they
+know: one is a guided conversation that asks questions with `ask_user`, the
+other a long sweep that runs unattended. If the supervisor could hand work to
+`advanced_mode`, a forty-minute batch would run inside a single tool call, tied
+to the open HTTP connection -- exactly the problem juena's background research
+feature exists to solve, and one this version deliberately does not take on.
+Two agent ids keep them in separate conversations with separate saved state,
+and core's `/{agent_id}/stream` route already takes the id.
 
-What is shared is everything below the interaction: the same five module specialists
-(compiled again, unattended), the same validation, the same MCP gateway, the same
-artifact store and the same `<verified_by_server>` block.
+Everything below that level is shared: the same six module specialists
+(compiled again to run unattended), the same checks, the same connection to the
+MCP server, the same store for generated files and the same
+`<verified_by_server>` block.
 
-Three things the first-generation agent did that this does not:
+Three things the first version did that this does not:
 
-- `InMemorySaver` and `restart_with_new_config(clear_state=True)`. Replacing the saver
-  is meaningless against a shared Postgres checkpointer, and it was the mechanism that
-  wiped conversation state for **every** user.
+- Throwing away and replacing its conversation memory (`InMemorySaver` and
+  `restart_with_new_config(clear_state=True)`). With one shared Postgres store
+  for all conversations, replacing it makes no sense, and it was what wiped the
+  conversation state of **every** user.
 - `DynamicModelMiddleware`, which core replaced with `RuntimeModelMiddleware`.
-- A `FilesystemBackend` rooted at the whole configured project path, so one
-  conversation could read another's files. **No project-filesystem route is mounted
-  here**: the sweep reads its inputs through `inspect_thread_folders`, which is already
-  scoped to one thread by the MCP server, and the guided agent mounts none either.
-  Core still supplies its normal virtual routes for per-user memory and read-only
-  findings; neither route exposes `/data/projects`. A per-thread project route would
-  have to be swapped at invocation, since the thread is not known when the graph is
-  built, and giving one of the two agents a project filesystem the other lacks is an
-  asymmetry nothing here needs.
+- File access (`FilesystemBackend`) over the whole project folder, so one
+  conversation could read another's files. **No project folder is exposed to
+  the agent here**: the sweep reads its inputs through `inspect_thread_folders`,
+  which the MCP server already limits to one conversation, and the guided agent
+  has no project folder either. Core still gives both agents its usual virtual
+  folders for per-user memory and read-only findings; neither exposes
+  `/data/projects`. A per-conversation project folder would have to be swapped
+  in on every call, because the conversation is not known when the agent is
+  built, and giving one of the two agents a project folder the other lacks is a
+  difference nothing here needs.
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
-"""Starter questions for an empty conversation.
+"""Starter questions shown in an empty conversation.
 
-Written as questions a neutron scientist would actually open with, not as
-feature labels. Each one lands the user in a different part of the system --
-a guided run, a sweep, a documentation question -- so the first click also
-teaches what the two agents are for.
+They are written the way a neutron scientist would actually start, not as a
+list of features. Each one leads somewhere different -- a guided run, a
+parameter sweep, a question about the documentation -- so the first click also
+shows what each of the two agents is for.
 """
 
 from __future__ import annotations

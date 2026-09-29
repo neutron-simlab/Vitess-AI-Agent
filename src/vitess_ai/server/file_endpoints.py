@@ -1,15 +1,15 @@
-"""The one HTTP route staged VITESS inputs arrive through.
+"""The one web route that uploaded VITESS input files arrive through.
 
-The sidebar's per-module control posts here. When a specialist needs a file,
-`ask_user` pauses the conversation while the user uploads through that same
-sidebar and then answers the waiting card. Core's clarification reply is text;
-pretending the card itself carries binary bytes would create a second upload
-protocol with no structured module destination.
+The upload slots in the sidebar send files here. When a specialist needs a
+file, `ask_user` pauses the conversation while the user uploads it in that same
+sidebar, and then the user answers the waiting question card. Core's answer to a
+question is text only; pretending the card could carry the file itself would
+create a second way to upload, with no clear module to put the file in.
 
-Ownership is checked against the chat rather than against the directory. A
-thread id the caller does not own must 404 whether or not anything is staged on
-it -- otherwise the reply distinguishes "not yours" from "nothing there", which
-is a thread-id oracle.
+Ownership is checked against the chat, not against the folder. A conversation
+the caller does not own must get "404 not found" whether or not any files are
+uploaded for it. Otherwise the two different answers ("not yours" versus
+"nothing there") would let someone probe which conversation ids exist.
 """
 
 from __future__ import annotations
