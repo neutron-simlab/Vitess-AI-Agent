@@ -39,7 +39,7 @@ from vitess_ai.mcp.profile_flatness import (
 )
 from vitess_ai.modules.catalog import SAMPLE_MODULE, execution_order, optional_modules
 from vitess_ai.modules.parameters import parameter_model
-from vitess_ai.schema import GuideParameters
+from vitess_ai.schema import GuideParameters, SampleElasticIsotrParameters
 from vitess_ai.schema.base import VtGdeShape
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
@@ -245,31 +245,41 @@ def readings_summary(
     result: SimulationResult,
     guide: Mapping[str, Any] | None,
     *,
-    after_sample: bool = False,
+    sample: Mapping[str, Any] | None = None,
 ) -> str | None:
     """The run's readings, led by where they were taken; ``None`` if it has none.
 
     Both run paths append this to their tool message, so the supervisor can
     report the numbers without a log or a monitor file in its context.
 
-    ``after_sample`` is for a run that included the sample. The readings were
-    then taken after it, not at the guide exit, and they describe the neutrons
-    it scattered rather than the beam. The flatness verdict is left out: it
-    judges whether a beam is flat, and the sample has replaced the beam.
+    ``sample`` is the sample's validated parameters, for a run that included
+    it. The readings were then taken after it, not at the guide exit, and what
+    they describe depends on its colour filter. With ``iColor`` -1 it scatters
+    every neutron that hits it and lets none through unscattered. With a colour
+    it scatters only that colour, and every other colour passes through
+    unscattered -- measured: colour 1 against VITESS's colour-0 test beam
+    passed all 1000 trajectories straight on. The flatness verdict is left out
+    either way: it judges a beam, and what arrives is no longer only the beam.
     """
     sentences = (
         (capture_flux_summary(result),)
-        if after_sample
+        if sample is not None
         else (capture_flux_summary(result), flatness_summary(result))
     )
     readings = [sentence for sentence in sentences if sentence]
     if not readings:
         return None
-    if after_sample:
+    if sample is not None:
+        colour = SampleElasticIsotrParameters(**sample).iColor
         readings.insert(
             0,
-            "Measured after the sample, so these readings describe the neutrons "
-            "it scattered, not the beam.",
+            "Measured after the sample, which scattered every neutron that hit it "
+            "and let none through unscattered, so these readings describe "
+            "scattered neutrons, not the beam."
+            if colour == -1
+            else f"Measured after the sample, which scattered only colour {colour} "
+            "neutrons; every other colour passed through unscattered, so these "
+            "readings can include unscattered beam as well as scattered neutrons.",
         )
     elif guide is not None:
         readings.insert(0, f"Measured {guide_position(guide)}.")
@@ -723,13 +733,16 @@ def build_vitess_tools(
             f"VITESS {display_name!r}: {outcome.result.message}. "
             f"Server evidence: {module_summary or 'no module process started'}."
         )
-        stored_guide = (state_mapping(runtime).get("module_results") or {}).get("guide")
+        stored = state_mapping(runtime).get("module_results") or {}
+        stored_guide = stored.get("guide")
         summary = readings_summary(
             outcome.result,
             ModuleConfigurationResult.model_validate(stored_guide).parameters
             if stored_guide
             else None,
-            after_sample=SAMPLE_MODULE in planned,
+            sample=ModuleConfigurationResult.model_validate(stored[SAMPLE_MODULE]).parameters
+            if SAMPLE_MODULE in planned
+            else None,
         )
         if summary:
             message += f" {summary}"

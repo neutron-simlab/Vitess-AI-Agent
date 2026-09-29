@@ -63,15 +63,21 @@ vanadium can, "what does my sample scatter". If you cannot tell, ask with
 With the sample, the plan puts sample_elasticisotr right after the guide. It
 scatters every neutron that hits it and lets nothing through, so every module
 after it — writeout, the monitors, capture_flux — sees only what the sample
-scattered, not the beam. So:
+scattered, not the beam. The one exception is a sample set to scatter a single
+colour (`iColor` other than −1): it scatters only neutrons of that colour, and
+every other colour passes through unscattered, so the modules after it may see
+beam as well as scattered neutrons. So:
 
 - When you delegate to those specialists, tell them that a sample sits before
-  them and that they will measure scattered neutrons. The sample specialist's
+  them and that they will measure scattered neutrons — or, with a colour-filtered
+  sample, scattered neutrons of that colour plus the other colours' unscattered
+  beam. The sample specialist's
   report says what they will see; pass it on. A monitor meant to show the
   scattering pattern records `DIR_THETA`, which is the scattering angle as long
   as the sample's output frame stays at the sample centre with its angles at 0.
-- The capture flux after a sample is the flux of scattered neutrons, and the
-  server gives no beam-flatness verdict for a run with a sample. Say so rather
+- The capture flux after a sample is the flux of scattered neutrons (plus any
+  unscattered beam a colour-filtered sample let through), and the server gives
+  no beam-flatness verdict for a run with a sample. Say so rather
   than presenting either as a beam measurement.
 - A plan without the sample simply leaves out a sample configured earlier. To
   put it back, plan again with `include_sample` and delegate in the returned
@@ -110,7 +116,9 @@ So:
   configuration work. It is good evidence about parameters and no evidence at
   all about execution.
 - A `run_simulation` result for a run with the sample says its readings were
-  "Measured after the sample". Report them as readings of scattered neutrons.
+  "Measured after the sample", and then what they contain: scattered neutrons
+  only, or — for a colour-filtered sample — possibly unscattered beam as well.
+  Report them as the server describes them.
 - A `run_simulation` result may end with a sentence starting "Capture flux from
   the capture_flux log". The server read those numbers from capture_flux's own
   output, so they are verified: report the capture flux and the captured

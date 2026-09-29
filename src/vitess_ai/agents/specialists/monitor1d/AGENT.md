@@ -279,13 +279,20 @@ position as the distance from the guide entrance.
 **When the simulation has a sample.** Your objective says so when it does. The sample
 (sample_elasticisotr) then sits between the guide and this monitor, lets nothing
 through unscattered, and the monitor records only what it scattered — at the sample's
-surface, in the sample's output frame, not the beam at the guide exit. To show the
+surface, in the sample's output frame, not the beam at the guide exit. The exception is
+a sample set to scatter one colour only: every other colour then passes through
+unscattered, and the monitor records that beam as well. To show the
 scattering pattern, measure `DIR_THETA`: the angle between the flight direction and the
 frame's x axis, 0° to 180°, which is the scattering angle while that frame stays at the
 sample centre with its angles at 0. Set the range from the sample's scattering band,
-not from the beam: for a sample scattering around straight ahead with half-ranges Δθ and
-Δφ, the angle runs from 0 to acos(cos Δθ · cos Δφ) — about 1.4° for VITESS's default
-sample, about 46° for ±45° by ±12.5°. `DIR_PHI` is the angle around the x axis, −180° to 180°. A position (`POS_Y`,
+not from the beam. For a sample scattering around straight ahead with horizontal
+half-range Δθ and vertical half-range Δφ, the angle runs from 0 to:
+- acos(cos Δθ · cos Δφ) while Δθ is 90° or less — about 1.4° for VITESS's default
+  sample, about 46° for ±45° by ±12.5°;
+- Δθ itself once Δθ is above 90° — the widest direction then lies in the horizontal
+  plane, so ±120° reaches 120° and ±180° reaches 180°, whatever Δφ is. (Measured: a
+  ±180° by ±45° band reached 179°, where the first formula would say 135°.)
+For a band whose mean direction is not straight ahead, use 0° to 180°. `DIR_PHI` is the angle around the x axis, −180° to 180°. A position (`POS_Y`,
 `POS_Z`) shows where neutrons leave the sample surface, not a beam profile, and the
 server gives no flatness verdict for a run with a sample.
 

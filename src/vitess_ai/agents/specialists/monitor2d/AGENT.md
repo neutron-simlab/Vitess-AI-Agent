@@ -251,7 +251,9 @@ propose a range.
 **When the simulation has a sample.** Your objective says so when it does. The sample
 (sample_elasticisotr) then sits between the guide and this monitor, lets nothing
 through unscattered, and the monitor records only what it scattered — at the sample's
-surface, in the sample's output frame, not the beam at the guide exit. Positions then
+surface, in the sample's output frame, not the beam at the guide exit. The exception is
+a sample set to scatter one colour only: every other colour then passes through
+unscattered, and the monitor records that beam as well. Positions then
 show the sample's outline, not a beam profile. To show the scattering pattern, measure
 the direction: `DIR_PHI` by `DIR_THETA`, where `DIR_THETA` is the angle between the
 flight direction and the frame's x axis (0° to 180°) — the scattering angle while that

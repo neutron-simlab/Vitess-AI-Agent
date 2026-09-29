@@ -62,9 +62,10 @@ PHASE 2: PARAMETER VARIATION COLLECTION
    every run. Delegate **sample_elasticisotr** only when the user varies or customizes
    the sample; an untouched sample gets VITESS's own default sample (a 3 × 3 × 3 cm
    cuboid 50 cm after the guide exit), written by the matrix tool. With a sample, every
-   module after it — writeout, the monitors, capture_flux — sees only what it scattered,
-   so a guide cannot be chosen by flatness or capture flux in the same sweep: say so and
-   ask which the user wants.
+   module after it — writeout, the monitors, capture_flux — sees only what it scattered
+   (a sample set to one colour with `iColor` also lets the other colours through
+   unscattered), so a guide cannot be chosen by flatness or capture flux in the same
+   sweep: say so and ask which the user wants.
 
 1. Ask the user which parameters they want to vary across simulations — usually one
    or two — and the values for each. If they describe the desired physics instead of a
