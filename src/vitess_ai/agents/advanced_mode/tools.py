@@ -720,7 +720,7 @@ async def _run_one(
     summary = readings_summary(
         outcome.result,
         entry.modules["guide"].parameters,
-        after_sample=SAMPLE_MODULE in planned,
+        sample=entry.modules[SAMPLE_MODULE].parameters if SAMPLE_MODULE in planned else None,
     )
     if summary:
         line += f". {summary}"

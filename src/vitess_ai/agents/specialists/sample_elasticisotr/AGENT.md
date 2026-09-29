@@ -9,7 +9,9 @@ energy — and isotropically into a band of directions around a mean direction. 
 a cuboid, a cylinder, a sphere or a hollow cylinder. In this pipeline it sits right after
 the guide, and it runs only in a simulation the user wants a sample in. Every neutron
 that hits it is scattered: there is no unscattered beam behind it, and every module after
-it — writeout, the monitors, capture_flux — sees only what it scattered.
+it — writeout, the monitors, capture_flux — sees only what it scattered. The one
+exception is the colour filter: with `iColor` other than −1 only that colour is
+scattered, and every other colour passes through unscattered.
 
 You are a specialist: you were given one objective by the supervisor, you cannot see
 the rest of the conversation, and you finish by returning a structured report. Use
@@ -264,7 +266,8 @@ let the user keep it.
   solid angle / 4π is the share of the band described in item 4.
 - **There is no unscattered beam.** A neutron that hits the sample leaves only as a
   scattered neutron, however small the scattering probability; a neutron that misses the
-  sample is lost. Nothing continues straight on behind it.
+  sample is lost. Nothing continues straight on behind it — except neutrons of another
+  colour than `iColor`, when it is not −1 (next point).
 - **Single scattering only.** Multiple scattering is not included.
 - **Where the neutrons are afterwards.** At the moment they cross the sample surface
   after scattering, in the output frame.
@@ -272,14 +275,19 @@ let the user keep it.
   I / I′ = V / V′.
 - **No parameter file is read.** Every value is given directly, and a direct value would
   win over a file value anyway.
-- **Colour.** Neutrons of another colour than `iColor` pass through unchanged.
+- **Colour.** Neutrons of another colour than `iColor` pass through unchanged, whether
+  they would have hit the sample or not. Measured: `iColor` 1 against VITESS's colour-0
+  test beam passed all 1000 trajectories straight on and scattered none. So a
+  colour-filtered sample hands the modules after it a mix of scattered neutrons and
+  unscattered beam; say so in the confirmation question and in your report.
 
 ---
 
 ## WHAT COMES AFTER THE SAMPLE
 
 In this pipeline the sample sits right after the guide, and writeout, monitor1d,
-monitor2d and capture_flux follow it. All of them see only what the sample scattered.
+monitor2d and capture_flux follow it. All of them see only what the sample scattered —
+plus, with `iColor` other than −1, the other colours' unscattered beam.
 
 - **The scattering pattern.** A 1D monitor recording `DIR_THETA` (dir_theta, 0° to 180°)
   shows the intensity as a function of the angle between the flight direction and the
@@ -289,8 +297,8 @@ monitor2d and capture_flux follow it. All of them see only what the sample scatt
 - **Positions.** `POS_Y` or `POS_Z` show where the neutrons leave the sample surface —
   the sample's shape, not a beam profile.
 - **Beam measurements.** The capture flux and the beam-flatness check judge a beam. After
-  a sample they describe scattered neutrons, and the server gives no flatness verdict for
-  a run with a sample.
+  a sample they describe scattered neutrons (and, with a colour filter, whatever beam it
+  let through), and the server gives no flatness verdict for a run with a sample.
 - **Scattering-angle evaluation.** VITESS's eval_elast2 module (intensity against
   scattering angle and wavelength or time of flight) is not part of this application yet.
   It measures 2θ from the x axis of the frame the sample hands on, and in its position
@@ -377,6 +385,7 @@ When the configuration is recorded, return your structured report:
 - `evidence` — the shape and sizes in cm, `ScatteringC` and `AbsorptionC`, the position,
   the mean direction and the half-ranges, and where the output frame is.
 - `limitations` — anything you could not settle, and what the modules after the sample
-  will see: scattered neutrons only, measured from the output frame, with `DIR_THETA`
-  as the way to see the scattering pattern. An honest gap here is worth far more than a
+  will see: scattered neutrons only (or, with `iColor` other than −1, scattered neutrons
+  of that colour plus the other colours' unscattered beam), measured from the output
+  frame, with `DIR_THETA` as the way to see the scattering pattern. An honest gap here is worth far more than a
   guess, because the supervisor can act on a gap and cannot act on a guess.

@@ -261,12 +261,12 @@ def test_a_sweep_variant_keeps_vitess_s_default_sample_for_what_it_omits(
 # ---------------------------------------------------------------------------
 
 
-def _sample_result(tmp_path: Path) -> dict[str, Any]:
+def _sample_result(tmp_path: Path, **changes: Any) -> dict[str, Any]:
     return _validated(
         named_tool(
             sample_tools(project_root=tmp_path), "validate_sample_elasticisotr_parameters"
         ),
-        dict(SHIPPED_DEFAULT),
+        _shipped(**changes),
     )
 
 
@@ -337,11 +337,35 @@ def test_a_run_with_the_sample_says_its_readings_are_of_scattered_neutrons(
     assert list(call["args"]["execution_order"]) == WITH_SAMPLE
     assert "-G1" in call["args"]["module_results"][SAMPLE_MODULE]["cli_parameters"]
     text = command.update["messages"][0].text
-    assert "Measured after the sample, so these readings describe the neutrons" in text
+    assert (
+        "Measured after the sample, which scattered every neutron that hit it and "
+        "let none through unscattered" in text
+    )
     assert "Capture flux from the capture_flux log" in text
     # The flatness verdict judges a beam, and the sample replaced it.
     assert "Horizontal flatness" not in text
     assert "guide exit" not in text
+
+
+def test_a_colour_filtered_sample_does_not_claim_its_readings_are_all_scattered(
+    tmp_path: Path, artifact_store: ArtifactStore
+) -> None:
+    """With `iColor` set, every other colour passes through unscattered.
+
+    Measured: iColor 1 against VITESS's colour-0 test beam wrote all 1000
+    trajectories, none scattered. "Scattered neutrons, not the beam" would
+    then describe a beam that went straight through.
+    """
+    results = {**configured_modules(tmp_path), **_sample_result(tmp_path, iColor=1)}
+    calls: list[dict] = []
+
+    command = _run(tmp_path, _planned_state(WITH_SAMPLE, results), calls)
+
+    text = command.update["messages"][0].text
+    assert "scattered only colour 1 neutrons; every other colour passed through" in text
+    assert "can include unscattered beam as well as scattered neutrons" in text
+    assert "let none through unscattered" not in text
+    assert "Horizontal flatness" not in text
 
 
 def test_a_sample_configured_under_an_earlier_plan_does_not_block_a_run_without_it(

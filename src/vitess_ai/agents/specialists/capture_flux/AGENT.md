@@ -187,7 +187,9 @@ from its default, say what the default is, and let the user keep it.
   the neutrons it counted, and capture_flux sees only those.
 - **After a sample.** When the simulation has a sample (sample_elasticisotr, right
   after the guide), capture_flux measures the neutrons the sample scattered, where they
-  leave its surface — not the beam on the sample. Your objective says so when it does.
+  leave its surface — not the beam on the sample. A sample set to scatter one colour
+  only (`iColor` other than −1) lets every other colour through unscattered, and those
+  neutrons are counted too. Your objective says so when it does.
   Say in your confirmation question that the result is then the flux of scattered
   neutrons, not a beam flux to compare with a gold foil at the sample position.
 - **The area.** The capture flux is the captured intensity divided by the foil area:
