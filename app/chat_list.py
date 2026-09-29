@@ -1,15 +1,15 @@
-"""The conversation list: pick one, rename it, delete it.
+"""The list of conversations in the sidebar: open one, rename it, delete it.
 
-Extracted from the sidebar for the same reason the upload half became
-`file_management`: the sidebar is navigation wiring, and a list with an inline
-name editor and a per-row action menu is a panel with its own state. The state
-it owns is one key, `editing_thread_id` -- which conversation, if any, is being
-renamed -- and it lives in the session rather than in a widget because the
-editor has to survive the rerun its own Save button causes.
+It has its own file, like the upload panel in `file_management`, because it
+keeps its own state while the rest of the sidebar only puts the pieces
+together. That state is one value, `editing_thread_id`: which conversation, if
+any, is being renamed. It is kept in the session rather than in a widget
+because Streamlit reruns the whole page on every click, and the name editor has
+to stay open through the rerun its own Save button causes.
 
-The decision this panel must not get wrong is what happens to `thread_id` when
-the open conversation is deleted, so that one is not decided here: it is
-`session_state.leave_deleted_thread`, which is a pure function with tests.
+The one thing this panel must get right is which conversation to show after
+the open one is deleted. That choice is not made here but in
+`session_state.leave_deleted_thread`, a small function with its own tests.
 """
 
 from __future__ import annotations
@@ -25,7 +25,9 @@ from app.session_state import leave_deleted_thread
 __all__ = ["DEFAULT_CHAT_TITLE", "chat_label", "render_chat_list", "title_key"]
 
 
-#: `Chat.title`'s own default in core, and so what clearing the name restores.
+#: `Chat.title`'s stored default in core, and so what clearing the name saves.
+#: Never shown: `chat_label` swaps it for the thread id, and the rename field
+#: opens empty on it.
 DEFAULT_CHAT_TITLE = "New Chat"
 
 #: Room for a title once the actions popover has taken its share of the row.
@@ -96,7 +98,7 @@ def _render_rename_editor(storage: Any) -> None:
 
     title = st.text_input(
         "Conversation name",
-        value=chat.title,
+        value="" if chat.title == DEFAULT_CHAT_TITLE else chat.title,
         key=title_key(thread_id),
         label_visibility="collapsed",
         placeholder="Conversation name",
