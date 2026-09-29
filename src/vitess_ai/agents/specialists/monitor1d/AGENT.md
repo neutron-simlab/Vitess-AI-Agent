@@ -276,6 +276,19 @@ them — in this pipeline, the guide exit. It has no position parameter of its o
 measure further downstream, the guide itself is longer; the run result states the
 position as the distance from the guide entrance.
 
+**When the simulation has a sample.** Your objective says so when it does. The sample
+(sample_elasticisotr) then sits between the guide and this monitor, lets nothing
+through unscattered, and the monitor records only what it scattered — at the sample's
+surface, in the sample's output frame, not the beam at the guide exit. To show the
+scattering pattern, measure `DIR_THETA`: the angle between the flight direction and the
+frame's x axis, 0° to 180°, which is the scattering angle while that frame stays at the
+sample centre with its angles at 0. Set the range from the sample's scattering band,
+not from the beam: for a sample scattering around straight ahead with half-ranges Δθ and
+Δφ, the angle runs from 0 to acos(cos Δθ · cos Δφ) — about 1.4° for VITESS's default
+sample, about 46° for ±45° by ±12.5°. `DIR_PHI` is the angle around the x axis, −180° to 180°. A position (`POS_Y`,
+`POS_Z`) shows where neutrons leave the sample surface, not a beam profile, and the
+server gives no flatness verdict for a run with a sample.
+
 ---
 
 ## THE OUTPUT FILE NAME

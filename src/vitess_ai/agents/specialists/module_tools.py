@@ -369,6 +369,7 @@ def build_defaults_tool(
     project_root: Path,
     upload_fields: Mapping[str, str] | None = None,
     output_filename_fields: tuple[str, ...] = (),
+    defaults: Mapping[str, Any] | None = None,
 ) -> BaseTool:
     """Build a no-argument writer for the module's exact schema defaults.
 
@@ -377,15 +378,21 @@ def build_defaults_tool(
     field was still a valid object and therefore indistinguishable from an
     intentional customization.  This tool accepts no parameter object at all;
     trusted code constructs and validates ``model()``.
+
+    ``defaults`` replaces the schema defaults for a module whose schema
+    defaults do not run. The sample's schema defaults are the C initialisers,
+    which have no shape and scatter nothing, so its Default setup is VITESS's
+    own default sample instead -- still written by code, never by the model.
     """
 
     version = module_schema_version(model)
+    what = "default configuration" if defaults else "schema defaults"
 
     @tool(
         f"use_{module}_defaults",
         args_schema=_DefaultsArguments,
         description=(
-            f"Record the exact {module} schema defaults. This tool accepts no "
+            f"Record the exact {module} {what}. This tool accepts no "
             "parameter object, so none of the defaults can be replaced. Call it "
             "only after `ask_user` has returned affirmative confirmation of the "
             "displayed default configuration."
@@ -394,7 +401,7 @@ def build_defaults_tool(
     def use_defaults(runtime: ToolRuntime[Any, Any]) -> Command:
         try:
             result = validate_module_parameters(
-                {},
+                dict(defaults or {}),
                 module=module,
                 model=model,
                 schema_version=version,
@@ -410,7 +417,7 @@ def build_defaults_tool(
                     "messages": [
                         _message(
                             runtime,
-                            f"{module} schema defaults are not valid:\n{exc}",
+                            f"{module} {what} are not valid:\n{exc}",
                             error=True,
                         )
                     ]
@@ -422,7 +429,7 @@ def build_defaults_tool(
                 "messages": [
                     _message(
                         runtime,
-                        f"Exact {module} schema defaults are valid and recorded. "
+                        f"Exact {module} {what} are valid and recorded. "
                         f"VITESS will run them as: {' '.join(arguments)}",
                     )
                 ],
@@ -457,6 +464,7 @@ def build_variants_tool(
     project_root: Path,
     upload_fields: Mapping[str, str] | None = None,
     output_filename_fields: tuple[str, ...] = (),
+    defaults: Mapping[str, Any] | None = None,
 ) -> BaseTool:
     """Build the sweep's writer: N validated configurations for one module.
 
@@ -468,17 +476,21 @@ def build_variants_tool(
     **all or none are recorded**: a partially validated list would let a sweep
     run the sets that happened to pass while the model believed it had asked for
     more, and the missing runs are invisible in the results.
+
+    ``defaults`` is what an omitted field keeps, as in `build_defaults_tool`:
+    the schema defaults unless the module's do not run.
     """
 
     version = module_schema_version(model)
+    what = "the default configuration" if defaults else "schema defaults"
 
     @tool(
         f"validate_{module}_variants",
         args_schema=_VariantsArguments,
         description=(
             f"Validate every explicit {module} override set this sweep should run "
-            "and record them together. Omitted fields retain schema defaults; "
-            "[{{}}] means exact defaults. Nothing is recorded unless every set "
+            f"and record them together. Omitted fields retain {what}; "
+            "[{}] means exact defaults. Nothing is recorded unless every set "
             "is valid."
         ),
     )
@@ -543,7 +555,7 @@ def build_variants_tool(
             try:
                 validated.append(
                     validate_module_parameters(
-                        parameters,
+                        {**(defaults or {}), **parameters},
                         module=module,
                         model=model,
                         schema_version=version,
