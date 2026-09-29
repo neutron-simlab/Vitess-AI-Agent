@@ -64,7 +64,6 @@ from vitess_ai.schema import (
     ReadInParameters,
     WriteoutParameters,
 )
-from vitess_ai.schema.sample_elasticisotr_module import SHIPPED_DEFAULT
 from vitess_ai.schema.module_result import (
     ModuleConfigurationResult,
     module_schema_version,
@@ -136,9 +135,6 @@ def test_every_model_converts_to_flag_value_arguments(module: str) -> None:
             Weight=[1.0],
             sInstrInfIn=None,
         )
-    elif module == "sample_elasticisotr":
-        # Its schema defaults are the C initialisers, which do not run.
-        defaults = model(**SHIPPED_DEFAULT)
     else:
         defaults = model()
 
@@ -1035,16 +1031,6 @@ def test_the_five_specialists_are_the_five_executable_modules(
 #: while the deliberate override it exists to protect had quietly been lost.
 PROMPT_OVERRIDES_SCHEMA = {("readin", "sInstrInfIn"): None}
 
-#: Modules whose whole default block is something other than the schema
-#: defaults, and what it must be instead.
-#:
-#: The sample's schema defaults are the C initialisers: no shape and no
-#: scattering, which VITESS cannot run. Its Default setup is VITESS's own
-#: default sample, which `use_sample_elasticisotr_defaults` records from
-#: `SHIPPED_DEFAULT`. Asserted value for value, like `PROMPT_OVERRIDES_SCHEMA`,
-#: so the prompt cannot drift from what the tool records.
-PROMPT_DEFAULT_BLOCK_IS_NOT_THE_SCHEMA = {"sample_elasticisotr": SHIPPED_DEFAULT}
-
 
 @pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_the_default_configuration_in_each_prompt_is_the_schema_default(
@@ -1069,13 +1055,6 @@ def test_the_default_configuration_in_each_prompt_is_the_schema_default(
     claimed = json.loads(re.sub(r"//.*", "", block.group(1)))
 
     model = parameter_model(module)
-    if module in PROMPT_DEFAULT_BLOCK_IS_NOT_THE_SCHEMA:
-        required = model(**PROMPT_DEFAULT_BLOCK_IS_NOT_THE_SCHEMA[module])
-        assert claimed == required.model_dump(mode="json"), (
-            f"{module}/AGENT.md's default block is not the configuration its "
-            "defaults tool records"
-        )
-        return
     for field_name, value in claimed.items():
         assert field_name in model.model_fields, (
             f"{module}/AGENT.md names {field_name}, which {model.__name__} has no field for"
@@ -1436,7 +1415,8 @@ def test_validation_tool_description_requires_confirmation(
 
 
 @pytest.mark.parametrize(
-    "module", ("guide", "writeout", "monitor1d", "monitor2d", "capture_flux")
+    "module",
+    ("guide", "sample_elasticisotr", "writeout", "monitor1d", "monitor2d", "capture_flux"),
 )
 def test_default_tool_accepts_no_parameters_and_records_exact_schema_defaults(
     module: str, tmp_path: Path
