@@ -1,13 +1,14 @@
 """What ``GET /health`` actually checks.
 
-An explicit route, because the alternative -- asking whether something answers
-on the MCP port -- proves only that a Python process started. This server exists
-to run VITESS binaries into a shared volume, so health is: **the binaries the
-catalog names resolve inside the trusted modules root, and the project volume
-can be written.** Both are things a misconfigured mount silently breaks.
+This is a real check on purpose. Only asking whether something answers on the
+MCP port proves just that a Python process started. This server exists to run
+the VITESS programs and write their results to a shared volume, so healthy
+means: **every program the catalog names is found inside the trusted modules
+folder, and the project volume can be written to.** A wrongly set up mount
+breaks both without any error message.
 
-Compose uses the same route with ``condition: service_healthy``, so a failure
-here keeps the application from ever being constructed against a server that
+Docker Compose uses the same route (``condition: service_healthy``), so when
+this check fails, the application is never started against a server that
 cannot work.
 """
 

@@ -1,13 +1,13 @@
-"""The documentation tools, and what happens when there is no documentation.
+"""The documentation search tools, and what happens when there are no docs.
 
-**Degrading is the design, not an accident.** When the collection is empty or
-Chroma will not open, this returns tools that answer `RAG_UNAVAILABLE: ...`
-rather than returning nothing. The difference matters at the far end: a model
-whose tool list changed between one conversation and the next has no way to say
-"I could not look that up" -- it simply stops mentioning the documentation, and
-the user cannot tell an unanswerable question from an unasked one. It is the
-same choice 03/CP3 made for the MCP gateway: keep the tool bound and report the
-outage per request.
+**Failing politely is the design, not an accident.** When the index is empty or
+Chroma will not open, the tools are still offered, but each one answers
+`RAG_UNAVAILABLE: ...` instead of searching. Leaving them out would be worse
+for the user: a model whose tool list changed between conversations has no way
+to say "I could not look that up". It just stops mentioning the documentation,
+and the user cannot tell a question it could not answer from one it never
+tried. The connection to the MCP server works the same way: its tools stay
+available, and each call reports the outage.
 """
 
 from __future__ import annotations

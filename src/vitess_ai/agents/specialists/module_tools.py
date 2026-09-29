@@ -1,17 +1,18 @@
 """The tools a module specialist's model calls, and the checks behind them.
 
-Each module package's ``tools.py`` picks which of these builders it needs;
-`build_module_specialist` in `module_specialist.py` binds whatever it is given.
+Each module package's ``tools.py`` picks which of these tool builders it needs;
+`build_module_specialist` in `module_specialist.py` attaches whatever it is
+given.
 
-**The validation tool writes state; the model does not.** A specialist ends by
-calling `validate_<module>_parameters`, which validates the parameters through
-the module's own Pydantic model and, only if that succeeds, writes a
-`ModuleConfigurationResult` into the `module_results` channel with
-`Command(update=...)`. A failed validation writes nothing at all: the
-first-generation tool returned `{"validation_status": False, "errors": ...}` as
-an ordinary result, and such a payload could travel all the way to execution --
-which is why 03/CP3's server still refuses one. Here it cannot reach the
-channel in the first place.
+**The checking tool writes to the conversation state; the model does not.** A
+specialist ends by calling `validate_<module>_parameters`, which checks the
+settings against the module's own Pydantic model and, only if that passes,
+writes a `ModuleConfigurationResult` into `module_results` with
+`Command(update=...)`. A failed check writes nothing at all. The first version
+returned failures as an ordinary result (``{"validation_status": False, ...}``),
+and such a result could travel all the way to the run -- which is why the MCP
+server still refuses one. Here it cannot reach `module_results` in the first
+place.
 """
 
 from __future__ import annotations

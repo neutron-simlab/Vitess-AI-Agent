@@ -1,4 +1,4 @@
-"""Build VITESS process argument vectors without invoking a shell."""
+"""Build a VITESS command as a list of words, so no shell ever reads it."""
 
 from __future__ import annotations
 

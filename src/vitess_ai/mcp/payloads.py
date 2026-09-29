@@ -1,19 +1,18 @@
-"""What the MCP server returns, as models rather than loose dictionaries.
+"""What the MCP server sends back, as checked data models, not loose dictionaries.
 
-These are the payloads that cross a container boundary, so they are the one
-place in this package where pydantic earns its keep: the server builds them and
-the application validates what arrives (03/CP3a). A shared volume shares files,
-not Python objects -- everything the application learns about an execution it
+These travel between two containers, so this is the one place in this package
+where pydantic (the data-checking library) is worth using: the server builds
+these objects, and the application checks what arrives. A shared volume shares
+files, not Python objects -- everything the application learns about a run, it
 learns from here.
 
-Every model sets ``extra="forbid"``. The two sides ship in one image, so they
-cannot legitimately disagree about the fields; if they ever do, a loud
-validation error is the failure worth having.
+Every model sets ``extra="forbid"``, so unknown fields are rejected. Both sides
+ship in the same image, so they cannot legitimately disagree about the fields;
+if they ever do, a loud error is the right way to fail.
 
-Paths are **relative to the run directory**. The application resolves them under
-its own mount rather than trusting an absolute path from another container, and
-the two containers agree on ``/data/projects`` precisely because nothing relies
-on that agreement.
+Paths are **relative to the run's folder**. The application looks them up under
+its own mount instead of trusting a full path sent from another container. Both
+containers do mount the volume at ``/data/projects``, but nothing relies on it.
 """
 
 from __future__ import annotations

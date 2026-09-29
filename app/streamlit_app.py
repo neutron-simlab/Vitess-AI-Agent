@@ -1,13 +1,12 @@
-"""The VITESS AI Agent web interface.
+"""The VITESS AI Agent web page, and the file Streamlit starts from.
 
-Deliberately shorter than juena-chatbot's equivalent, and every line that is
-missing is missing for a reason: there is no sign-in, because this deployment
-has one fixed local user, and no session cookie to carry. Identity is injected
-at the API as `local_principal`, exactly where an institute login's dependency
-would go.
+It is shorter than juena-chatbot's version on purpose. There is no sign-in,
+because this setup has one fixed local user, so there is no login cookie to
+keep either. The API fills in that one user with `local_principal`, which is
+exactly where an institute login would plug in later.
 
-What this file owns is session state: which agent, which conversation, which
-model. Everything it draws is in `sidebar` and `chat_interface`.
+This file keeps track of the session: which agent, which conversation and which
+model. Everything it draws comes from `sidebar` and `chat_interface`.
 """
 
 from __future__ import annotations

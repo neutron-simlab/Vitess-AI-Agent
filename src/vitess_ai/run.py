@@ -1,10 +1,11 @@
-"""Trusted application gateway to the raw VITESS MCP tools.
+"""The one place the app itself calls the raw VITESS tools on the MCP server.
 
-The tools discovered from :mod:`vitess_ai.mcp.server` are deliberately not
-model tools: their schemas contain ownership identifiers and already-validated
-module parameters.  This module is the one place application code invokes
-them.  It validates MCP ``structuredContent`` before turning it into typed
-execution evidence; prose in the MCP text block is never parsed as evidence.
+The MCP server is the separate `vitess-mcp` container that actually runs VITESS.
+Its tools are deliberately not given to the model: their inputs include who owns
+the run and module settings that have already been checked, so only application
+code calls them, and only from here. Each answer is checked through the
+structured part of the reply (`structuredContent`) before it becomes typed
+evidence of what ran; the free text in the reply is never taken as evidence.
 """
 
 from __future__ import annotations

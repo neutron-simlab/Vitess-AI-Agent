@@ -1,27 +1,27 @@
-"""The VITESS MCP server: four tools and a health route, over HTTP.
+"""The VITESS MCP server: four tools and a health check, reached over HTTP.
 
-It runs as its own Compose service on the internal network, reachable at
+It runs as its own Docker Compose service on the internal network, reachable at
 ``http://vitess-mcp:9005/mcp`` from the application container and from nowhere
-else. Not stdio, which would spawn one copy of this process per client -- all of
-them running VITESS binaries into the same project directory -- and would make
-standard output the transport, so that one stray ``print`` in a tool corrupts
-the protocol silently.
+else. It does not use stdio (talking through standard input and output). That
+would start one copy of this server per client -- all of them running VITESS
+into the same project folder -- and would carry messages over standard output,
+so one stray ``print`` in a tool would silently corrupt them.
 
-**This module imports no agent framework.** It is reached over HTTP by an
-application that has one; it does not need one itself, and a test asserts that
-importing it pulls in neither ``langchain`` nor ``deepagents``. Logging is the
-standard library's for the same reason.
+**This file imports no agent framework.** The application that calls it over
+HTTP has one; this server does not need one, and a test checks that importing
+it pulls in neither ``langchain`` nor ``deepagents``. It uses Python's standard
+logging for the same reason.
 
-Two kinds of failure, deliberately different:
+Two kinds of failure, kept different on purpose:
 
 *Raised* (``ToolError``) -- the arguments are malformed. Every argument here
-comes from trusted application code, never from a model: the application façade
-(03/CP3a) is what a model calls, and it fills in the thread, the run id and the
-validated parameters itself. A bad one is a bug, and bugs should be loud.
+comes from trusted application code, never from a model: the model calls the
+app's own tools, which fill in the conversation, the run id and the checked
+settings themselves. A bad argument is a bug, and bugs should be loud.
 
 *Returned* (``SimulationResult`` with ``success=False``) -- the simulation ran,
 or was refused, and that outcome is what the model needs to read. A simulation
-that did not run must never read as one that ran and produced nothing.
+that did not run must never look like one that ran and produced nothing.
 """
 
 from __future__ import annotations

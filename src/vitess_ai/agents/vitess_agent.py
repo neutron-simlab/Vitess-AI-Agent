@@ -1,24 +1,24 @@
-"""Assemble the VITESS supervisor and its five explicitly registered specialists.
+"""Put together the VITESS supervisor and its six explicitly listed specialists.
 
-This is the rebuild. The first-generation simulator was a hand-rolled graph:
-1,375 lines of seven supervisor nodes, five module nodes and six routing
-functions, over a `UnifiedState` whose seven methods used attribute access on a
-type whose instances are dictionaries -- so they were unreachable. What the
-routing functions did was pick a subagent, run it, come back and decide what is
-next, which is `SubAgentMiddleware` plus `create_agent`.
+This is the rebuild. The first version was a hand-built graph: 1,375 lines of
+seven supervisor steps, five module steps and six routing functions, over a
+`UnifiedState` whose seven methods could never work (they read attributes from
+what is actually a dictionary). All the routing did was pick a helper agent,
+run it, come back and decide what was next -- which is what
+`SubAgentMiddleware` plus `create_agent` already do.
 
-**What the graph shape really held was the execution order**, and losing it is
-the one way this rebuild could produce something worse: a supervisor that
-configures the monitor before the guide runs a simulation that completes and is
-physically wrong. So the order moved somewhere explicit and checkable --
-`plan_simulation` writes it, `run_simulation` reads it back, and both ends are
-server-owned.
+**What the old graph's shape really held was the order the modules run in**,
+and losing that is the one way this rebuild could end up worse: a supervisor
+that sets up the monitor before the guide produces a simulation that runs,
+finishes and is physically wrong. So the order moved somewhere explicit and
+checkable -- `plan_simulation` writes it, `run_simulation` reads it back, and
+the server owns both ends.
 
-There is no legacy fallback. Registering the old graph beside this one would
-bring back the process-global registry, `InMemorySaver` and the
-`restart_with_new_config` path that wiped every user's conversation state, and
-a fallback whose persistence model differs from the real one is a second
-architecture with a reassuring name.
+There is no fallback to the old version. Registering the old graph next to this
+one would bring back the shared global registry, `InMemorySaver` and the
+`restart_with_new_config` path that wiped every user's conversation state. And a
+fallback that saves conversations differently from the real one is really a
+second design with a comforting name.
 """
 
 from __future__ import annotations

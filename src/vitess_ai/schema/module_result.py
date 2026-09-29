@@ -1,20 +1,21 @@
-"""What a module specialist hands back when it has validated its parameters.
+"""What a module's specialist agent hands back once its settings are checked.
 
-`SpecialistReport` is prose -- status, finding, evidence, actions, limitations
--- and core's delegation boundary carries only `messages` and `files`. So once a
-guide specialist has validated a `GuideParameters`, there is no typed route for
-that object to reach the command builder, and the only remaining route would be
-the model retyping the numbers into `run_simulation`'s arguments. That is the
-model-authored path 03/CP1 exists to close, so this is the object that closes
-it: the validation *tool* writes one of these into state, and the execution
-façade reads the channel rather than an argument.
+A specialist's normal report (`SpecialistReport`) is written text -- status,
+finding, evidence, actions, limitations -- and core only passes `messages` and
+`files` back from a specialist. So once, say, the guide specialist has checked a
+`GuideParameters`, there is no typed way for that object to reach the command
+builder. The only way left would be for the model to retype the numbers into
+`run_simulation`'s arguments, which is exactly what must not happen: the model
+must never be the one typing the values that run. So the checking *tool* writes
+one of these objects into the conversation state, and the code that runs VITESS
+reads it from there, not from an argument.
 
-Deliberately absent: the CLI arguments. They are derived from `parameters` at
-execution time by :func:`vitess_ai.cli.arguments.parameters_to_arguments`, so
-there is only ever one answer to "what does this configuration run as". A
-stored copy is a second answer, and two answers drift -- which is the first
-lesson of this rebuild (02/CP2's two executable tables) applied to one module's
-own parameters.
+The command-line options are deliberately not stored here. They are worked out
+from `parameters` at run time by
+:func:`vitess_ai.cli.arguments.parameters_to_arguments`, so there is only ever
+one answer to "what command does this configuration run as". A stored copy
+would be a second answer, and two answers drift apart -- the first lesson of
+this rebuild, applied to one module's own settings.
 """
 
 from __future__ import annotations
