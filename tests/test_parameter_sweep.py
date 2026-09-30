@@ -141,13 +141,13 @@ def test_the_batch_tool_has_no_argument_the_model_could_fill_in(
     matrix = named_tool(tools, "write_simulation_matrix")
 
     assert set(batch.args_schema.model_fields) == {"runtime"}
-    # `include_sample` chooses only whether the sample runs. Where it runs and
-    # with which values still come from the catalog and from validated state.
+    # `include_optional` chooses only which optional modules run. Where they run
+    # and with which values still come from the catalog and from validated state.
     assert set(matrix.args_schema.model_fields) == {
         "runtime",
         "combination",
         "run_names",
-        "include_sample",
+        "include_optional",
     }
     for forbidden in ("module_results", "run_specs", "execution_order", "thread_id"):
         assert forbidden not in matrix.args_schema.model_fields

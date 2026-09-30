@@ -6,10 +6,12 @@ from pydantic import BaseModel
 
 from vitess_ai.schema import (
     CaptureFluxParameters,
+    EvalElastParameters,
     GuideParameters,
     Monitor1DParameters,
     Monitor2DParameters,
     ReadInParameters,
+    ScreenParameters,
     WriteoutParameters,
 )
 
@@ -21,6 +23,8 @@ EXPECTED_LEAF_COUNTS = {
     Monitor1DParameters: 20,
     Monitor2DParameters: 25,
     CaptureFluxParameters: 11,
+    ScreenParameters: 10,
+    EvalElastParameters: 19,
 }
 
 
@@ -64,4 +68,4 @@ def test_parameter_leaf_fields_have_cli_flags(
 
 
 def test_total_parameter_leaf_count() -> None:
-    assert sum(len(list(_leaf_fields(model))) for model in EXPECTED_LEAF_COUNTS) == 115
+    assert sum(len(list(_leaf_fields(model))) for model in EXPECTED_LEAF_COUNTS) == 144

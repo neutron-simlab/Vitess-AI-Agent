@@ -9,6 +9,7 @@ import subprocess
 import sys
 from importlib.metadata import requires
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -18,6 +19,7 @@ from vitess_ai.modules.catalog import (
     MODULES,
     SAMPLE_MODULE,
     ModuleSpec,
+    OptionalModule,
     UploadSchema,
     cli_executables,
     execution_order,
@@ -42,6 +44,7 @@ EXECUTES_WITH_SAMPLE = (
     "monitor2d",
     "capture_flux",
 )
+EVERY_RUNNABLE = (*EXECUTES_WITH_SAMPLE, "screen", "eval_elast")
 UPLOADS = ("readin", "instrument", "guide")
 CATALOG = (
     "readin",
@@ -52,6 +55,8 @@ CATALOG = (
     "monitor1d",
     "monitor2d",
     "capture_flux",
+    "screen",
+    "eval_elast",
 )
 
 
@@ -105,8 +110,8 @@ def test_importing_the_catalog_does_not_import_the_agent_framework() -> None:
     assert result.stdout.split() == ["False", "False"]
 
 
-def test_catalog_contains_exactly_the_eight_known_modules() -> None:
-    """An inert ninth row must not disappear between the capability filters."""
+def test_catalog_contains_exactly_the_ten_known_modules() -> None:
+    """An inert eleventh row must not disappear between the capability filters."""
     assert tuple(spec.name for spec in MODULES) == CATALOG
 
 
@@ -175,7 +180,7 @@ def test_executables_are_basenames_not_paths() -> None:
     assert not offenders, f"catalog rows carrying a path or a shell variable: {offenders}"
 
 
-def test_only_the_seven_pipeline_modules_run_a_binary() -> None:
+def test_only_the_nine_pipeline_modules_run_a_binary() -> None:
     """Named rather than blanket.
 
     "Every row has an executable" is false -- `instrument` uploads without
@@ -183,7 +188,7 @@ def test_only_the_seven_pipeline_modules_run_a_binary() -> None:
     time it failed. So the set is named.
     """
     assert tuple(sorted(spec.name for spec in MODULES if spec.cli_executable)) == tuple(
-        sorted(EXECUTES_WITH_SAMPLE)
+        sorted(EVERY_RUNNABLE)
     )
     assert module_spec("instrument").cli_executable is None
 
@@ -244,11 +249,49 @@ def test_the_sample_runs_only_when_asked_for_and_then_right_after_the_guide() ->
     Without the flag the pipeline is exactly what it was before the sample
     existed, so every guide comparison and flux measurement is unchanged.
     """
-    assert execution_order(include_optional=True) == EXECUTES_WITH_SAMPLE
-    assert optional_modules() == {SAMPLE_MODULE} == {"sample_elasticisotr"}
+    assert execution_order(include_optional=[SAMPLE_MODULE]) == EXECUTES_WITH_SAMPLE
     assert module_spec(SAMPLE_MODULE).optional is True
-    assert [spec.name for spec in MODULES if spec.optional] == [SAMPLE_MODULE]
 
+
+def test_the_screen_and_eval_elast_run_only_when_asked_for_and_then_last() -> None:
+    """After capture_flux, so every reading the pipeline already takes is unchanged.
+
+    The screen passes on only the neutrons that hit it, so it cannot sit before
+    a module whose reading should describe the beam; eval_elast after it then
+    counts only what the detector caught.
+    """
+    assert execution_order(include_optional=["screen"]) == (*EXECUTES, "screen")
+    assert execution_order(include_optional=["eval_elast"]) == (*EXECUTES, "eval_elast")
+    assert execution_order(include_optional=["eval_elast", "screen", SAMPLE_MODULE]) == (
+        EVERY_RUNNABLE
+    )
+    assert execution_order(include_optional=True) == EVERY_RUNNABLE
+    assert optional_modules() == {SAMPLE_MODULE, "screen", "eval_elast"}
+    assert [spec.name for spec in MODULES if spec.optional] == [
+        SAMPLE_MODULE,
+        "screen",
+        "eval_elast",
+    ]
+
+
+
+def test_optional_modules_are_chosen_by_name() -> None:
+    """The plan names the optional rows it wants; each still runs in its own place."""
+    assert execution_order(include_optional=[]) == EXECUTES
+    assert execution_order(include_optional=[SAMPLE_MODULE]) == EXECUTES_WITH_SAMPLE
+    assert execution_order(include_optional=(SAMPLE_MODULE, SAMPLE_MODULE)) == EXECUTES_WITH_SAMPLE
+
+
+@pytest.mark.parametrize("name", ["guide", "sample", "detector"])
+def test_a_name_that_is_not_an_optional_row_is_refused(name: str) -> None:
+    """Dropping it quietly would run a plan without a module the user asked for."""
+    with pytest.raises(KeyError, match="Not an optional VITESS module"):
+        execution_order(include_optional=[name])
+
+
+def test_the_plan_tools_offer_exactly_the_optional_rows() -> None:
+    """`OptionalModule` is written out for the reader, so it is checked against the rows."""
+    assert set(get_args(OptionalModule)) == optional_modules()
 
 def test_orders_are_unique_so_sorting_needs_no_tiebreak() -> None:
     """The old table gave `guide` and `instrument` the same order.

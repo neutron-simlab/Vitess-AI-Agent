@@ -141,7 +141,13 @@ def test_guided_and_unattended_ambiguity_policies_do_not_conflict() -> None:
 def test_every_rag_prompt_teaches_the_real_return_protocol(prompt: str) -> None:
     """The model must not mistake a refusal token for retrieved documentation."""
 
-    for marker in ("NO_RESULTS", "AMBIGUOUS_QUERY", "RAG_UNAVAILABLE", "[Chunk n]"):
+    for marker in (
+        "NO_RESULTS",
+        "NO_OPTION_FOUND",
+        "AMBIGUOUS_QUERY",
+        "RAG_UNAVAILABLE",
+        "[Chunk n]",
+    ):
         assert marker in prompt
 
 

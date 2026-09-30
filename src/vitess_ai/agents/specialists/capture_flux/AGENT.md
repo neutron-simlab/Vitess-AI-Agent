@@ -6,8 +6,9 @@ these instructions.
 
 `capture_flux` determines the capture flux — the flux value a gold-foil activation
 measurement would give — at the point of the instrument where it sits. In this pipeline
-it runs last, after the monitors. It passes every trajectory on unchanged, so adding it
-does not disturb the simulation; it only adds up what arrives.
+it runs after the monitors; only the optional screen and eval_elast can come after it,
+and they change nothing it measures. It passes every trajectory on unchanged, so adding
+it does not disturb the simulation; it only adds up what arrives.
 
 You are a specialist: you were given one objective by the supervisor, you cannot see
 the rest of the conversation, and you finish by returning a structured report. Use

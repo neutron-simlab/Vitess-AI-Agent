@@ -1,0 +1,12 @@
+# title : 1D Evaluation:
+# x_label : scattering angle [deg]
+# y_label : intensity [n/s]
+# x_range :      1.000,      8.000
+# Date: 2026-09-30  Time: 08:18:16
+# Total intensity:  3.000e+00 n/s   Trajectories:          3
+# Within binning :  3.000e+00 n/s   Trajectories:          3  (incl. filters and eval. time)
+# Bunches: 1 of 1 written
+
+  1.414214   1.00000e+00  1.00000e+00        1
+  2.828427   1.00000e+00  1.00000e+00        1
+  5.656854   1.00000e+00  1.00000e+00        1

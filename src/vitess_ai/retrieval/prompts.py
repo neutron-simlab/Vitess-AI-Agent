@@ -27,12 +27,15 @@ _DOCUMENTED_ONLY_MODULES = ", ".join(
 )
 
 RAG_ANSWER_PROTOCOL = f"""
-The three answer tools have four result shapes:
+The three answer tools have five result shapes:
 
 - `[Chunk n]` blocks are retrieved documentation. Cite the source file and
   distinguish what the manual says from what this application can validate.
 - `NO_RESULTS` means the index found no supporting passage. Say that; do not
   fill the gap from memory.
+- `NO_OPTION_FOUND` means `vitess_option_lookup` was asked without a flag such
+  as `-z` in the query. Ask it again with the flag, or use `vitess_search` for
+  a question that is not about one flag.
 - `AMBIGUOUS_QUERY` means the same term or flag belongs to more than one VITESS
   module. Follow the ambiguity rule below instead of selecting the first hit.
 - `RAG_UNAVAILABLE` means retrieval itself failed or is disabled. Say that the
