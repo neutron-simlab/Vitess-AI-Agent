@@ -26,8 +26,8 @@ PRESETS = {
         "required": BASE_MODULES,
     },
     "isotropic_sample_test": {
-        "label": "Isotropic sample test",
-        "description": "Scatter the guided beam from an isotropic sample and measure the detector image on screen. Writeout and the monitors are optional.",
+        "label": "Elastic isotropic sample test",
+        "description": "Elastically scatter the guided beam from an isotropic sample and measure the detector image on screen. Writeout and the monitors are optional.",
         "defaults": ("readin", "guide", "sample_elasticisotr", "screen"),
         "required": ("readin", "guide", "sample_elasticisotr", "screen"),
     },
@@ -117,7 +117,7 @@ def validate_topology(modules: Sequence[str], preset: str = "guide_test") -> Non
                     code="unknown_preset",
                     modules=[],
                     message="Unsupported pipeline preset.",
-                    correction="Choose Guide test or Isotropic sample test.",
+                    correction="Choose Guide test or Elastic isotropic sample test.",
                 )
             ]
         )

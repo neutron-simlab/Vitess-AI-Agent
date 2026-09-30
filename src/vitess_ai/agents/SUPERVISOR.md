@@ -38,7 +38,7 @@ and report what actually happened.
 
 For a conversation started with **Build pipeline**, the server has already
 validated and locked the user's canvas. `plan_simulation` loads that exact
-sequence; the Isotropic sample test preset can omit writeout and both monitors,
+sequence; the Elastic isotropic sample test preset can omit writeout and both monitors,
 and either preset can omit capture_flux. The screen provides its own detector
 image. Do not add modules, even if this prompt's
 ordinary chat defaults include them. Configure only the returned modules.

@@ -38,11 +38,15 @@ A simulation runs these modules in this order:
 In **Guided simulation**, select **Build pipeline** in the main chat area and choose a starting preset:
 
 - **Guide test:** read-in → guide → writeout → monitor 1D → monitor 2D.
-- **Isotropic sample test:** read-in → guide → sample_elasticisotr → screen.
+- **Elastic isotropic sample test:** read-in → guide → sample_elasticisotr → screen.
 
 Drag optional modules into the highlighted slots, or click them to add them. Each preset's starting modules are required. In the sample preset, writeout and both monitors are optional: screen produces its own detector image, while writeout saves individual trajectories.
 
 Select **Confirm pipeline** when you are ready. The pipeline is checked, stays visible and locked above the chat, and the agent helps you configure each module. If a correction to the sequence is needed, the canvas becomes editable again.
+
+<div align="center">
+  <img src="app/assets/pipeline-builder.png" alt="Pipeline builder showing the Guide test preset, optional modules, and connected module blocks" width="1000"/>
+</div>
 
 ### System overview
 

@@ -213,9 +213,9 @@ test("sample preset has optional output modules and survives validation and refr
   ).toBeVisible();
   await expect(canvas.getByText("Locked", { exact: true })).toBeVisible();
   await expect(preset).toHaveCount(0);
-  await expect(canvas.getByText(/Isotropic sample test ·/)).toBeVisible();
+  await expect(canvas.getByText(/Elastic isotropic sample test ·/)).toBeVisible();
   await page.reload();
-  await expect(canvas.getByText(/Isotropic sample test ·/)).toBeVisible();
+  await expect(canvas.getByText(/Elastic isotropic sample test ·/)).toBeVisible();
   await expect(canvas.locator(".module-block strong")).toHaveText([
     "read_in",
     "guide",
