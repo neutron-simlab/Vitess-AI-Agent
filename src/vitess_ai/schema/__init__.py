@@ -4,11 +4,13 @@ from vitess_ai.schema.guide_module import GuideParameters
 from vitess_ai.schema.monitor1d_module import Monitor1DParameters
 from vitess_ai.schema.monitor2d_module import Monitor2DParameters
 from vitess_ai.schema.readin_module import ReadInParameters
+from vitess_ai.schema.sample_elasticisotr_module import SampleElasticIsotrParameters
 from vitess_ai.schema.writeout_module import WriteoutParameters
 
 __all__ = [
     "ReadInParameters",
     "GuideParameters",
+    "SampleElasticIsotrParameters",
     "WriteoutParameters",
     "Monitor1DParameters",
     "Monitor2DParameters",

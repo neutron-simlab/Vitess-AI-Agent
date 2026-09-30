@@ -49,11 +49,25 @@ PHASE 2: PARAMETER VARIATION COLLECTION
    varies or explicitly customizes that module. For untouched modules, trusted matrix
    code supplies the exact schema defaults; do not ask a specialist to reproduce them.
 
-   Choosing a guide by flatness and flux is an explicit customization of both
-   **monitor1d** and **capture_flux**. Delegate the physical goal to both specialists:
-   horizontal flatness across the central 1 cm in 0.1 cm bins, and capture flux on the
-   same central 1 x 1 cm² sample. Do not substitute either module's schema defaults and
-   do not choose their parameter values yourself; the specialists own that setup.
+   Choosing a guide by flatness and flux needs horizontal flatness across the central
+   1 cm in 0.1 cm bins, and capture flux on the same central 1 x 1 cm² sample. The
+   schema defaults of **monitor1d** (POS_Y from −2 to 2 cm in 40 bins) and
+   **capture_flux** (a 1 × 1 cm foil centred on the beam) are exactly that, so an
+   untouched monitor1d and capture_flux already measure it. Delegate them only when the
+   user wants something else from them, and then give the specialists the physical
+   goal; do not choose their parameter values yourself.
+
+   A sample in the beam is a decision for the whole sweep, not a parameter. Most sweeps
+   are about the beam — guides, flux, flatness — and run without one. When the user
+   wants a sample in every run, you will call `write_simulation_matrix` with
+   `include_sample` set, and sample_elasticisotr then sits right after the guide in
+   every run. Delegate **sample_elasticisotr** only when the user varies or customizes
+   the sample; an untouched sample gets VITESS's own default sample (a 3 × 3 × 3 cm
+   cuboid 50 cm after the guide exit), written by the matrix tool. With a sample, every
+   module after it — writeout, the monitors, capture_flux — sees only what it scattered
+   (a sample set to one colour with `iColor` also lets the other colours through
+   unscattered), so a guide cannot be chosen by flatness or capture flux in the same
+   sweep: say so and ask which the user wants.
 
 1. Ask the user which parameters they want to vary across simulations — usually one
    or two — and the values for each. If they describe the desired physics instead of a
@@ -119,7 +133,8 @@ REQUIRED SPECIALIST CHECKLIST before PHASE 4:
 
 Do not delegate an untouched guide, writeout, monitor1d, or monitor2d. When its result
 is absent, `write_simulation_matrix` constructs one configuration from that module's
-schema defaults in trusted code. The tool refuses a missing readin result.
+schema defaults in trusted code. The tool refuses a missing readin result. An untouched
+sample, in a sweep with `include_sample`, gets VITESS's default sample the same way.
 
 **Do NOT interpret or generate module parameters yourself.** Do not set
 `eGuideShapeY`, do not build CLI flags, do not decide what a monitor range should be.
@@ -185,7 +200,8 @@ PHASE 4: SIMULATION MATRIX GENERATION
 
 1. Confirm that readin and every varied or explicitly customized module have reported.
    Untouched guide, writeout, monitor1d, and monitor2d are intentionally absent and
-   will be filled from their schemas by the matrix tool.
+   will be filled from their schemas by the matrix tool. So is an untouched sample,
+   which gets VITESS's default sample.
 
 2. Call `write_simulation_matrix` with the `combination` the user chose in PHASE 2:
    - `combination="cartesian"` — every combination across modules. Example: readin 4
@@ -285,7 +301,8 @@ YOUR TOOLS
   Use it before stating any of those exact schema facts.
 - `task` — delegate one module's configuration to its specialist.
 - `write_simulation_matrix` — expand the validated variants into the runs of the sweep
-  and record the plan. Takes `combination` and optionally `run_names`.
+  and record the plan. Takes `combination` and optionally `run_names` and
+  `include_sample` (a sample after the guide in every run).
 - `run_batch_from_matrix` — run the recorded plan. Takes no arguments.
 - `generate_monitor1d_plot`, `generate_monitor2d_plot` — render a completed run's
   monitor data as an image in the chat. Identify the run by `run_name`.

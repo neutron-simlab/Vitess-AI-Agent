@@ -64,10 +64,10 @@ both paths as `options` so it can be answered with one click:
 >
 > I can set it up in two ways:
 >
-> 1. **Default Setup**: count the whole beam, with no foil restriction and no wavelength
->    window, weighting each neutron by λ / 1.798 Å (the usual reference wavelength).
->    With no foil the area is taken as 1 cm², so the reported capture flux equals the
->    captured intensity.
+> 1. **Default Setup**: a 1 × 1 cm foil centred on the beam — the size of the sample —
+>    running from −0.5 to 0.5 cm horizontally and vertically, with no wavelength window,
+>    weighting each neutron by λ / 1.798 Å (the usual reference wavelength). The
+>    reported capture flux is then the flux on the sample, in n/(s·cm²).
 > 2. **Customize**: give the foil's shape, size and position, a different reference
 >    wavelength, or limit the wavelengths that count.
 >
@@ -102,21 +102,21 @@ Then follow **PATH A** or **PATH B** below.
 ```jsonc
 {
   "ReferenceWavelength": 1.798,   // lambda_ref in Å: each neutron counts with weight λ / 1.798 Å
-  "WindowType": 0,                // NO_RESTRICTIONS: the whole beam, area taken as 1 cm²
+  "WindowType": 2,                // RECTANGULAR: the 1 x 1 cm foil below, area 1 cm²
   "winradius": 0.0,               // circular foil only
   "ywincenter": 0.0,              // circular foil only
   "zwincenter": 0.0,              // circular foil only
-  "widthmin": 0.0,                // rectangular foil only
-  "widthmax": 0.0,                // rectangular foil only
-  "heightmin": 0.0,               // rectangular foil only
-  "heightmax": 0.0,               // rectangular foil only
+  "widthmin": -0.5,               // foil from -0.5 cm (right) ...
+  "widthmax": 0.5,                // ... to 0.5 cm (left)
+  "heightmin": -0.5,              // foil from -0.5 cm (bottom) ...
+  "heightmax": 0.5,               // ... to 0.5 cm (top)
   "lambdamin": 0.0,               // both 0: no wavelength window
   "lambdamax": 0.0                // both 0: no wavelength window
 }
 ```
 
-2. Do not ask about a foil on this path. A foil is a customization; the exact schema
-   default is `NO_RESTRICTIONS`.
+2. Do not ask about the foil on this path. Its size and shape are a customization; the
+   exact schema default is the 1 × 1 cm `RECTANGULAR` foil centred on the beam.
 3. Tell the user: *"There is no file to name: capture_flux writes its result into the
    simulation log. After the run, the captured intensity and the capture flux, each
    with its uncertainty, are reported back in the chat."*
@@ -144,7 +144,8 @@ from its default, say what the default is, and let the user keep it.
    - 0 means no reference wavelength: every neutron counts with its plain intensity,
      and the result is the ordinary flux through the foil rather than a capture flux.
 
-2. **The foil** (`WindowType`, default `NO_RESTRICTIONS` = 0):
+2. **The foil** (`WindowType`, default `RECTANGULAR` = 2, the 1 × 1 cm foil from −0.5 to
+   0.5 cm in both directions):
    - `NO_RESTRICTIONS` (0): the whole beam counts, and the area is taken as 1 cm².
    - `CIRCULAR` (1): ask for the radius `winradius` (required, greater than 0) and the
      centre `ywincenter`, `zwincenter` (default 0 and 0 — on the beam axis).
@@ -185,11 +186,19 @@ from its default, say what the default is, and let the user keep it.
   distance from the guide entrance.
   If a monitor before it has "exclusive counts" switched on, that monitor passes on only
   the neutrons it counted, and capture_flux sees only those.
+- **After a sample.** When the simulation has a sample (sample_elasticisotr, right
+  after the guide), capture_flux measures the neutrons the sample scattered, where they
+  leave its surface — not the beam on the sample. A sample set to scatter one colour
+  only (`iColor` other than −1) lets every other colour through unscattered, and those
+  neutrons are counted too. Your objective says so when it does.
+  Say in your confirmation question that the result is then the flux of scattered
+  neutrons, not a beam flux to compare with a gold foil at the sample position.
 - **The area.** The capture flux is the captured intensity divided by the foil area:
   π · winradius² for a circular foil, (widthmax − widthmin) · (heightmax − heightmin)
-  for a rectangular one, and 1 cm² when there is no foil. With no foil the capture flux
-  is therefore numerically the captured intensity — a total, not a density. Someone who
-  wants a flux per cm² to compare with a real foil needs to give the foil.
+  for a rectangular one, and 1 cm² when there is no foil. The default 1 × 1 cm foil
+  therefore gives the flux on the sample. With no foil the capture flux is numerically
+  the captured intensity of the whole beam — a total, not a density — and it is only
+  comparable with a real foil if the user says so.
 - **Coordinates.** y is horizontal and z vertical, both in cm and measured from the beam
   axis. For y, the minimal value is the right side and the maximal value the left side.
   Wavelengths are in Å.
@@ -217,8 +226,8 @@ predict their values.
 A guide is chosen for the highest flux on a 1 x 1 cm² sample and a flat beam across it.
 The flux on the sample needs a foil the size of the sample. With no foil, the capture
 flux is the intensity of the whole beam, and a wide beam would win even when little of it
-reaches the sample. So when the user is comparing guides or choosing a guide shape,
-propose:
+reaches the sample. The default foil is exactly the one needed, so when the user is
+comparing guides or choosing a guide shape, keep it:
 
 | Parameter | Value |
 |---|---|

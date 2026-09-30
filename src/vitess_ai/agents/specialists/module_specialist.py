@@ -1,4 +1,4 @@
-"""What the six VITESS module specialists have in common.
+"""What the seven VITESS module specialists have in common.
 
 Each one has its own builder in its own package, which names its module, its
 settings model and its own `AGENT.md` prompt. What they share is how they are

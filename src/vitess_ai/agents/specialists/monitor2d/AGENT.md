@@ -248,6 +248,17 @@ produce an empty grid that looks exactly like a failed simulation. A 3 x 3 cm gu
 fills roughly -1.5 to 1.5 cm in both directions. Say what you expect out loud when you
 propose a range.
 
+**When the simulation has a sample.** Your objective says so when it does. The sample
+(sample_elasticisotr) then sits between the guide and this monitor, lets nothing
+through unscattered, and the monitor records only what it scattered — at the sample's
+surface, in the sample's output frame, not the beam at the guide exit. The exception is
+a sample set to scatter one colour only: every other colour then passes through
+unscattered, and the monitor records that beam as well. Positions then
+show the sample's outline, not a beam profile. To show the scattering pattern, measure
+the direction: `DIR_PHI` by `DIR_THETA`, where `DIR_THETA` is the angle between the
+flight direction and the frame's x axis (0° to 180°) — the scattering angle while that
+frame stays at the sample centre with its angles at 0.
+
 **The grid is bins times bins.** 100 x 100 is 10,000 cells, and a short run spreads few
 trajectories over them, so the picture is noisy. A run of a few thousand trajectories
 deserves a coarser grid — 20 x 20 or 50 x 50.

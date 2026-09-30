@@ -208,6 +208,23 @@ class VtWindowType(IntEnum):
     CIRCULAR = 1
     RECTANGULAR = 2
 
+class VtSmplGeom(IntEnum):
+    """
+    Shape of the sample in sample_elasticisotr (-G). Values from VITESS's
+    SRC/defines.h:722-726, names as in yaml/3.8/modules/sample_elasticisotr.yaml.
+
+    VT_NO_GEOM (0): no shape; the module stops with "Sample geometry missing".
+    VT_CUBE (1): a cuboid of thickness (x), width (y) and height (z).
+    VT_CYL (2): an upright cylinder of diameter and height.
+    VT_SPHERE (3): a sphere; only the diameter counts.
+    VT_HOL_CYL (4): an upright hollow cylinder of outer diameter, height and inner diameter.
+    """
+    VT_NO_GEOM = 0
+    VT_CUBE = 1
+    VT_CYL = 2
+    VT_SPHERE = 3
+    VT_HOL_CYL = 4
+
 class FillingStage(BaseModel):
     """
     This is the model to store the information about the parameters filling process, either it is processing, completed, or error.

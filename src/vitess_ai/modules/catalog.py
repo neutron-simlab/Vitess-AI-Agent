@@ -33,8 +33,10 @@ __all__ = [
     "UploadSchema",
     "ModuleSpec",
     "MODULES",
+    "SAMPLE_MODULE",
     "module_spec",
     "execution_order",
+    "optional_modules",
     "cli_executables",
     "upload_modules",
 ]
@@ -92,6 +94,12 @@ class ModuleSpec(BaseModel):
     cli_executable: str | None = None
     #: ``None`` means there is nothing to upload for this module.
     accepts_upload: UploadSchema | None = None
+    #: ``True`` means the module runs only in a simulation that asks for it.
+    #: Every other executable row runs in every simulation. The sample is the
+    #: one such row: capture_flux could join every run because it passes each
+    #: neutron on unchanged, but a sample replaces the beam with what it
+    #: scattered, so a guide comparison must be able to run without one.
+    optional: bool = False
 
 
 MODULES: tuple[ModuleSpec, ...] = (
@@ -143,25 +151,36 @@ MODULES: tuple[ModuleSpec, ...] = (
             max_files=1,
         ),
     ),
+    # Right after the guide, where a sample sits: everything after it --
+    # writeout, the monitors, capture_flux -- then records what it scattered.
+    # Optional, so a simulation without a sample runs exactly as before.
+    ModuleSpec(
+        name="sample_elasticisotr",
+        display_name="Sample Parameters (isotropic scattering)",
+        description="Configure an elastic, isotropically scattering sample",
+        order=4,
+        cli_executable="sample_elasticisotr",
+        optional=True,
+    ),
     ModuleSpec(
         name="writeout",
         display_name="Writeout Parameters",
         description="Configure output settings and data formats",
-        order=4,
+        order=5,
         cli_executable="writeout",
     ),
     ModuleSpec(
         name="monitor1d",
         display_name="Monitor1D Parameters",
         description="Configure 1D monitor parameters for neutron detection",
-        order=5,
+        order=6,
         cli_executable="monitor1D",
     ),
     ModuleSpec(
         name="monitor2d",
         display_name="Monitor2D Parameters",
         description="Configure 2D monitor parameters for neutron detection",
-        order=6,
+        order=7,
         cli_executable="monitor2D",
     ),
     # Last: it passes every trajectory on unchanged and only reports the
@@ -170,10 +189,15 @@ MODULES: tuple[ModuleSpec, ...] = (
         name="capture_flux",
         display_name="Capture Flux Parameters",
         description="Configure the gold-foil capture flux evaluation",
-        order=7,
+        order=8,
         cli_executable="capture_flux",
     ),
 )
+
+#: The optional row, by name, for the code that must say "was there a sample in
+#: this run" -- the plan's `include_sample`, and the readings that stop calling
+#: themselves a beam measurement once a sample has scattered the beam.
+SAMPLE_MODULE = "sample_elasticisotr"
 
 _BY_NAME = {spec.name: spec for spec in MODULES}
 
@@ -194,12 +218,24 @@ def module_spec(name: str) -> ModuleSpec:
         raise KeyError(f"Unknown VITESS module {name!r}. Known modules: {known}") from None
 
 
-def execution_order() -> tuple[str, ...]:
-    """The modules that run a binary, in the order the pipeline runs them."""
+def execution_order(*, include_optional: bool = False) -> tuple[str, ...]:
+    """The modules that run a binary, in the order the pipeline runs them.
+
+    Without arguments this is the pipeline every simulation runs. With
+    ``include_optional`` the optional rows -- today only the sample -- are
+    added in their place, which is also the list of every runnable module.
+    """
     return tuple(
         spec.name
         for spec in sorted(MODULES, key=lambda spec: spec.order)
-        if spec.cli_executable is not None
+        if spec.cli_executable is not None and (include_optional or not spec.optional)
+    )
+
+
+def optional_modules() -> frozenset[str]:
+    """The executable rows that run only in a simulation that asks for them."""
+    return frozenset(
+        spec.name for spec in MODULES if spec.optional and spec.cli_executable is not None
     )
 
 

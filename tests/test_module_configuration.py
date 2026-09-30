@@ -14,6 +14,8 @@ from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.graph import START, StateGraph
+from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 from pydantic import BaseModel, Field, ValidationError
 
@@ -45,6 +47,9 @@ from vitess_ai.agents.specialists.module_tools import omitted_file_value
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
 from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
 from vitess_ai.agents.specialists.readin.tools import build_tools as readin_tools
+from vitess_ai.agents.specialists.sample_elasticisotr.tools import (
+    build_tools as sample_elasticisotr_tools,
+)
 from vitess_ai.agents.specialists.writeout.tools import build_tools as writeout_tools
 from vitess_ai.cli.arguments import (
     ParameterConversionError,
@@ -105,7 +110,7 @@ def test_every_executable_module_has_exactly_one_parameter_model() -> None:
     validates their parameters. `run_simulation` needs both to agree for every
     module it is about to execute.
     """
-    assert tuple(PARAMETER_MODELS) == execution_order()
+    assert tuple(PARAMETER_MODELS) == execution_order(include_optional=True)
 
 
 def test_asking_for_a_model_that_is_not_there_raises() -> None:
@@ -118,7 +123,7 @@ def test_asking_for_a_model_that_is_not_there_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_every_model_converts_to_flag_value_arguments(module: str) -> None:
     """One token per argument, each a flag with its value attached.
 
@@ -126,11 +131,14 @@ def test_every_model_converts_to_flag_value_arguments(module: str) -> None:
     execution time -- by which point the specialist has gone.
     """
     model = parameter_model(module)
-    defaults = model() if module != "readin" else model(
-        sInputFileName=["/data/projects/x/uploads/readin/beam.dat"],
-        Weight=[1.0],
-        sInstrInfIn=None,
-    )
+    if module == "readin":
+        defaults = model(
+            sInputFileName=["/data/projects/x/uploads/readin/beam.dat"],
+            Weight=[1.0],
+            sInstrInfIn=None,
+        )
+    else:
+        defaults = model()
 
     arguments = parameters_to_arguments(defaults)
 
@@ -1005,9 +1013,9 @@ def test_the_five_specialists_are_the_five_executable_modules(
         fallback_models=[],
     )
 
-    assert [spec["module"] for spec in specialists] == list(execution_order())
+    assert [spec["module"] for spec in specialists] == list(execution_order(include_optional=True))
     assert [spec["name"] for spec in specialists] == [
-        f"{module}-specialist" for module in execution_order()
+        f"{module}-specialist" for module in execution_order(include_optional=True)
     ]
 
 
@@ -1026,7 +1034,7 @@ def test_the_five_specialists_are_the_five_executable_modules(
 PROMPT_OVERRIDES_SCHEMA = {("readin", "sInstrInfIn"): None}
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_the_default_configuration_in_each_prompt_is_the_schema_default(
     module: str,
 ) -> None:
@@ -1123,7 +1131,7 @@ def test_a_specialists_own_messages_never_reach_the_user() -> None:
     assert from_supervisor != []
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_every_prompt_puts_the_setup_choice_through_ask_user(module: str) -> None:
     """Default-or-custom is the first question, and it has to be askable.
 
@@ -1148,7 +1156,7 @@ def _setup_choice(module: str) -> str:
     return _agent_md(module).split("## STEP 0")[1].split("## PATH A")[0]
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_the_setup_choice_says_what_the_defaults_actually_are(module: str) -> None:
     """"Optimal default values" is not a thing anyone can choose.
 
@@ -1184,7 +1192,7 @@ def test_the_setup_choice_says_what_the_defaults_actually_are(module: str) -> No
             )
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_the_setup_choice_names_no_enum_value_the_default_is_not(module: str) -> None:
     """The drift that already happened once, in the place no test was looking.
 
@@ -1222,7 +1230,7 @@ def test_the_setup_choice_names_no_enum_value_the_default_is_not(module: str) ->
             )
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_every_prompt_keeps_the_configuration_inside_the_question(module: str) -> None:
     """Nothing may tell the model to show the configuration on its own."""
     text = _agent_md(module)
@@ -1238,7 +1246,7 @@ def test_every_prompt_keeps_the_configuration_inside_the_question(module: str) -
         assert banned not in text, f"{module}/AGENT.md still says: {banned}"
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
     module: str,
 ) -> None:
@@ -1249,7 +1257,7 @@ def test_each_specialist_prompt_carries_its_own_schema_and_no_other(
     )
 
     assert parameter_model(module).__name__ in prompt
-    for other in execution_order():
+    for other in execution_order(include_optional=True):
         if other != module:
             assert parameter_model(other).__name__ not in prompt
 
@@ -1280,6 +1288,9 @@ def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
             project_root=tmp_path, documentation_tools=documentation
         ),
         "capture_flux": lambda: capture_flux_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
+        "sample_elasticisotr": lambda: sample_elasticisotr_tools(
             project_root=tmp_path, documentation_tools=documentation
         ),
     }
@@ -1321,7 +1332,7 @@ def _field_names(model: type[BaseModel]) -> set[str]:
     return names
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     module: str, tmp_path: Path
 ) -> None:
@@ -1350,7 +1361,7 @@ def test_each_prompt_names_exactly_the_tools_that_specialist_has(
     not_tools = (
         _field_names(parameter_model(module))
         | set(SpecialistReport.model_fields)
-        | set(execution_order())
+        | set(execution_order(include_optional=True))
         | {spec.name for spec in upload_modules()}
         | set(cli_executables().values())
         | PROSE_WORDS_THAT_LOOK_LIKE_TOOLS
@@ -1392,7 +1403,7 @@ def test_tool_candidate_parser_covers_invented_and_one_word_tools(
     assert TOOL_SHAPED.findall(f"`{invented_tool}`") == [invented_tool]
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_validation_tool_description_requires_confirmation(
     module: str, tmp_path: Path
 ) -> None:
@@ -1406,7 +1417,8 @@ def test_validation_tool_description_requires_confirmation(
 
 
 @pytest.mark.parametrize(
-    "module", ("guide", "writeout", "monitor1d", "monitor2d", "capture_flux")
+    "module",
+    ("guide", "sample_elasticisotr", "writeout", "monitor1d", "monitor2d", "capture_flux"),
 )
 def test_default_tool_accepts_no_parameters_and_records_exact_schema_defaults(
     module: str, tmp_path: Path
@@ -1423,7 +1435,7 @@ def test_default_tool_accepts_no_parameters_and_records_exact_schema_defaults(
     assert recorded.parameters == parameter_model(module)().model_dump(mode="json")
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_a_module_specialist_is_bound_only_the_tools_its_job_needs(
     module: str, offline_model: Any, tmp_path: Path
 ) -> None:
@@ -1528,6 +1540,90 @@ def test_readin_lists_both_trajectory_and_instrument_upload_slots(tmp_path: Path
         "readin",
         "instrument",
     ]
+
+
+# ---------------------------------------------------------------------------
+# The two tools that take no input
+#
+# A specialist reports through `ToolStrategy`, so LangChain sends every one of
+# its model calls with tool_choice "required". Since 2026-09-29 Blablador's
+# Qwen3.8-Flash-Next answers a required call to a tool with no parameters by
+# inventing one: the arguments below are what it sent in the live chats. A
+# refused key sent read-in into a loop of retries until its model-call budget
+# ran out. Calling `tool.func` directly skips the argument model, where the
+# refusal happened, so these tests go through LangGraph's `ToolNode`, the node a
+# specialist runs its tools in.
+# ---------------------------------------------------------------------------
+
+STRAY_ARGUMENTS = (
+    {"any": ""},
+    {"raw": "{}"},
+    {"parameters": "{}"},
+    {"__unparsedToolInput": "{}"},
+)
+
+
+def _run_tool_call(tool: Any, args: dict[str, Any]) -> dict[str, Any]:
+    graph = StateGraph(VitessBridgeState)
+    graph.add_node("tools", ToolNode([tool]))
+    graph.add_edge(START, "tools")
+    call = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": tool.name, "args": args, "id": "model-call", "type": "tool_call"}
+        ],
+    )
+    return asyncio.run(
+        graph.compile().ainvoke(
+            {"messages": [call]}, {"configurable": {"thread_id": THREAD_ID}}
+        )
+    )
+
+
+@pytest.mark.parametrize("args", STRAY_ARGUMENTS)
+def test_list_staged_files_ignores_arguments_the_model_invents(
+    args: dict[str, Any], tmp_path: Path
+) -> None:
+    class _Gateway:
+        async def inspect_thread(self, _thread_id: str) -> Any:
+            return SimpleNamespace(
+                failure=None,
+                value=SimpleNamespace(
+                    uploads=[
+                        SimpleNamespace(
+                            module="readin",
+                            files=[SimpleNamespace(path="uploads/readin/beam.dat", size_bytes=4)],
+                        )
+                    ]
+                ),
+            )
+
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=_Gateway()), "list_staged_files"
+    )
+
+    reply = _run_tool_call(tool, args)["messages"][-1]
+
+    assert reply.status == "success"
+    assert [Path(item["path"]).name for item in json.loads(reply.text)] == ["beam.dat"]
+
+
+@pytest.mark.parametrize("args", STRAY_ARGUMENTS)
+@pytest.mark.parametrize(
+    "module",
+    ("guide", "sample_elasticisotr", "writeout", "monitor1d", "monitor2d", "capture_flux"),
+)
+def test_default_tool_ignores_arguments_the_model_invents(
+    module: str, args: dict[str, Any], tmp_path: Path
+) -> None:
+    """Whatever the model puts in the call, the exact defaults are recorded."""
+    tool = named_tool(_specialist_tools(module, tmp_path), f"use_{module}_defaults")
+
+    state = _run_tool_call(tool, args)
+
+    assert state["messages"][-1].status == "success"
+    recorded = ModuleConfigurationResult.model_validate(state["module_results"][module])
+    assert recorded.parameters == parameter_model(module)().model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -1841,7 +1937,7 @@ def test_every_prompt_carries_the_same_order_of_work_word_for_word() -> None:
     The sequence is authored once and pasted into all five, and this is what
     keeps them identical -- an edit to one has to be an edit to all five.
     """
-    texts = {module: _order_of_work(module) for module in execution_order()}
+    texts = {module: _order_of_work(module) for module in execution_order(include_optional=True)}
     distinct = set(texts.values())
 
     assert len(distinct) == 1, (
@@ -1872,7 +1968,7 @@ def test_the_two_modules_that_read_a_file_are_told_to_re_read_the_store() -> Non
     """
     carrying = {
         module
-        for module in execution_order()
+        for module in execution_order(include_optional=True)
         if "## SAY WHICH FILE YOU ARE USING" in _prompt_text(module)
     }
     blocks = {
@@ -1887,7 +1983,7 @@ def test_the_two_modules_that_read_a_file_are_told_to_re_read_the_store() -> Non
     assert "call `list_staged_files()` **again**" in blocks["readin"]
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) -> None:
     """The contradictions, named so they cannot come back one at a time."""
     text = _prompt_text(module)
@@ -1916,7 +2012,7 @@ def test_no_prompt_tells_the_model_to_validate_before_presenting(module: str) ->
     ) == 2
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_no_prompt_names_a_findings_file_no_specialist_can_write(module: str) -> None:
     """`read_file` went, and the paragraph that described it had to go with it.
 

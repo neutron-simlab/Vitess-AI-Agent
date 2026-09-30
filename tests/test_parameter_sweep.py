@@ -141,10 +141,13 @@ def test_the_batch_tool_has_no_argument_the_model_could_fill_in(
     matrix = named_tool(tools, "write_simulation_matrix")
 
     assert set(batch.args_schema.model_fields) == {"runtime"}
+    # `include_sample` chooses only whether the sample runs. Where it runs and
+    # with which values still come from the catalog and from validated state.
     assert set(matrix.args_schema.model_fields) == {
         "runtime",
         "combination",
         "run_names",
+        "include_sample",
     }
     for forbidden in ("module_results", "run_specs", "execution_order", "thread_id"):
         assert forbidden not in matrix.args_schema.model_fields
@@ -910,7 +913,7 @@ def test_the_guide_shape_conversation_uses_the_authoritative_schema(
     assert described["json_schema"]["properties"]["GuideExitHeight"]["flag"] == "-H"
 
 
-@pytest.mark.parametrize("module", execution_order())
+@pytest.mark.parametrize("module", execution_order(include_optional=True))
 def test_every_runnable_module_can_be_described(module: str) -> None:
     """Regression for the turn that stopped on `describe_module_parameters("readin")`.
 

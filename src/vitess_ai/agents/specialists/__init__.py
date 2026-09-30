@@ -1,6 +1,6 @@
-"""The six VITESS module specialists, listed one by one.
+"""The seven VITESS module specialists, listed one by one.
 
-Six imports and six entries. The module catalog is a table of data about the
+Seven imports and seven entries. The module catalog is a table of data about the
 physics modules, and on purpose it no longer names each module's agent
 (``agent_class`` or ``tool_factory``). That field is why reading the catalog
 used to load the whole agent framework, and why two hand-kept copies of the
@@ -21,6 +21,9 @@ from vitess_ai.agents.specialists.guide import build_guide_specialist
 from vitess_ai.agents.specialists.monitor1d import build_monitor1d_specialist
 from vitess_ai.agents.specialists.monitor2d import build_monitor2d_specialist
 from vitess_ai.agents.specialists.readin import build_readin_specialist
+from vitess_ai.agents.specialists.sample_elasticisotr import (
+    build_sample_elasticisotr_specialist,
+)
 from vitess_ai.agents.specialists.writeout import build_writeout_specialist
 
 __all__ = ["compile_module_specialists", "compile_sweep_specialists"]
@@ -34,10 +37,12 @@ def compile_module_specialists(
     fallback_models: list[Any],
     unattended: bool = False,
 ) -> list[ModuleCompiledSubAgent]:
-    """Compile all six, in the order the VITESS pipeline runs them.
+    """Compile all seven, in the order the VITESS pipeline runs them.
 
     Only the two modules that read a user's file take the MCP gateway; the
-    other four read no staged file and have nothing to look at.
+    other five read no staged file and have nothing to look at. The sample
+    runs only in a simulation that asks for it, but its specialist is always
+    compiled: whether it is delegated to is the plan's decision, not this list's.
 
     ``unattended`` compiles the sweep copies -- see
     :func:`compile_sweep_specialists`.
@@ -54,6 +59,12 @@ def compile_module_specialists(
         build_guide_specialist(
             project_root=project_root,
             gateway=gateway,
+            summarizer_model=summarizer_model,
+            fallback_models=fallback_models,
+            unattended=unattended,
+        ),
+        build_sample_elasticisotr_specialist(
+            project_root=project_root,
             summarizer_model=summarizer_model,
             fallback_models=fallback_models,
             unattended=unattended,
@@ -92,7 +103,7 @@ def compile_sweep_specialists(
     summarizer_model: Any,
     fallback_models: list[Any],
 ) -> list[ModuleCompiledSubAgent]:
-    """The same six, compiled again for a parameter sweep.
+    """The same seven, compiled again for a parameter sweep.
 
     A second compile, not a second set of agents: `build_chat_model` caches on
     (provider, model, temperature), so this costs tool objects and a prompt

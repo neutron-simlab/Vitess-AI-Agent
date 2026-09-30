@@ -63,7 +63,7 @@ both paths as `options` so it can be answered with one click:
 > Choose your setup approach:
 >
 > 1. **Default Setup**: measure intensity against POS_Y (horizontal position),
->    from -2.0 to 2.0 cm in 100 bins, written to `monitor1D.dat`. Nothing else
+>    from -2.0 to 2.0 cm in 40 bins, written to `monitor1D.dat`. Nothing else
 >    to decide.
 > 2. **Customize**: modify the monitor parameters step by step.
 >
@@ -99,6 +99,7 @@ valid defaults in the schema, and asking for them makes "defaults" the same work
    - `eParX`: 1 (POS_Y) — already default
    - `xMin`: -2.0 — already default
    - `xMax`: 2.0 — already default
+   - `nBinsX`: 40 — already default
 2. Do not ask for a different output file name on this path. A different name is a
    customization; the exact schema default is `monitor1D.dat`.
 
@@ -110,7 +111,7 @@ Optimal default values for most 1D monitor simulations (use these automatically)
 {
   "fMonitorFilename": "monitor1D.dat",
   "eParX": 1,
-  "nBinsX": 100,
+  "nBinsX": 40,
   "xMin": -2.0,
   "xMax": 2.0,
   "bWeight": true,
@@ -240,8 +241,10 @@ cm, and a thermal spectrum runs from about 1 to 10 Å. Say what you expect out l
 you propose a range.
 
 **More bins is not more detail.** Far more bins over the same range makes a noisier
-curve, not a finer one, because each bin catches fewer trajectories. 100 is a good
-default; a short run deserves fewer.
+curve, not a finer one, because each bin catches fewer trajectories. The default 40 over
+-2 to 2 cm gives 0.1 cm bins, which is exactly what the flatness check below needs; do
+not change it when the user is choosing a guide. For another quantity, a short run
+deserves fewer bins.
 
 ---
 
@@ -262,10 +265,10 @@ The server can only judge a monitor set up for it:
 | `xMax` | 2.0 | |
 | `nBinsX` | 40 | 0.1 cm bins, so ±0.5 cm fall exactly on bin edges |
 
-With the default 100 bins each bin is 0.04 cm wide, and the server reports the flatness as
-"not judged". So when the user is comparing guides, choosing a guide shape, or asks
-whether the beam is flat, uniform or homogeneous, propose exactly these four values and
-say why. Every run that is compared must use the same monitor settings.
+These four are the defaults, so a Default Setup run is judged. Any other bin width is
+reported as "not judged". So when the user is comparing guides, choosing a guide shape,
+or asks whether the beam is flat, uniform or homogeneous, keep exactly these four values
+and say why. Every run that is compared must use the same monitor settings.
 
 INCONCLUSIVE means the simulation had too few trajectories to decide, not that the beam
 is bad. More trajectories fix it; changing the bins does not, because the bin width is
@@ -275,6 +278,26 @@ part of the criterion.
 them — in this pipeline, the guide exit. It has no position parameter of its own. To
 measure further downstream, the guide itself is longer; the run result states the
 position as the distance from the guide entrance.
+
+**When the simulation has a sample.** Your objective says so when it does. The sample
+(sample_elasticisotr) then sits between the guide and this monitor, lets nothing
+through unscattered, and the monitor records only what it scattered — at the sample's
+surface, in the sample's output frame, not the beam at the guide exit. The exception is
+a sample set to scatter one colour only: every other colour then passes through
+unscattered, and the monitor records that beam as well. To show the
+scattering pattern, measure `DIR_THETA`: the angle between the flight direction and the
+frame's x axis, 0° to 180°, which is the scattering angle while that frame stays at the
+sample centre with its angles at 0. Set the range from the sample's scattering band,
+not from the beam. For a sample scattering around straight ahead with horizontal
+half-range Δθ and vertical half-range Δφ, the angle runs from 0 to:
+- acos(cos Δθ · cos Δφ) while Δθ is 90° or less — about 1.4° for VITESS's default
+  sample, about 46° for ±45° by ±12.5°;
+- Δθ itself once Δθ is above 90° — the widest direction then lies in the horizontal
+  plane, so ±120° reaches 120° and ±180° reaches 180°, whatever Δφ is. (Measured: a
+  ±180° by ±45° band reached 179°, where the first formula would say 135°.)
+For a band whose mean direction is not straight ahead, use 0° to 180°. `DIR_PHI` is the angle around the x axis, −180° to 180°. A position (`POS_Y`,
+`POS_Z`) shows where neutrons leave the sample surface, not a beam profile, and the
+server gives no flatness verdict for a run with a sample.
 
 ---
 
