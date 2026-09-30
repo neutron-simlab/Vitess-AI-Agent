@@ -225,6 +225,50 @@ class VtSmplGeom(IntEnum):
     VT_SPHERE = 3
     VT_HOL_CYL = 4
 
+class VtDetGeom(IntEnum):
+    """
+    Shape of the screen in screen (-G). Values from VITESS's SRC/defines.h:775-781.
+
+    VT_NO_DET_GEOM (-1): no shape; the module stops with "Wrong value for geometry".
+    VT_DET_CYL (1): an upright cylinder around the frame origin, of radius Distance.
+    VT_DET_FLAT (2): a flat rectangle across the beam axis, Distance along x.
+    """
+    VT_NO_DET_GEOM = -1
+    VT_DET_CYL = 1
+    VT_DET_FLAT = 2
+
+class VtEvalPar(IntEnum):
+    """
+    What eval_elast bins the intensity by (-k). Values from VITESS's
+    SRC/defines.h:943-951, names as in yaml/3.8/modules/eval_elast.yaml.
+
+    VT_NO_EVAL (0): nothing; every neutron is left uncounted.
+    VT_EVAL_DSP (1): d-spacing, in Å.
+    VT_EVAL_Q (2): momentum transfer Q, in 1/Å.
+    VT_EVAL_ANGLE (3): scattering angle 2θ, in degrees.
+    VT_EVAL_LMBD (4): wavelength from TOF (or the reference) minus the true wavelength, in Å.
+    """
+    VT_NO_EVAL = 0
+    VT_EVAL_DSP = 1
+    VT_EVAL_Q = 2
+    VT_EVAL_ANGLE = 3
+    VT_EVAL_LMBD = 4
+
+class VtAxis(IntEnum):
+    """
+    The one direction a sample scatters in, for eval_elast (-A). Values from
+    VITESS's SRC/defines.h:245-252.
+
+    NO_AXIS (-1): isotropic scattering; the angle is measured from the x axis in 3D.
+    X_AXIS (0): not accepted by eval_elast, which stops with "Invalid scattering axis".
+    Y_AXIS (1): scattering in the horizontal plane only.
+    Z_AXIS (2): scattering in the vertical plane only, e.g. a liquid surface.
+    """
+    NO_AXIS = -1
+    X_AXIS = 0
+    Y_AXIS = 1
+    Z_AXIS = 2
+
 class FillingStage(BaseModel):
     """
     This is the model to store the information about the parameters filling process, either it is processing, completed, or error.
