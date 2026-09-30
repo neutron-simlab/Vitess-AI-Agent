@@ -189,3 +189,21 @@ writes the header when `read_in` feeds the module directly. VITESS's own referen
 outputs for these tests, written by an older build, have the real count on that
 line too; every data row is identical to them. The reader takes only the intensity
 from those lines.
+
+### Logarithmic evaluation regression
+
+`eval_elast-log.dat` was generated with the same VITESS 3.8 binaries. The input
+is three synthetic VITESS text trajectories: wavelength 4 Å, probability 1,
+time and position zero, colour 0, spin `(0, 0, 1)`, and directions
+`(cos(angle), sin(angle), 0)` at 1.5°, 3° and 6° (12 decimal places).
+Read them with `read_in -f1 -F0 -Abeam.dat -a1.0`, then pipe into:
+
+```sh
+eval_elast -k3 -ospectrum.dat -n100 -m1 -M8 -R100 -w0 -r2
+```
+
+Both modules use `--Z1 --G0 --B10000 --P<temporary-directory>`. Each of the
+bins `[1,2)`, `[2,4)` and `[4,8)` contains one trajectory with unit intensity.
+The file gives geometric bin centres, not edges. The plot regression checks
+points and errors at those centres, without equal-width histogram bars; it also
+checks one- and two-bin subsets, where centre spacing cannot identify the binning.

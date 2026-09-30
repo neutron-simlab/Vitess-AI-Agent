@@ -105,8 +105,12 @@ class EvalElastParameters(VitessParameterModel):
     DeadSpot: Annotated[float, Field(
         default=0.0,
         ge=0,
-        description=("-d [deg] Neutrons scattered by less than this angle are left out, e.g. "
-                    "the direct beam in SANS when no beamstop is used. 0 leaves none out."),
+        description=("-d [deg] 0 disables the cutoff. Otherwise VITESS rejects scattering "
+                    "angles <= DeadSpot. With NO_AXIS the angle is nonnegative, so this "
+                    "excludes the direct beam. Y_AXIS/Z_AXIS use signed angles: every "
+                    "negative angle is then rejected too, not only angles near zero. "
+                    "Signed angle, Q or d-spacing ranges starting below 0 require "
+                    "DeadSpot=0; use NO_AXIS for a cutoff based on angular magnitude."),
         json_schema_extra={"flag": "-d"}
     )]
 
@@ -155,7 +159,8 @@ class EvalElastParameters(VitessParameterModel):
         default=VtAxis.NO_AXIS,
         description=("-A [-] NO_AXIS (-1) for a sample that scatters in every direction; "
                     "Y_AXIS (1) or Z_AXIS (2) for one that scatters only horizontally or "
-                    "only vertically, e.g. a liquid surface (Z_AXIS)."),
+                    "only vertically, e.g. a liquid surface (Z_AXIS). These planar angles "
+                    "are signed; a nonzero DeadSpot rejects their entire negative side."),
         json_schema_extra={"flag": "-A"}
     )]
 
@@ -239,6 +244,30 @@ class EvalElastParameters(VitessParameterModel):
         ):
             raise ValueError(
                 "EvalTimeMin must be smaller than EvalTimeMax; otherwise nothing is binned"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def dead_spot_preserves_the_requested_signed_range(self) -> "EvalElastParameters":
+        """The binary compares signed TwoTheta <= DeadSpot, without abs().
+
+        Measured with trajectories at -10 and +10 deg, for both Y_AXIS and
+        Z_AXIS: -d0 counts both; -d1 discards -10, not just the direct beam.
+        Q and d-spacing inherit the angle's sign through sin(TwoTheta/2).
+        Wavelength difference does not: a negative difference is valid at a
+        positive scattering angle and must not be refused by this check.
+        """
+        if (
+            self.DeadSpot > 0
+            and self.eScatAxis in (VtAxis.Y_AXIS, VtAxis.Z_AXIS)
+            and self.eKind != VtEvalPar.VT_EVAL_LMBD
+            and self.MinX < 0
+        ):
+            raise ValueError(
+                "DeadSpot > 0 with Y_AXIS/Z_AXIS removes every negative scattering angle, "
+                "not only the direct beam. A signed angle, Q or d-spacing range with "
+                "MinX below 0 needs DeadSpot=0; use NO_AXIS if you want an angular-magnitude "
+                "spectrum, or MinX >= 0 if you want only the positive side."
             )
         return self
 

@@ -30,12 +30,17 @@ FIGURE_DPI = 120
 
 def _draw_1d(figure: Figure, data: MonitorData) -> None:
     axes = figure.subplots()
-    width = float(data.x[1] - data.x[0]) if data.x.size > 1 else 1.0
-    axes.bar(data.x, data.intensity, width=width, color="black", alpha=0.3)
+    # Evaluation files give centres but no bin edges or binning mode. Points
+    # also represent logarithmic spectra with only one or two bins faithfully.
+    evaluation = data.title == "1D Evaluation"
+    if not evaluation:
+        width = float(data.x[1] - data.x[0]) if data.x.size > 1 else 1.0
+        axes.bar(data.x, data.intensity, width=width, color="black", alpha=0.3)
     axes.errorbar(
         data.x,
         data.intensity,
         yerr=None if data.error is None else np.abs(data.error),
+        marker="o" if evaluation else "None",
         linestyle="none",
         capsize=2,
         alpha=0.6,

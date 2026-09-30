@@ -206,6 +206,10 @@ also the schema defaults — say what it is, and let the user keep it.
      λ [Å] = 395.60346 · t [ms] / L [cm]. `TotLength` is then required: the flight path
      in cm from where t = 0 is set (the source, or a pulse-shaping chopper) to the
      detector. `LmbdRef` is not used: leave it at its default or set it to 0.
+     This pipeline must include `screen` before eval_elast whenever `bTOF` is yes,
+     even with path correction disabled: only the screen adds the flight time to
+     the detector. If it is absent, report that the supervisor must replan with
+     the screen and configure it; do not turn off path correction as a workaround.
    - **Path correction** (`bPathCor`, Default Setup yes, time of flight only): the flight
      path is corrected for where each neutron is, as L = `TotLength` + (its distance from
      the frame origin) − `DetDist`. `DetDist` is then required: the nominal distance from
@@ -219,9 +223,16 @@ also the schema defaults — say what it is, and let the user keep it.
 4. **Which neutrons count** (`DeadSpot`, Default Setup 0°; `EvalTimeMin`, `EvalTimeMax`,
    Default Setup none; `nColour`, Default Setup −1; `eScatAxis`, Default Setup `NO_AXIS`
    = −1; `bProbactiv`, Default Setup yes):
-   - `DeadSpot`: neutrons scattered by less than this angle, in degrees, are left out —
-     for instance the direct beam in small-angle scattering when there is no beamstop.
-     0 or more.
+   - `DeadSpot`: 0 disables the cutoff. A positive value excludes scattering angles
+     less than or equal to it. With `NO_AXIS`, angles are nonnegative, so this removes
+     the direct beam. With `Y_AXIS` or `Z_AXIS`, angles are signed and the cutoff removes
+     **every negative angle**, not just angles near zero: a 1° dead spot removes a −10°
+     neutron too. A signed angle, Q or d-spacing range extending below 0 therefore needs
+     `DeadSpot=0`. For a cutoff based on angular magnitude choose `NO_AXIS`; for only
+     the positive side choose `MinX >= 0`. Explain that these change what is measured
+     and let the user choose. Never silently switch the axis or trim the range.
+     Wavelength difference can be negative at positive scattering angles, so a negative
+     wavelength-difference range remains allowed; the angular cutoff is still signed.
    - `EvalTimeMin`, `EvalTimeMax`: only neutrons arriving in this time window (ms, after
      `TimeOffset`) count. Either can be left out (null) for no limit on that side; when
      both are set, `EvalTimeMin` must be smaller.
@@ -231,6 +242,7 @@ also the schema defaults — say what it is, and let the user keep it.
      sample that scatters in one plane only, horizontally or vertically — for instance
      the surface of a liquid, which scatters only vertically (`Z_AXIS`); the angle is then
      measured in that plane. `X_AXIS` (0) stops the module and is refused.
+     With either planar axis, Q and d-spacing inherit the angle's sign as well.
    - `bProbactiv`: yes weights each neutron by its probability, which gives the
      intensity in n/s; no counts each trajectory as 1, which shows how many trajectories
      fell into each bin rather than how much intensity.
@@ -269,9 +281,9 @@ also the schema defaults — say what it is, and let the user keep it.
   point where it hit and with the flight time to it added. That is what a real
   instrument sees, and it is what the path correction assumes: the distance of a neutron
   from the origin is then the sample-to-detector distance. **Without the screen**, the
-  neutrons still sit where they left the sample, and the path correction would use that
-  distance instead — do not combine path correction with a pipeline that has no screen,
-  and say so if the user asks for it.
+  neutrons still sit where they left the sample or guide, and their clocks have not
+  reached the detector. TOF therefore requires a screen in this application's pipeline,
+  whether path correction is enabled or disabled. The run tool enforces this dependency.
 - **The wavelength.** Without time of flight every neutron gets `LmbdRef`, whatever its
   true wavelength, exactly as an instrument with a monochromator would assume. With time
   of flight it gets λ = 395.60346 · t / L from its own flight time — so a flight path
@@ -300,9 +312,11 @@ also the schema defaults — say what it is, and let the user keep it.
   The run result has no numbers from eval_elast itself: the spectrum is the file.
 
 After the run, the supervisor can turn the spectrum into a picture in the chat with its
-1D monitor plot tool, naming this file (`EvalFileName`). The file has the same four
-columns as a 1D monitor's, so no other tool is needed. Say so in your confirmation
-question, and do not predict what the spectrum will contain beyond the ranges above.
+1D monitor plot tool, naming this file (`EvalFileName`). It shows points with error bars
+at the bin centres, including for logarithmic bins; the file does not supply bin edges.
+The file has the same four columns as a 1D monitor's, so no other tool is needed.
+Say so in your confirmation question, and do not predict what the spectrum will
+contain beyond the ranges above.
 
 ---
 
@@ -362,6 +376,8 @@ you can get them right the first time, not so you can check them yourself.
 - `LogProz` must be 0 or more. With `LogProz` above 0, `MinX` must be greater than 0, the
   bins it makes must number at most 10000, and `nBins` stays at its default.
 - `DeadSpot` must be 0 or more.
+- A signed angle, Q or d-spacing range with `MinX` below 0 requires `DeadSpot` = 0
+  when `eScatAxis` is `Y_AXIS` or `Z_AXIS`.
 - Without time of flight, d-spacing, Q and the wavelength difference need `LmbdRef`
   greater than 0, and `TotLength` and `DetDist` stay out (null).
 - With time of flight, `TotLength` is required and greater than 0. With path correction

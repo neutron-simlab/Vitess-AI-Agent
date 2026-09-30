@@ -80,6 +80,9 @@ PHASE 2: PARAMETER VARIATION COLLECTION
    bins). Their files are not readings: render a run's screen image with
    `generate_monitor2d_plot` and its spectrum with `generate_monitor1d_plot`, each with
    `filename` set to that file (`screen.dat` and `eval_elast.dat` by default).
+   When any eval_elast variant uses time of flight (`bTOF`), also include `screen`,
+   even with path correction disabled. Only the screen advances the flight time
+   to the detector described by `TotLength`; the run tool refuses TOF without it.
 
 1. Ask the user which parameters they want to vary across simulations — usually one
    or two — and the values for each. If they describe the desired physics instead of a

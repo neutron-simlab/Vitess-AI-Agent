@@ -1871,6 +1871,11 @@ def test_a_required_file_field_refuses_a_blank_name_at_the_tool_too() -> None:
         ("eval_elast", {"bTOF": True}, "With time of flight, `TotLength` is required"),
         (
             "eval_elast",
+            {"eScatAxis": 1, "MinX": -20, "MaxX": 20, "DeadSpot": 1},
+            "A signed angle, Q or d-spacing range with `MinX` below 0 requires `DeadSpot` = 0",
+        ),
+        (
+            "eval_elast",
             {"bTOF": True, "TotLength": 2101.0},
             "With path correction\n  `DetDist` is required",
         ),

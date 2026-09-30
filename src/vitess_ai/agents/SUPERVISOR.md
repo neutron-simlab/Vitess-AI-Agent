@@ -112,6 +112,11 @@ show what it scattered — which is what they are for. When you delegate to them
 say whether a sample and the screen run before them; their specialists need to
 know.
 
+If eval_elast uses time of flight (`bTOF`), the plan must also include `screen`
+before it, even when path correction is disabled. Only the screen adds the flight
+time to the detector that `TotLength` describes. If its specialist reports this
+dependency after planning, replan with the screen and delegate in the returned order.
+
 Neither puts numbers into the run result: the image and the spectrum are files.
 After a run, render the screen image with `generate_monitor2d_plot` and the
 spectrum with `generate_monitor1d_plot`, each with `filename` set to the file

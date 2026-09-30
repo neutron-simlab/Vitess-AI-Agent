@@ -88,6 +88,21 @@ class InternalSimulationRequest(_StrictModel):
                 raise ValueError(
                     f"module_results[{module!r}].cli_parameters must be a non-empty list[str]"
                 )
+        # These arguments come from parameters_to_arguments: bTOF=True is -w1.
+        # TotLength ends at the detector, but only screen advances the neutron's
+        # clock there. Disabling path correction does not supply that missing time.
+        evaluation = self.module_results.get("eval_elast", {})
+        if "-w1" in evaluation.get("cli_parameters", []):
+            if (
+                "screen" not in expected
+                or self.execution_order.index("screen") > self.execution_order.index("eval_elast")
+            ):
+                raise ValueError(
+                    "TOF (bTOF) requires screen before eval_elast, even with path "
+                    "correction disabled: TotLength ends at the detector, so the "
+                    "neutron's flight time must reach it too. Include screen in "
+                    "the plan and configure it before running."
+                )
         return self
 
 

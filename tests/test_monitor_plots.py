@@ -10,12 +10,15 @@ have been written to match the reader.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
+from matplotlib.figure import Figure
 
 from vitess_ai.plots import MonitorFileError, read_monitor_file, render_monitor_png
+from vitess_ai.plots.render import _draw_1d
 from vitess_ai.schema.base import VtFormat2D
 
 DATA = Path(__file__).parent / "data"
@@ -31,6 +34,42 @@ MONITOR_2D = {
 }
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.parametrize("bins", [1, 2, 3])
+def test_evaluation_points_do_not_invent_widths_for_logarithmic_bins(bins: int) -> None:
+    data = read_monitor_file(DATA / "eval_elast-log.dat")
+    # Geometric centres of [1,2], [2,4], [4,8]; one or two centres cannot
+    # distinguish linear from logarithmic binning, so do not infer edges.
+    np.testing.assert_allclose(data.x, np.sqrt([2., 8., 32.]), atol=1e-6)
+    np.testing.assert_array_equal(data.intensity, [1., 1., 1.])
+    centres = data.x[:bins]
+    data = replace(data, x=centres, intensity=data.intensity[:bins], error=data.error[:bins])
+    figure = Figure()
+
+    _draw_1d(figure, data)
+
+    axes = figure.axes[0]
+    assert not axes.patches
+    points = next(line for line in axes.lines if line.get_marker() == "o")
+    np.testing.assert_array_equal(points.get_xdata(), centres)
+    np.testing.assert_array_equal(points.get_ydata(), data.intensity)
+    segments = axes.collections[0].get_segments()
+    for index, segment in enumerate(segments):
+        np.testing.assert_allclose(segment[:, 1], [
+            data.intensity[index] - data.error[index],
+            data.intensity[index] + data.error[index],
+        ])
+
+
+def test_linear_monitor_keeps_its_histogram() -> None:
+    data = read_monitor_file(MONITOR_1D)
+    figure = Figure()
+
+    _draw_1d(figure, data)
+
+    assert len(figure.axes[0].patches) == len(data.x)
+    assert all(patch.get_width() == pytest.approx(0.5) for patch in figure.axes[0].patches)
 
 
 def _data_row_count(path: Path) -> int:
@@ -247,7 +286,7 @@ def test_a_missing_file_raises_the_readers_own_error(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "source", [MONITOR_1D, *sorted(MONITOR_2D.values(), key=str)], ids=lambda p: p.stem
+    "source", [MONITOR_1D, DATA / "eval_elast-log.dat", *sorted(MONITOR_2D.values(), key=str)], ids=lambda p: p.stem
 )
 def test_rendering_writes_a_png(tmp_path: Path, source: Path) -> None:
     destination = tmp_path / f"{source.stem}.png"

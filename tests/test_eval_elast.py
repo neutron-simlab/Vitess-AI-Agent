@@ -226,6 +226,28 @@ def test_the_neighbouring_valid_spectrum_is_accepted(changes: dict[str, Any]) ->
     EvalElastParameters(**changes)
 
 
+@pytest.mark.parametrize("axis", [VtAxis.Y_AXIS, VtAxis.Z_AXIS])
+@pytest.mark.parametrize("kind", [VtEvalPar.VT_EVAL_ANGLE, VtEvalPar.VT_EVAL_Q, VtEvalPar.VT_EVAL_DSP])
+def test_dead_spot_cannot_silently_remove_the_negative_side(axis, kind) -> None:
+    # Binary check: neutrons at -10 and +10 degrees both count with -d0;
+    # with -d1 only +10 counts, for either planar scattering axis.
+    with pytest.raises(ValidationError, match="removes every negative scattering angle"):
+        EvalElastParameters(eScatAxis=axis, eKind=kind, MinX=-20, MaxX=20, DeadSpot=1)
+
+
+@pytest.mark.parametrize("axis", [VtAxis.Y_AXIS, VtAxis.Z_AXIS])
+@pytest.mark.parametrize("kind", [VtEvalPar.VT_EVAL_ANGLE, VtEvalPar.VT_EVAL_Q, VtEvalPar.VT_EVAL_DSP])
+def test_signed_ranges_without_a_dead_spot_and_one_sided_cutoffs_remain_valid(axis, kind) -> None:
+    EvalElastParameters(eScatAxis=axis, eKind=kind, MinX=-20, MaxX=20, DeadSpot=0)
+    EvalElastParameters(eScatAxis=axis, eKind=kind, MinX=0, MaxX=20, DeadSpot=1)
+
+
+def test_negative_wavelength_difference_is_not_a_negative_scattering_angle() -> None:
+    EvalElastParameters(eScatAxis=VtAxis.Y_AXIS, eKind=VtEvalPar.VT_EVAL_LMBD,
+                        MinX=-1, MaxX=1, DeadSpot=1)
+    EvalElastParameters(eScatAxis=VtAxis.NO_AXIS, MinX=-20, MaxX=20, DeadSpot=1)
+
+
 @pytest.mark.parametrize(
     ("percent", "minimum", "maximum", "vitess_bins"),
     [(5, 1, 180, 107), (1, 0.5, 10, 302), (12.5, 0.01, 7, 56)],
@@ -451,3 +473,79 @@ def test_the_batch_runs_an_untouched_eval_elast_with_its_defaults_last(
     )
 
     assert list(calls[0]["args"]["execution_order"]) == [*BASE, "screen", "eval_elast"]
+
+
+@pytest.mark.parametrize("with_screen", [False, True])
+@pytest.mark.parametrize("path_correction", [False, True])
+@pytest.mark.parametrize("tof", [False, True])
+def test_guided_tof_requires_a_planned_screen_even_without_path_correction(
+    tmp_path: Path, artifact_store: ArtifactStore,
+    with_screen: bool, path_correction: bool, tof: bool,
+) -> None:
+    results = {**configured_modules(tmp_path), **_optional_results(tmp_path)}
+    parameters = dict(bTOF=tof, bPathCor=path_correction)
+    if tof:
+        parameters["TotLength"] = 1100
+        if path_correction:
+            parameters["DetDist"] = 100
+    results.update(_validated(
+        named_tool(eval_elast_tools(project_root=tmp_path), "validate_eval_elast_parameters"),
+        parameters,
+    ))
+    planned = [*BASE, *(["screen"] if with_screen else []), "eval_elast"]
+    calls: list[dict] = []
+
+    command = _run(tmp_path, _planned_state(planned, results), calls)
+
+    if tof and not with_screen:
+        # A screen retained from an earlier plan does not advance this run's clock.
+        assert not calls
+        assert command.update["messages"][0].status == "error"
+        assert "requires screen before eval_elast" in command.update["messages"][0].content
+    else:
+        assert len(calls) == 1
+        assert command.update["messages"][0].status == "success"
+
+
+@pytest.mark.parametrize("with_screen", [False, True])
+@pytest.mark.parametrize("path_correction", [False, True])
+def test_sweep_tof_requires_a_screen_before_executing(
+    tmp_path: Path, artifact_store: ArtifactStore,
+    with_screen: bool, path_correction: bool,
+) -> None:
+    calls: list[dict] = []
+
+    def payload(call: dict) -> dict:
+        calls.append(call)
+        return simulation_payload(
+            thread_id=call["args"]["thread_id"],
+            simulation_run_id=call["args"]["simulation_run_id"],
+            modules=list(call["args"]["execution_order"]),
+        )
+
+    variants = swept_modules(tmp_path)
+    parameters = dict(bTOF=True, bPathCor=path_correction, TotLength=1100)
+    if path_correction:
+        parameters["DetDist"] = 100
+    variants.update(_swept(
+        named_tool(eval_elast_sweep(project_root=tmp_path), "validate_eval_elast_variants"),
+        [parameters],
+    ))
+    tools = build_batch_tools(VitessGateway(raw_tools(run_simulation=payload)), project_root=tmp_path)
+    planned = named_tool(tools, "write_simulation_matrix").func(
+        runtime=runtime(state={"module_variants": variants}),
+        combination="paired",
+        include_optional=[*(["screen"] if with_screen else []), "eval_elast"],
+    )
+
+    command = asyncio.run(named_tool(tools, "run_batch_from_matrix").coroutine(
+        runtime=runtime(state={"simulation_plan": planned.update["simulation_plan"]}),
+    ))
+
+    if with_screen:
+        assert len(calls) == 1
+        assert command.update["messages"][0].status == "success"
+    else:
+        assert not calls
+        assert command.update["messages"][0].status == "error"
+        assert "requires screen before eval_elast" in command.update["messages"][0].content
