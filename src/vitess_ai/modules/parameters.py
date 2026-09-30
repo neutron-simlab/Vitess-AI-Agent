@@ -17,11 +17,13 @@ from pydantic import BaseModel
 
 from vitess_ai.schema import (
     CaptureFluxParameters,
+    EvalElastParameters,
     GuideParameters,
     Monitor1DParameters,
     Monitor2DParameters,
     ReadInParameters,
     SampleElasticIsotrParameters,
+    ScreenParameters,
     WriteoutParameters,
 )
 
@@ -35,6 +37,8 @@ PARAMETER_MODELS: dict[str, type[BaseModel]] = {
     "monitor1d": Monitor1DParameters,
     "monitor2d": Monitor2DParameters,
     "capture_flux": CaptureFluxParameters,
+    "screen": ScreenParameters,
+    "eval_elast": EvalElastParameters,
 }
 
 

@@ -96,10 +96,12 @@ class ModuleSpec(BaseModel):
     #: ``None`` means there is nothing to upload for this module.
     accepts_upload: UploadSchema | None = None
     #: ``True`` means the module runs only in a simulation that asks for it.
-    #: Every other executable row runs in every simulation. The sample is the
-    #: one such row: capture_flux could join every run because it passes each
-    #: neutron on unchanged, but a sample replaces the beam with what it
-    #: scattered, so a guide comparison must be able to run without one.
+    #: Every other executable row runs in every simulation. capture_flux could
+    #: join every run because it passes each neutron on unchanged. The sample
+    #: cannot: it replaces the beam with what it scattered, so a guide
+    #: comparison must be able to run without one. screen passes on only the
+    #: neutrons that hit it, and eval_elast is only worth its question to the
+    #: user when there is scattering to evaluate, so both are optional too.
     optional: bool = False
 
 
@@ -193,12 +195,36 @@ MODULES: tuple[ModuleSpec, ...] = (
         order=8,
         cli_executable="capture_flux",
     ),
+    # After every reading the app already takes, so adding it changes none of
+    # them. It moves each neutron on to the detector surface and passes on only
+    # those that hit it -- which is what eval_elast after it should count.
+    ModuleSpec(
+        name="screen",
+        display_name="Screen Parameters (ideal detector)",
+        description="Configure an ideal flat or cylindrical detector and its 2D image",
+        order=9,
+        cli_executable="screen",
+        optional=True,
+    ),
+    # Last: it passes every neutron on unchanged ("exclusive counts" off), and
+    # after the screen it counts only neutrons that reached the detector.
+    ModuleSpec(
+        name="eval_elast",
+        display_name="Elastic Evaluation Parameters (1D spectrum)",
+        description=(
+            "Configure the 1D spectrum over scattering angle, Q, d-spacing or "
+            "wavelength difference"
+        ),
+        order=10,
+        cli_executable="eval_elast",
+        optional=True,
+    ),
 )
 
 #: The optional rows by name, as the plan tools offer them to the model. Written
 #: out rather than built from the rows so that a reader sees the choices; a test
 #: checks that it names exactly the rows marked ``optional``.
-OptionalModule = Literal["sample_elasticisotr"]
+OptionalModule = Literal["sample_elasticisotr", "screen", "eval_elast"]
 
 #: The sample's row, for the code that must say "was there a sample in this run"
 #: -- the readings that stop calling themselves a beam measurement once a sample
@@ -230,7 +256,8 @@ def execution_order(
     """The modules that run a binary, in the order the pipeline runs them.
 
     Without arguments this is the pipeline every simulation runs.
-    ``include_optional`` adds optional rows, each in its own place: ``True``
+    ``include_optional`` adds optional rows, each in its own place -- the
+    sample after the guide, screen and eval_elast at the end: ``True``
     adds all of them, which is also the list of every runnable module, and a
     collection of names adds those. A name that is not an optional row raises,
     because a plan that silently dropped it would run without a module the

@@ -286,7 +286,8 @@ also the schema defaults — say what it is, and let the user keep it.
 ## WHAT COMES AFTER THE SAMPLE
 
 In this pipeline the sample sits right after the guide, and writeout, monitor1d,
-monitor2d and capture_flux follow it. All of them see only what the sample scattered —
+monitor2d and capture_flux follow it — and, when the simulation includes them, the
+screen and eval_elast at the end. All of them see only what the sample scattered —
 plus, with `iColor` other than −1, the other colours' unscattered beam.
 
 - **The scattering pattern.** A 1D monitor recording `DIR_THETA` (dir_theta, 0° to 180°)
@@ -299,11 +300,14 @@ plus, with `iColor` other than −1, the other colours' unscattered beam.
 - **Beam measurements.** The capture flux and the beam-flatness check judge a beam. After
   a sample they describe scattered neutrons (and, with a colour filter, whatever beam it
   let through), and the server gives no flatness verdict for a run with a sample.
-- **Scattering-angle evaluation.** VITESS's eval_elast2 module (intensity against
-  scattering angle and wavelength or time of flight) is not part of this application yet.
-  It measures 2θ from the x axis of the frame the sample hands on, and in its position
-  mode from the frame's origin — one more reason to keep the output frame at the sample
-  centre with both angles at 0.
+- **A detector image and a scattering curve.** Two optional modules can run at the
+  end, after capture_flux: the screen, an ideal detector that writes a 2D image of where
+  the scattered neutrons arrive, and eval_elast, a 1D spectrum of the intensity against
+  scattering angle, Q or d-spacing. eval_elast measures 2θ from the x axis of the frame
+  the sample hands on, and the screen stands at its distance from that frame's origin —
+  one more reason to keep the output frame at the sample centre with both angles at 0.
+  VITESS's eval_elast2 module (intensity against scattering angle and wavelength or time
+  of flight) is not part of this application yet.
 
 Put what the modules after the sample will see into your report, so the supervisor can
 pass it on to their specialists.

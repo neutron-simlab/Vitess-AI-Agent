@@ -441,7 +441,7 @@ def test_a_sweep_run_with_the_sample_runs_it_after_the_guide(
         _run_one(
             VitessGateway(raw_tools(run_simulation=_payload_with_readings(calls))),
             entry,
-            planned=execution_order(include_optional=True),
+            planned=execution_order(include_optional=[SAMPLE_MODULE]),
             project_root=tmp_path,
             user_id="user-a",
             thread_id=THREAD_ID,

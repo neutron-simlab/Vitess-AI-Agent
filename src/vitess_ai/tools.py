@@ -109,8 +109,11 @@ class _PlanArguments(_FacadeArguments):
             "The optional modules this simulation includes, by name. "
             "sample_elasticisotr: a sample in the beam, right after the guide; "
             "every module after it then sees only what the sample scattered. "
-            "Leave the list empty to simulate the beam itself -- guide "
-            "comparisons, capture flux, beam flatness."
+            "screen: an ideal detector after capture_flux, writing a 2D image of "
+            "where the neutrons arrive. eval_elast: a 1D spectrum over scattering "
+            "angle, Q, d-spacing or wavelength difference, last of all. Leave the "
+            "list empty to simulate the beam itself -- guide comparisons, capture "
+            "flux, beam flatness."
         ),
     )
 
@@ -794,7 +797,13 @@ def build_vitess_tools(
             args_schema=_PlotArguments,
             description=(
                 f"Render the {kind} data from a VITESS simulation as a PNG artifact. "
-                "Omit run_name to use the latest run."
+                "Omit run_name to use the latest run. Give filename to render "
+                "another file of the same layout: "
+                + (
+                    "the eval_elast spectrum (its EvalFileName)."
+                    if kind == "monitor1d"
+                    else "the screen image (its OutFileName)."
+                )
             ),
         )
         async def generate_plot(

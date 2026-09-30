@@ -43,6 +43,7 @@ from vitess_ai.agents.specialists.module_specialist import (
     build_module_prompt,
 )
 from vitess_ai.agents.specialists.capture_flux.tools import build_tools as capture_flux_tools
+from vitess_ai.agents.specialists.eval_elast.tools import build_tools as eval_elast_tools
 from vitess_ai.agents.specialists.module_tools import omitted_file_value
 from vitess_ai.agents.specialists.monitor1d.tools import build_tools as monitor1d_tools
 from vitess_ai.agents.specialists.monitor2d.tools import build_tools as monitor2d_tools
@@ -50,6 +51,7 @@ from vitess_ai.agents.specialists.readin.tools import build_tools as readin_tool
 from vitess_ai.agents.specialists.sample_elasticisotr.tools import (
     build_tools as sample_elasticisotr_tools,
 )
+from vitess_ai.agents.specialists.screen.tools import build_tools as screen_tools
 from vitess_ai.agents.specialists.writeout.tools import build_tools as writeout_tools
 from vitess_ai.cli.arguments import (
     ParameterConversionError,
@@ -1293,6 +1295,12 @@ def _specialist_tools(module: str, tmp_path: Path) -> list[Any]:
         "sample_elasticisotr": lambda: sample_elasticisotr_tools(
             project_root=tmp_path, documentation_tools=documentation
         ),
+        "screen": lambda: screen_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
+        "eval_elast": lambda: eval_elast_tools(
+            project_root=tmp_path, documentation_tools=documentation
+        ),
     }
     return builders[module]()
 
@@ -1418,7 +1426,16 @@ def test_validation_tool_description_requires_confirmation(
 
 @pytest.mark.parametrize(
     "module",
-    ("guide", "sample_elasticisotr", "writeout", "monitor1d", "monitor2d", "capture_flux"),
+    (
+        "guide",
+        "sample_elasticisotr",
+        "writeout",
+        "monitor1d",
+        "monitor2d",
+        "capture_flux",
+        "screen",
+        "eval_elast",
+    ),
 )
 def test_default_tool_accepts_no_parameters_and_records_exact_schema_defaults(
     module: str, tmp_path: Path
@@ -1827,6 +1844,36 @@ def test_a_required_file_field_refuses_a_blank_name_at_the_tool_too() -> None:
             {"lambdamin": 2.0},
             "`lambdamin` and `lambdamax` are both 0 (no window) or both set",
         ),
+        ("screen", {"eGeom": -1}, "`eGeom` must be `VT_DET_FLAT` (2) or `VT_DET_CYL` (1)"),
+        ("screen", {"eFormat": -1}, "`NO_2D_FORMAT` (−1) stops the module"),
+        ("screen", {"Width": 0.0}, "a flat screen needs `Width` greater"),
+        (
+            "screen",
+            {"eGeom": 1, "AngleMin": 0.0, "AngleMax": 360.0},
+            "A cylindrical screen needs −180 ≤ `AngleMin` < `AngleMax` ≤ 180.",
+        ),
+        ("screen", {"eGeom": 1, "Width": 50.0}, "`Width` for a cylinder"),
+        ("eval_elast", {"eKind": 0}, "`VT_NO_EVAL` (0) counts nothing."),
+        ("eval_elast", {"MinX": 10.0}, "`MinX` must be smaller than `MaxX`."),
+        ("eval_elast", {"nBins": 10001}, "`nBins` must be between 1 and 10000."),
+        ("eval_elast", {"LogProz": 5.0}, "With `LogProz` above 0, `MinX` must be greater than 0"),
+        ("eval_elast", {"eScatAxis": 0}, "`X_AXIS` (0) stops the"),
+        (
+            "eval_elast",
+            {"EvalTimeMin": 5.0, "EvalTimeMax": 1.0},
+            "`EvalTimeMin` must be smaller than `EvalTimeMax` when both are set.",
+        ),
+        (
+            "eval_elast",
+            {"eKind": 2, "LmbdRef": 0.0},
+            "Without time of flight, d-spacing, Q and the wavelength difference need `LmbdRef`",
+        ),
+        ("eval_elast", {"bTOF": True}, "With time of flight, `TotLength` is required"),
+        (
+            "eval_elast",
+            {"bTOF": True, "TotLength": 2101.0},
+            "With path correction\n  `DetDist` is required",
+        ),
     ],
 )
 def test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces(
@@ -1848,6 +1895,8 @@ def test_a_rule_a_prompt_states_is_a_rule_the_validator_enforces(
         "monitor1d": lambda: monitor1d_tools(project_root=tmp_path),
         "monitor2d": lambda: monitor2d_tools(project_root=tmp_path),
         "capture_flux": lambda: capture_flux_tools(project_root=tmp_path),
+        "screen": lambda: screen_tools(project_root=tmp_path),
+        "eval_elast": lambda: eval_elast_tools(project_root=tmp_path),
     }[module]()
     base = (
         {

@@ -77,7 +77,16 @@ MATRIX_FILENAME = "simulation_matrix.json"
 # READIN always needs a staged source path and therefore cannot be constructed
 # from its schema defaults. These six modules have complete, runnable defaults.
 AUTO_DEFAULT_MODULES = frozenset(
-    {"guide", "sample_elasticisotr", "writeout", "monitor1d", "monitor2d", "capture_flux"}
+    {
+        "guide",
+        "sample_elasticisotr",
+        "writeout",
+        "monitor1d",
+        "monitor2d",
+        "capture_flux",
+        "screen",
+        "eval_elast",
+    }
 )
 
 
@@ -144,8 +153,11 @@ class _SweepArguments(BaseModel):
         description=(
             "The optional modules every run of this sweep includes, by name. "
             "sample_elasticisotr: a sample in the beam, right after the guide. "
-            "An untouched optional module gets its schema defaults -- the sample, "
-            "VITESS's default sample. Leave the list empty to sweep the beam itself."
+            "screen: an ideal detector writing a 2D image, after capture_flux. "
+            "eval_elast: a 1D spectrum over scattering angle, Q, d-spacing or "
+            "wavelength difference, last. An untouched optional module gets its "
+            "schema defaults -- the sample, VITESS's default sample. Leave the "
+            "list empty to sweep the beam itself."
         ),
     )
 

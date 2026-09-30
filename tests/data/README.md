@@ -153,3 +153,39 @@ run flatness-100-bins      1e4 2   100
 The 100-bin file is also the reason the bin width is part of the criterion: the
 beam in it is exactly as flat as in the others, and its worst 0.04 cm bin is
 still 15.6 % from the mean, by noise alone.
+
+## The screen and eval_elast files
+
+`screen-flat.dat`, `screen-cylinder.dat` and `eval_elast-angle.dat` were written by
+VITESS 3.8's own `screen` and `eval_elast` binaries, from the same revision, fed by
+`read_in` with the inputs of VITESS's own module tests (`Screen-1_Flat`,
+`Screen-2_Cylinder`, `EvalElast-1_Theta` in `tests/module_tests/` of the VITESS source
+tree). The arguments are exactly what `ScreenParameters` and `EvalElastParameters`
+produce, with fewer bins than the tests so the files stay small:
+
+```sh
+V=/vitess/MODULES; P=/tmp/fx; export GSL_RNG_SEED=1
+R="--Z1 --U1.0e-26 --G0 --T0 --B10000 --P$P"
+IN="-f1 -F1 -a1.0 -b0.0 -d0.0 -R1 -J0 -I1.0 -C-1 -t0"
+
+$V/read_in $R --N1 -A$P/screen-1_in.dat $IN | $V/screen $R --N2 \
+    -Oscreen-flat.dat -G2 -F1 -w50.0 -h50.0 -a-175.0 -A175.0 -D1000.0 -y10 -z10 --Fno_file
+$V/read_in $R --N1 -A$P/screen-2_in.dat $IN | $V/screen $R --N2 \
+    -Oscreen-cylinder.dat -G1 -F1 -w10.0 -h50.0 -a-180.0 -A180.0 -D100.0 -y12 -z5 --Fno_file
+$V/read_in $R --N1 -A$P/eval_elast-1_in.dat $IN | $V/eval_elast $R --N2 \
+    -k3 -oeval_elast-angle.dat -n18 -m0.0 -M180.0 -R0.0 -d0.0 -r1.5 -p1 -c0 -w0 -t0 \
+    -A-1 -T0.0 -C-1 --Fno_file
+```
+
+Both screen files are in the `xyz` layout, the schema default. The flat one is
+horizontal against vertical position; the cylindrical one is scattering angle
+against height. The eval_elast file has the four columns of a 1D monitor under a
+"1D Evaluation" title. `test_screen.py` and `test_eval_elast.py` read them with the
+monitor reader, which is how the plot tools render them.
+
+In these files the "Total Intensity" header line counts 0 trajectories; the
+"Within binning" line below it has the real count. That is how this VITESS build
+writes the header when `read_in` feeds the module directly. VITESS's own reference
+outputs for these tests, written by an older build, have the real count on that
+line too; every data row is identical to them. The reader takes only the intensity
+from those lines.

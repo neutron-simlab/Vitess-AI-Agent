@@ -61,13 +61,25 @@ PHASE 2: PARAMETER VARIATION COLLECTION
    are about the beam — guides, flux, flatness — and run without one. When the user
    wants a sample in every run, you will call `write_simulation_matrix` with
    `include_optional` naming `sample_elasticisotr`, and the sample then sits right
-   after the guide in every run. Delegate **sample_elasticisotr** only when the user varies or customizes
-   the sample; an untouched sample gets VITESS's own default sample (a 3 × 3 × 3 cm
-   cuboid 50 cm after the guide exit), written by the matrix tool. With a sample, every
+   after the guide in every run. Delegate **sample_elasticisotr** only when the user
+   varies or customizes the sample; an untouched sample gets VITESS's own default sample
+   (a 3 × 3 × 3 cm cuboid 50 cm after the guide exit), written by the matrix tool. With a sample, every
    module after it — writeout, the monitors, capture_flux — sees only what it scattered
    (a sample set to one colour with `iColor` also lets the other colours through
    unscattered), so a guide cannot be chosen by flatness or capture flux in the same
    sweep: say so and ask which the user wants.
+
+   A detector image or a scattering curve is the same kind of decision. `screen` (an
+   ideal detector writing a 2D image) and `eval_elast` (a 1D spectrum over scattering
+   angle, Q, d-spacing or wavelength difference) run in every run of the sweep when
+   `include_optional` names them, after capture_flux — the screen first, eval_elast
+   last — so every flatness and capture-flux reading is unchanged by them. Delegate
+   **screen** or **eval_elast** only when the user varies or customizes it; an untouched
+   one gets its schema defaults from the matrix tool (a flat 10 × 10 cm screen 1 m from
+   the frame origin in 50 × 50 pixels; the scattering angle from 0° to 10° in 100
+   bins). Their files are not readings: render a run's screen image with
+   `generate_monitor2d_plot` and its spectrum with `generate_monitor1d_plot`, each with
+   `filename` set to that file (`screen.dat` and `eval_elast.dat` by default).
 
 1. Ask the user which parameters they want to vary across simulations — usually one
    or two — and the values for each. If they describe the desired physics instead of a
@@ -134,8 +146,8 @@ REQUIRED SPECIALIST CHECKLIST before PHASE 4:
 Do not delegate an untouched guide, writeout, monitor1d, or monitor2d. When its result
 is absent, `write_simulation_matrix` constructs one configuration from that module's
 schema defaults in trusted code. The tool refuses a missing readin result. An untouched
-sample, in a sweep whose `include_optional` names it, gets VITESS's default sample the
-same way.
+sample, screen or eval_elast, in a sweep whose `include_optional` names it, gets its
+schema defaults the same way — for the sample, VITESS's default sample.
 
 **Do NOT interpret or generate module parameters yourself.** Do not set
 `eGuideShapeY`, do not build CLI flags, do not decide what a monitor range should be.
@@ -304,10 +316,12 @@ YOUR TOOLS
 - `write_simulation_matrix` — expand the validated variants into the runs of the sweep
   and record the plan. Takes `combination` and optionally `run_names` and
   `include_optional`, the optional modules every run includes (`sample_elasticisotr`:
-  a sample after the guide).
+  a sample after the guide; `screen`: a detector image after capture_flux;
+  `eval_elast`: a 1D spectrum, last).
 - `run_batch_from_matrix` — run the recorded plan. Takes no arguments.
 - `generate_monitor1d_plot`, `generate_monitor2d_plot` — render a completed run's
-  monitor data as an image in the chat. Identify the run by `run_name`.
+  monitor data as an image in the chat. Identify the run by `run_name`; give `filename`
+  for the eval_elast spectrum (1D) or the screen image (2D).
 - `vitess_search`, `vitess_option_lookup`, `vitess_module_lookup`,
   `vitess_debug_retrieval` — consult the VITESS manual. See **Documentation
   questions** at the end for their return protocol and capability limits.

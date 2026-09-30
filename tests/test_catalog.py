@@ -44,6 +44,7 @@ EXECUTES_WITH_SAMPLE = (
     "monitor2d",
     "capture_flux",
 )
+EVERY_RUNNABLE = (*EXECUTES_WITH_SAMPLE, "screen", "eval_elast")
 UPLOADS = ("readin", "instrument", "guide")
 CATALOG = (
     "readin",
@@ -54,6 +55,8 @@ CATALOG = (
     "monitor1d",
     "monitor2d",
     "capture_flux",
+    "screen",
+    "eval_elast",
 )
 
 
@@ -107,8 +110,8 @@ def test_importing_the_catalog_does_not_import_the_agent_framework() -> None:
     assert result.stdout.split() == ["False", "False"]
 
 
-def test_catalog_contains_exactly_the_eight_known_modules() -> None:
-    """An inert ninth row must not disappear between the capability filters."""
+def test_catalog_contains_exactly_the_ten_known_modules() -> None:
+    """An inert eleventh row must not disappear between the capability filters."""
     assert tuple(spec.name for spec in MODULES) == CATALOG
 
 
@@ -177,7 +180,7 @@ def test_executables_are_basenames_not_paths() -> None:
     assert not offenders, f"catalog rows carrying a path or a shell variable: {offenders}"
 
 
-def test_only_the_seven_pipeline_modules_run_a_binary() -> None:
+def test_only_the_nine_pipeline_modules_run_a_binary() -> None:
     """Named rather than blanket.
 
     "Every row has an executable" is false -- `instrument` uploads without
@@ -185,7 +188,7 @@ def test_only_the_seven_pipeline_modules_run_a_binary() -> None:
     time it failed. So the set is named.
     """
     assert tuple(sorted(spec.name for spec in MODULES if spec.cli_executable)) == tuple(
-        sorted(EXECUTES_WITH_SAMPLE)
+        sorted(EVERY_RUNNABLE)
     )
     assert module_spec("instrument").cli_executable is None
 
@@ -246,10 +249,29 @@ def test_the_sample_runs_only_when_asked_for_and_then_right_after_the_guide() ->
     Without the flag the pipeline is exactly what it was before the sample
     existed, so every guide comparison and flux measurement is unchanged.
     """
-    assert execution_order(include_optional=True) == EXECUTES_WITH_SAMPLE
-    assert optional_modules() == {SAMPLE_MODULE} == {"sample_elasticisotr"}
+    assert execution_order(include_optional=[SAMPLE_MODULE]) == EXECUTES_WITH_SAMPLE
     assert module_spec(SAMPLE_MODULE).optional is True
-    assert [spec.name for spec in MODULES if spec.optional] == [SAMPLE_MODULE]
+
+
+def test_the_screen_and_eval_elast_run_only_when_asked_for_and_then_last() -> None:
+    """After capture_flux, so every reading the pipeline already takes is unchanged.
+
+    The screen passes on only the neutrons that hit it, so it cannot sit before
+    a module whose reading should describe the beam; eval_elast after it then
+    counts only what the detector caught.
+    """
+    assert execution_order(include_optional=["screen"]) == (*EXECUTES, "screen")
+    assert execution_order(include_optional=["eval_elast"]) == (*EXECUTES, "eval_elast")
+    assert execution_order(include_optional=["eval_elast", "screen", SAMPLE_MODULE]) == (
+        EVERY_RUNNABLE
+    )
+    assert execution_order(include_optional=True) == EVERY_RUNNABLE
+    assert optional_modules() == {SAMPLE_MODULE, "screen", "eval_elast"}
+    assert [spec.name for spec in MODULES if spec.optional] == [
+        SAMPLE_MODULE,
+        "screen",
+        "eval_elast",
+    ]
 
 
 
