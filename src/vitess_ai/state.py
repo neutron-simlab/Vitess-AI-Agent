@@ -95,6 +95,7 @@ class VitessBridgeState(SpecialistOutcomeState):
     #: Both ends are server-owned, which is the only reason comparing them
     #: proves anything. Last write wins: re-planning replaces the plan.
     planned_execution_order: NotRequired[Annotated[list[str], PrivateStateAttr]]
+    pipeline_revision: NotRequired[Annotated[int | None, PrivateStateAttr]]
     #: Append-only server observations used to prove the configuration sequence,
     #: not merely the set of results. This cannot be private: like
     #: `module_results`, it must cross from the application delegation boundary

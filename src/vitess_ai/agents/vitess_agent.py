@@ -48,6 +48,7 @@ from juena_core.server.database.checkpointer import get_checkpointer
 from juena_core.server.database.store import get_store
 from vitess_ai.config import Config
 from vitess_ai.agents.delegation import with_module_delegation_boundary
+from vitess_ai.agents.pipeline_middleware import PipelineCorrectionMiddleware
 from vitess_ai.agents.specialists import compile_module_specialists
 from vitess_ai.mcp.connection import discover_vitess_tools, probe_server_health
 from vitess_ai.retrieval import orchestrator_documentation
@@ -55,7 +56,7 @@ from vitess_ai.run import VitessGateway
 from vitess_ai.state import VitessBridgeState
 from vitess_ai.tools import (
     build_vitess_tools,
-    plan_simulation,
+    build_plan_tool,
     vitess_supervisor_middleware,
 )
 
@@ -146,7 +147,7 @@ def build_vitess_graph(
         # The two root hooks from 03/CP3a. Without them the answer still
         # arrives -- with no evidence block and no download button, which is the
         # failure mode worth naming because it looks like success.
-        extra=tuple(vitess_supervisor_middleware()),
+        extra=(*vitess_supervisor_middleware(), PipelineCorrectionMiddleware(project_root())),
     )
     documentation_tools, documentation_policy = orchestrator_documentation(
         unattended=False
@@ -205,7 +206,7 @@ async def create_vitess_agent(
         ),
         tools=[
             build_ask_user_tool(VITESS_AGENT_ID),
-            plan_simulation,
+            build_plan_tool(root),
             *build_vitess_tools(gateway, project_root=root),
         ],
         store=store,

@@ -27,6 +27,29 @@ __all__ = ["VitessClient"]
 class VitessClient(BaseAgentClient):
     """Everything core's client does, and the staged-file routes."""
 
+    def pipeline_modules(self) -> dict[str, Any]:
+        response = self._client.get(f"{self.base_url}/pipelines/modules", headers=self._headers)
+        response.raise_for_status()
+        return response.json()
+
+    def get_pipeline(self, thread_id: str) -> dict[str, Any] | None:
+        response = self._client.get(f"{self.base_url}/pipelines/{thread_id}", headers=self._headers)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()["pipeline"]
+
+    def confirm_pipeline(
+        self, thread_id: str, modules: list[str], revision: int | None,
+        *, preset: str = "guide_test",
+    ) -> dict[str, Any]:
+        response = self._client.post(
+            f"{self.base_url}/pipelines/{thread_id}/confirm",
+            json={"modules": modules, "revision": revision, "preset": preset}, headers=self._headers,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def upload_modules(self) -> list[dict[str, Any]]:
         """The server-owned slot manifest, in catalog order."""
 

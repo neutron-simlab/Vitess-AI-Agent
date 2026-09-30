@@ -33,7 +33,7 @@ _STARTERS = (
         agent="vitess",
     ),
     Starter(
-        label="What can I vary in guide?",
+        label="What can I vary in the guide module?",
         prompt="What parameters does the VITESS guide module take, and what do they mean?",
         agent="vitess",
     ),

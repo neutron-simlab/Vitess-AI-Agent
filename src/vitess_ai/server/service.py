@@ -21,6 +21,8 @@ from juena_core.server.identity import local_principal
 from juena_core.server.service import ThreadActivity, ThreadWorkspace, create_app
 from vitess_ai.config import Config, configure_core
 from vitess_ai.server.file_endpoints import build_file_router
+from vitess_ai.server.pipeline_endpoints import build_pipeline_router
+from vitess_ai.pipeline import PipelineStore
 from vitess_ai.server.uploads import UploadStore
 from vitess_ai.workspace_lock import ThreadWorkspaceBusy
 
@@ -92,5 +94,6 @@ app = create_app(
     version="0.1.0",
     extra_routers=(
         build_file_router(principal, uploads, thread_activity=thread_activity),
+        build_pipeline_router(principal, PipelineStore(Config.VITESS_PROJECT_PATH), thread_activity=thread_activity),
     ),
 )

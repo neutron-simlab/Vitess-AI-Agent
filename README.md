@@ -33,6 +33,62 @@ A simulation runs these modules in this order:
 
 ## How it works
 
+### Build a pipeline in chat
+
+In **Guided simulation**, select **Build pipeline** in the main chat area.
+Choose a starting preset in the React Flow canvas:
+
+- **Guide test:** read-in → guide → writeout → monitor 1D → monitor 2D.
+- **Isotropic sample test:** read-in → guide → sample_elasticisotr → screen.
+
+Each preset's starting modules are required. In the sample preset, writeout
+and both monitors can be added and removed. Screen produces its own detector
+image; writeout is useful when you also want to save individual trajectories.
+Drag optional modules onto their highlighted slots, or click their palette
+buttons. Each module can appear once. The palette explains how each addition
+changes what is measured. Switching presets replaces the unconfirmed draft.
+
+**Confirm pipeline** submits the sequence to the server validator. Errors
+leave the canvas editable and identify a correction. An accepted sequence is
+locked, kept visible above the chat, saved with the conversation, and handed to
+the specialists for parameter configuration. Capture flux is optional in this workflow. The
+ordinary chat and parameter-sweep defaults are unchanged.
+
+If configuration reveals a missing dependency, such as TOF evaluation needing
+a screen, execution is blocked and the canvas reopens. Correct and confirm it
+again; every selected module must then be configured against the new revision.
+An unresolved dependency keeps the canvas editable on reconfirmation. If a
+confirmation response is lost or the page reloads before handoff, **Start
+configuration** remains available until the agent has saved a plan for the
+accepted revision, even when the conversation already contains messages.
+Unconfirmed drafts last for the current browser session. To start another
+design after confirmation, open a new conversation and select **Build pipeline**.
+
+The API exposes `GET /pipelines/modules`, `GET /pipelines/{thread_id}` and
+`POST /pipelines/{thread_id}/confirm`. Confirmation takes an ordered `modules`
+list, the selected `preset` (`guide_test` or `isotropic_sample_test`), and the
+current `revision` (`null` for the first confirmation). Omitting `preset`
+uses `guide_test`, including for existing saved conversations. Rejected
+sequences return HTTP 422 with structured `detail.issues`; locked or stale
+revisions return HTTP 409. The agent always loads the persisted server plan.
+
+For local UI development, install Node.js 24 and build the component once:
+
+```sh
+cd app/flow_frontend
+npm ci
+npm run build
+```
+
+Use `npm run dev` to rebuild on changes, then restart the local Streamlit
+process to load the rebuilt component. Docker builds and includes these
+assets automatically; Node.js is only needed at build time.
+
+For canvas browser tests, install the Python development dependencies, then
+run `npx playwright install chromium` and `npm test` in `app/flow_frontend`.
+These tests start an isolated Streamlit page using the real canvas and API
+validator with a deterministic chat handoff; they do not call an LLM.
+
 ### System overview
 
 You chat with the agent in a web page. Your messages go to the agent server, which uses a language model to decide what to do next. It runs VITESS through a separate VITESS service (an MCP server, a standard way for AI agents to call tools) and looks things up in the VITESS manual stored in a vector database. Replies, plots and files stream back to the chat.

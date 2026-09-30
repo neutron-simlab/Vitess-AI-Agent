@@ -45,6 +45,13 @@ RUN set -eux; \
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-build
 
+FROM node:24-bookworm-slim AS flow-build
+WORKDIR /flow
+COPY Vitess-AI-Agent/app/flow_frontend/package.json Vitess-AI-Agent/app/flow_frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY Vitess-AI-Agent/app/flow_frontend/ ./
+RUN npm run build
+
 # -----------------------------------------------------------------------------
 # Stage 2: the application image
 # -----------------------------------------------------------------------------
@@ -98,6 +105,7 @@ COPY Vitess-AI-Agent/src/ ./src/
 # because `app/` is not part of the installed package: it is run by `streamlit
 # run`, which takes a path rather than a module.
 COPY Vitess-AI-Agent/app/ ./app/
+COPY --from=flow-build /flow/dist/ ./app/flow_frontend/dist/
 COPY Vitess-AI-Agent/docker-entrypoint.sh /usr/local/bin/vitess-entrypoint
 
 RUN uv sync --frozen --no-dev && chmod +x /usr/local/bin/vitess-entrypoint

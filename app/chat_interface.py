@@ -22,6 +22,7 @@ from juena_core.schema.server import ChatMessage
 from juena_core.ui.streaming import render_pending_interrupt, stream_and_display_response
 
 from app.starters import build_starter_prompts
+from app.pipeline_builder import render_pipeline_builder
 from app.ui_components import (
     render_chat_input_styles,
     render_header,
@@ -41,10 +42,14 @@ def _render_starters(agent: str) -> str | None:
     if not starters:
         return None
 
+    options = [starter.label for starter in starters]
+    if agent == "vitess":
+        options.insert(0, "Build pipeline")
+
     st.caption("Not sure where to start?")
     chosen = st.pills(
         "Starter topics",
-        options=[starter.label for starter in starters],
+        options=options,
         selection_mode="single",
         default=None,
         key=f"{STARTER_PILLS_KEY}:{st.session_state.thread_id}",
@@ -52,6 +57,9 @@ def _render_starters(agent: str) -> str | None:
     )
     if not chosen:
         return None
+    if chosen == "Build pipeline":
+        st.session_state[f"builder_active:{st.session_state.thread_id}"] = True
+        st.rerun()
     return next(starter.prompt for starter in starters if starter.label == chosen)
 
 
@@ -62,6 +70,10 @@ def render_chat_interface() -> None:
     render_header(st.session_state.selected_agent)
     render_chat_input_styles()
 
+    editing_pipeline, pipeline_prompt = render_pipeline_builder()
+    if editing_pipeline:
+        return
+
     for message in st.session_state.messages:
         render_message(message, show_system=st.session_state.show_system_messages)
 
@@ -69,21 +81,23 @@ def render_chat_interface() -> None:
     # the user to discover the sidebar. `ask_user` already raises a LangGraph
     # interrupt, already renders as a card and already resumes the thread; this
     # is the whole mechanism, and there is no second one.
-    if render_pending_interrupt():
+    if not pipeline_prompt and render_pending_interrupt():
         return
 
     # On an empty thread the composer sits under the title with the chips below
     # it, so the first thing anyone sees is where to type. `st.chat_input` pins
     # itself to the bottom only when called at the top level of the script.
     starter: str | None = None
-    if not st.session_state.messages:
+    if pipeline_prompt:
+        submission = None
+    elif not st.session_state.messages:
         with st.container():
             submission = st.chat_input(placeholder="Describe the simulation you want…")
         starter = _render_starters(st.session_state.selected_agent)
     else:
         submission = st.chat_input(placeholder="Describe the simulation you want…")
 
-    prompt = str(submission or "") or (starter or "")
+    prompt = pipeline_prompt or str(submission or "") or (starter or "")
     if not prompt:
         return
 

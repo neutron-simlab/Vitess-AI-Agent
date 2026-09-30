@@ -36,6 +36,7 @@ from vitess_ai.schema.module_result import (
     module_schema_version,
 )
 from vitess_ai.schema.simulation_plan import MAX_SWEEP_RUNS
+from vitess_ai.pipeline import PipelineInvalid, PipelineStore
 
 __all__ = [
     "build_defaults_tool",
@@ -346,6 +347,14 @@ def build_validation_tool(
                 output_filename_fields=output_filename_fields,
             )
             arguments = parameters_to_arguments(model(**result.parameters))
+            PipelineStore(project_root).check_module(
+                _thread_id(runtime), module, result.parameters
+            )
+        except PipelineInvalid as exc:
+            return Command(
+                update={"messages": [_message(runtime, str(exc), error=True)]},
+                goto="__end__",
+            )
         except (ValidationError, ValueError, ParameterConversionError) as exc:
             return Command(
                 update={
@@ -417,6 +426,14 @@ def build_defaults_tool(
                 output_filename_fields=output_filename_fields,
             )
             arguments = parameters_to_arguments(model(**result.parameters))
+            PipelineStore(project_root).check_module(
+                _thread_id(runtime), module, result.parameters
+            )
+        except PipelineInvalid as exc:
+            return Command(
+                update={"messages": [_message(runtime, str(exc), error=True)]},
+                goto="__end__",
+            )
         except (ValidationError, ValueError, ParameterConversionError) as exc:
             return Command(
                 update={

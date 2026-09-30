@@ -1,0 +1,151 @@
+.flow-builder {
+  color: var(--st-text-color, #19383f);
+  background: var(--st-background-color, #fff);
+  font-family: var(--st-font, system-ui, sans-serif);
+  border: 1px solid #829b9b55;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.builder-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 8px;
+}
+.builder-heading h3 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+.builder-heading p,
+.builder-footer {
+  font-size: 14px;
+  opacity: 0.85;
+}
+.step {
+  white-space: nowrap;
+  font-size: 13px;
+  padding-top: 5px;
+}
+.module-palette {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 24px;
+}
+.preset-picker {
+  padding: 0 24px 8px;
+  font-size: 14px;
+}
+.preset-picker label {
+  margin-right: 12px;
+  font-weight: 600;
+}
+.preset-picker select {
+  padding: 8px 12px;
+  border: 1px solid #58979f;
+  border-radius: 8px;
+  color: inherit;
+  background: var(--st-background-color, #fff);
+  font: inherit;
+}
+.preset-picker p {
+  margin-bottom: 0;
+  opacity: 0.85;
+}
+.module-palette button {
+  border: 1px solid #58979f;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: inherit;
+  background: var(--st-secondary-background-color, #f0f7f7);
+  cursor: grab;
+  font: inherit;
+  font-size: 14px;
+}
+.module-palette button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.module-palette button span {
+  font-weight: bold;
+  margin-right: 4px;
+}
+.placement-hint {
+  min-height: 36px;
+  font-size: 13px;
+  padding: 0 24px;
+}
+.flow-canvas {
+  height: 310px;
+  border-block: 1px solid #829b9b33;
+  background: var(--st-secondary-background-color, #f6f9f9);
+}
+.module-block {
+  width: 185px;
+  box-sizing: border-box;
+  padding: 18px 14px;
+  border: 1px solid #5a8d96;
+  border-radius: 10px;
+  background: var(--st-background-color, #fff);
+  box-shadow: 0 4px 14px #19383f10;
+  position: relative;
+}
+.module-block strong {
+  display: block;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.module-kind {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  opacity: 0.65;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.module-block.invalid {
+  border: 2px solid #c45540;
+}
+.remove {
+  position: absolute;
+  right: 7px;
+  top: 5px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 20px;
+  cursor: pointer;
+}
+.builder-footer {
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  opacity: 1;
+}
+.confirm {
+  padding: 11px 20px;
+  border-radius: 8px;
+  border: 0;
+  color: white;
+  background: #226a76;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.confirm:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.validation-error {
+  margin: 12px 24px;
+  padding: 12px;
+  border-left: 3px solid #c45540;
+  background: #c4554012;
+  font-size: 14px;
+}
+button:focus-visible {
+  outline: 3px solid #e0a332;
+  outline-offset: 3px;
+}
