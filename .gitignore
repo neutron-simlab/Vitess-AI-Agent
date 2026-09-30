@@ -5,3 +5,6 @@ __pycache__/
 .env
 docs/
 benchmarks/
+app/flow_frontend/node_modules/
+app/flow_frontend/dist/
+app/flow_frontend/test-results/

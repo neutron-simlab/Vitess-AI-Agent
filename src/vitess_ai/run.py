@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from juena_core.schema.interrupts import ExecutionEvidence
 from vitess_ai.mcp.connection import TOOL_NAMES
+from vitess_ai.pipeline import PipelineInvalid, tof_dependency_issues
 from vitess_ai.mcp.payloads import (
     PlotResult,
     RunFile,
@@ -92,17 +93,11 @@ class InternalSimulationRequest(_StrictModel):
         # TotLength ends at the detector, but only screen advances the neutron's
         # clock there. Disabling path correction does not supply that missing time.
         evaluation = self.module_results.get("eval_elast", {})
-        if "-w1" in evaluation.get("cli_parameters", []):
-            if (
-                "screen" not in expected
-                or self.execution_order.index("screen") > self.execution_order.index("eval_elast")
-            ):
-                raise ValueError(
-                    "TOF (bTOF) requires screen before eval_elast, even with path "
-                    "correction disabled: TotLength ends at the detector, so the "
-                    "neutron's flight time must reach it too. Include screen in "
-                    "the plan and configure it before running."
-                )
+        issues = tof_dependency_issues(
+            self.execution_order, tof="-w1" in evaluation.get("cli_parameters", [])
+        )
+        if issues:
+            raise PipelineInvalid(issues)
         return self
 
 

@@ -57,6 +57,12 @@ from vitess_ai.run import (
     safe_run_file,
 )
 from vitess_ai.state import SimulationOrderEvent, SimulationRunReference
+from vitess_ai.pipeline import (
+    BUILDER_OPTIONAL,
+    PipelineInvalid,
+    PipelineStore,
+    tof_dependency_issues,
+)
 
 __all__ = [
     "attach_artifacts",
@@ -65,6 +71,7 @@ __all__ = [
     "flatness_summary",
     "guide_position",
     "plan_simulation",
+    "build_plan_tool",
     "readings_summary",
     "register_run_files",
     "runtime_identity",
@@ -114,6 +121,22 @@ class _PlanArguments(_FacadeArguments):
             "angle, Q, d-spacing or wavelength difference, last of all. Leave the "
             "list empty to simulate the beam itself -- guide comparisons, capture "
             "flux, beam flatness."
+        ),
+    )
+
+
+class _BuilderPlanArguments(_FacadeArguments):
+    include_optional: list[
+        OptionalModule | Literal["capture_flux", "writeout", "monitor1d", "monitor2d"]
+    ] = Field(
+        default_factory=list,
+        description=(
+            "Modules that can be optional in a canvas preset: sample_elasticisotr, "
+            "writeout, monitor1d, monitor2d, capture_flux, screen, eval_elast. "
+            "With a confirmed canvas, omit this list or name only selected modules; "
+            "the saved sequence determines the plan. Without a canvas, writeout, "
+            "both monitors and capture_flux are always included; this list adds "
+            "sample_elasticisotr, screen or eval_elast."
         ),
     )
 
@@ -354,7 +377,12 @@ def _configured_arguments(
     # An optional module the plan left out is not refused, only not run: its
     # configuration is from an earlier plan that included it, and stored
     # configurations are never removed. Anything else unplanned is a mistake.
-    unplanned = sorted(set(stored) - set(planned) - optional_modules())
+    optional = (
+        BUILDER_OPTIONAL
+        if state_mapping(runtime).get("pipeline_revision")
+        else optional_modules()
+    )
+    unplanned = sorted(set(stored) - set(planned) - optional)
     if unplanned:
         raise ValueError(
             "These configurations belong to no planned module: "
@@ -583,12 +611,19 @@ def plan_simulation(
     after the guide -- still comes from the catalog.
     """
     planned = list(execution_order(include_optional=include_optional))
+    return _record_plan(runtime, planned)
+
+
+def _record_plan(
+    runtime: ToolRuntime[Any, Any], planned: list[str], revision: int | None = None
+) -> Command:
     plan_event = SimulationOrderEvent(
         kind="plan", execution_order=tuple(planned)
     ).model_dump(mode="json")
     return Command(
         update={
             "planned_execution_order": planned,
+            "pipeline_revision": revision,
             "simulation_order_events": [plan_event],
             "messages": [
                 tool_message(
@@ -602,6 +637,41 @@ def plan_simulation(
             ],
         }
     )
+
+
+def build_plan_tool(project_root: Path) -> BaseTool:
+    """Use the confirmed canvas when present; retain ordinary guided planning."""
+    store = PipelineStore(project_root)
+
+    @tool(
+        "plan_simulation", args_schema=_BuilderPlanArguments, description=PLAN_DESCRIPTION
+    )
+    def plan(
+        runtime: ToolRuntime[Any, Any], include_optional: Sequence[str] = ()
+    ) -> Command:
+        try:
+            _, thread_id, _ = runtime_identity(runtime)
+            record = store.get(thread_id)
+            if record is None:
+                return plan_simulation.func(
+                    runtime=runtime,
+                    include_optional=[
+                        name for name in include_optional if name in optional_modules()
+                    ],
+                )
+            if record.status != "confirmed":
+                raise PipelineInvalid(record.issues)
+            if set(include_optional) - set(record.modules):
+                raise ValueError(
+                    "The canvas is confirmed. Its selected modules cannot be changed by the agent."
+                )
+            return _record_plan(runtime, record.modules, record.revision)
+        except ValueError as exc:
+            return Command(
+                update={"messages": [tool_message(runtime, str(exc), error=True)]}
+            )
+
+    return plan
 
 
 def build_vitess_tools(
@@ -658,8 +728,19 @@ def build_vitess_tools(
                 ),
             )
         try:
+            store = PipelineStore(root)
+            record = store.require_current(
+                thread_id, planned, state_mapping(runtime).get("pipeline_revision")
+            )
             module_results = _configured_arguments(runtime, planned)
             _require_configuration_order(runtime, planned)
+            issues = tof_dependency_issues(
+                planned,
+                tof="-w1" in module_results.get("eval_elast", {}).get("cli_parameters", []),
+            )
+            if issues and record:
+                store.invalidate(thread_id, record.revision, issues)
+                raise PipelineInvalid(issues)
         except (ValidationError, ValueError, ParameterConversionError, KeyError) as exc:
             return _failed_run_command(
                 runtime,
