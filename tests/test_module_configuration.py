@@ -14,6 +14,8 @@ from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.graph import START, StateGraph
+from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 from pydantic import BaseModel, Field, ValidationError
 
@@ -1538,6 +1540,90 @@ def test_readin_lists_both_trajectory_and_instrument_upload_slots(tmp_path: Path
         "readin",
         "instrument",
     ]
+
+
+# ---------------------------------------------------------------------------
+# The two tools that take no input
+#
+# A specialist reports through `ToolStrategy`, so LangChain sends every one of
+# its model calls with tool_choice "required". Since 2026-09-29 Blablador's
+# Qwen3.8-Flash-Next answers a required call to a tool with no parameters by
+# inventing one: the arguments below are what it sent in the live chats. A
+# refused key sent read-in into a loop of retries until its model-call budget
+# ran out. Calling `tool.func` directly skips the argument model, where the
+# refusal happened, so these tests go through LangGraph's `ToolNode`, the node a
+# specialist runs its tools in.
+# ---------------------------------------------------------------------------
+
+STRAY_ARGUMENTS = (
+    {"any": ""},
+    {"raw": "{}"},
+    {"parameters": "{}"},
+    {"__unparsedToolInput": "{}"},
+)
+
+
+def _run_tool_call(tool: Any, args: dict[str, Any]) -> dict[str, Any]:
+    graph = StateGraph(VitessBridgeState)
+    graph.add_node("tools", ToolNode([tool]))
+    graph.add_edge(START, "tools")
+    call = AIMessage(
+        content="",
+        tool_calls=[
+            {"name": tool.name, "args": args, "id": "model-call", "type": "tool_call"}
+        ],
+    )
+    return asyncio.run(
+        graph.compile().ainvoke(
+            {"messages": [call]}, {"configurable": {"thread_id": THREAD_ID}}
+        )
+    )
+
+
+@pytest.mark.parametrize("args", STRAY_ARGUMENTS)
+def test_list_staged_files_ignores_arguments_the_model_invents(
+    args: dict[str, Any], tmp_path: Path
+) -> None:
+    class _Gateway:
+        async def inspect_thread(self, _thread_id: str) -> Any:
+            return SimpleNamespace(
+                failure=None,
+                value=SimpleNamespace(
+                    uploads=[
+                        SimpleNamespace(
+                            module="readin",
+                            files=[SimpleNamespace(path="uploads/readin/beam.dat", size_bytes=4)],
+                        )
+                    ]
+                ),
+            )
+
+    tool = named_tool(
+        readin_tools(project_root=tmp_path, gateway=_Gateway()), "list_staged_files"
+    )
+
+    reply = _run_tool_call(tool, args)["messages"][-1]
+
+    assert reply.status == "success"
+    assert [Path(item["path"]).name for item in json.loads(reply.text)] == ["beam.dat"]
+
+
+@pytest.mark.parametrize("args", STRAY_ARGUMENTS)
+@pytest.mark.parametrize(
+    "module",
+    ("guide", "sample_elasticisotr", "writeout", "monitor1d", "monitor2d", "capture_flux"),
+)
+def test_default_tool_ignores_arguments_the_model_invents(
+    module: str, args: dict[str, Any], tmp_path: Path
+) -> None:
+    """Whatever the model puts in the call, the exact defaults are recorded."""
+    tool = named_tool(_specialist_tools(module, tmp_path), f"use_{module}_defaults")
+
+    state = _run_tool_call(tool, args)
+
+    assert state["messages"][-1].status == "success"
+    recorded = ModuleConfigurationResult.model_validate(state["module_results"][module])
+    assert recorded.parameters == parameter_model(module)().model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
