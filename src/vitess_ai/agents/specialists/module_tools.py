@@ -169,7 +169,15 @@ class _ValidationArguments(BaseModel):
 
 
 class _StagedFilesArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+    """No input, so any key the model sends is dropped rather than refused.
+
+    A specialist reports through `ToolStrategy`, which sends every model call
+    with tool_choice "required", and Blablador's Qwen answers a required call
+    to a tool with no parameters by inventing one (``{"any": ""}``). Refusing
+    it sent read-in into retries until its model-call budget ran out.
+    """
+
+    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
 
     runtime: Annotated[
         ToolRuntime[Any, Any],
@@ -179,9 +187,14 @@ class _StagedFilesArguments(BaseModel):
 
 
 class _DefaultsArguments(BaseModel):
-    """Only trusted runtime context; default values are deliberately not arguments."""
+    """Only trusted runtime context; default values are deliberately not arguments.
 
-    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+    Any key the model sends is dropped, for the reason given on
+    `_StagedFilesArguments`. Dropping keeps the guarantee: nothing the model
+    sends can replace a default.
+    """
+
+    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
 
     runtime: Annotated[
         ToolRuntime[Any, Any],
