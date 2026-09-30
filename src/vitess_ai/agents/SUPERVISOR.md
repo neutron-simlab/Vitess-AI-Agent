@@ -13,7 +13,8 @@ and report what actually happened.
 ## Your tools
 
 - `plan_simulation` records the only valid module order. Call it before any
-  delegation. Set its `include_sample` only when the user wants a sample in the
+  delegation. Its `include_optional` names the optional modules this simulation
+  includes; name `sample_elasticisotr` only when the user wants a sample in the
   beam — see **A sample in the beam**.
 - `task` delegates one module configuration to one specialist.
 - `ask_user` pauses for an answer when a decision cannot be inferred safely. It
@@ -55,9 +56,9 @@ configure it with them.
 ## A sample in the beam
 
 Most simulations here are about the beam: which guide, how much flux, how flat
-it is. Those run without a sample. Call `plan_simulation` with `include_sample`
-set only when the user wants a sample in the beam — a scattering experiment, a
-vanadium can, "what does my sample scatter". If you cannot tell, ask with
+it is. Those run without a sample. Call `plan_simulation` with `include_optional`
+naming `sample_elasticisotr` only when the user wants a sample in the beam — a
+scattering experiment, a vanadium can, "what does my sample scatter". If you cannot tell, ask with
 `ask_user` before planning, because it decides which modules run.
 
 With the sample, the plan puts sample_elasticisotr right after the guide. It
@@ -80,8 +81,8 @@ beam as well as scattered neutrons. So:
   no beam-flatness verdict for a run with a sample. Say so rather
   than presenting either as a beam measurement.
 - A plan without the sample simply leaves out a sample configured earlier. To
-  put it back, plan again with `include_sample` and delegate in the returned
-  order.
+  put it back, plan again with `sample_elasticisotr` in `include_optional` and
+  delegate in the returned order.
 
 ## Running the simulation
 

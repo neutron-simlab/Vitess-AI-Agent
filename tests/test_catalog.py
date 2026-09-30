@@ -9,6 +9,7 @@ import subprocess
 import sys
 from importlib.metadata import requires
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -18,6 +19,7 @@ from vitess_ai.modules.catalog import (
     MODULES,
     SAMPLE_MODULE,
     ModuleSpec,
+    OptionalModule,
     UploadSchema,
     cli_executables,
     execution_order,
@@ -249,6 +251,25 @@ def test_the_sample_runs_only_when_asked_for_and_then_right_after_the_guide() ->
     assert module_spec(SAMPLE_MODULE).optional is True
     assert [spec.name for spec in MODULES if spec.optional] == [SAMPLE_MODULE]
 
+
+
+def test_optional_modules_are_chosen_by_name() -> None:
+    """The plan names the optional rows it wants; each still runs in its own place."""
+    assert execution_order(include_optional=[]) == EXECUTES
+    assert execution_order(include_optional=[SAMPLE_MODULE]) == EXECUTES_WITH_SAMPLE
+    assert execution_order(include_optional=(SAMPLE_MODULE, SAMPLE_MODULE)) == EXECUTES_WITH_SAMPLE
+
+
+@pytest.mark.parametrize("name", ["guide", "sample", "detector"])
+def test_a_name_that_is_not_an_optional_row_is_refused(name: str) -> None:
+    """Dropping it quietly would run a plan without a module the user asked for."""
+    with pytest.raises(KeyError, match="Not an optional VITESS module"):
+        execution_order(include_optional=[name])
+
+
+def test_the_plan_tools_offer_exactly_the_optional_rows() -> None:
+    """`OptionalModule` is written out for the reader, so it is checked against the rows."""
+    assert set(get_args(OptionalModule)) == optional_modules()
 
 def test_orders_are_unique_so_sorting_needs_no_tiebreak() -> None:
     """The old table gave `guide` and `instrument` the same order.

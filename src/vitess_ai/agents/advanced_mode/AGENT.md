@@ -60,8 +60,8 @@ PHASE 2: PARAMETER VARIATION COLLECTION
    A sample in the beam is a decision for the whole sweep, not a parameter. Most sweeps
    are about the beam — guides, flux, flatness — and run without one. When the user
    wants a sample in every run, you will call `write_simulation_matrix` with
-   `include_sample` set, and sample_elasticisotr then sits right after the guide in
-   every run. Delegate **sample_elasticisotr** only when the user varies or customizes
+   `include_optional` naming `sample_elasticisotr`, and the sample then sits right
+   after the guide in every run. Delegate **sample_elasticisotr** only when the user varies or customizes
    the sample; an untouched sample gets VITESS's own default sample (a 3 × 3 × 3 cm
    cuboid 50 cm after the guide exit), written by the matrix tool. With a sample, every
    module after it — writeout, the monitors, capture_flux — sees only what it scattered
@@ -134,7 +134,8 @@ REQUIRED SPECIALIST CHECKLIST before PHASE 4:
 Do not delegate an untouched guide, writeout, monitor1d, or monitor2d. When its result
 is absent, `write_simulation_matrix` constructs one configuration from that module's
 schema defaults in trusted code. The tool refuses a missing readin result. An untouched
-sample, in a sweep with `include_sample`, gets VITESS's default sample the same way.
+sample, in a sweep whose `include_optional` names it, gets VITESS's default sample the
+same way.
 
 **Do NOT interpret or generate module parameters yourself.** Do not set
 `eGuideShapeY`, do not build CLI flags, do not decide what a monitor range should be.
@@ -302,7 +303,8 @@ YOUR TOOLS
 - `task` — delegate one module's configuration to its specialist.
 - `write_simulation_matrix` — expand the validated variants into the runs of the sweep
   and record the plan. Takes `combination` and optionally `run_names` and
-  `include_sample` (a sample after the guide in every run).
+  `include_optional`, the optional modules every run includes (`sample_elasticisotr`:
+  a sample after the guide).
 - `run_batch_from_matrix` — run the recorded plan. Takes no arguments.
 - `generate_monitor1d_plot`, `generate_monitor2d_plot` — render a completed run's
   monitor data as an image in the chat. Identify the run by `run_name`.

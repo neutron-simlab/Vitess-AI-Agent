@@ -24,6 +24,7 @@ them is an identifier.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from itertools import product
@@ -43,7 +44,12 @@ from vitess_ai.agents.specialists.module_tools import validate_module_parameters
 from vitess_ai.cli.arguments import parameters_to_arguments
 from vitess_ai.mcp.payloads import SimulationResult
 from vitess_ai.mcp.profile_flatness import WINDOW_CENTRE_CM, WINDOW_WIDTH_CM
-from vitess_ai.modules.catalog import SAMPLE_MODULE, execution_order, optional_modules
+from vitess_ai.modules.catalog import (
+    SAMPLE_MODULE,
+    OptionalModule,
+    execution_order,
+    optional_modules,
+)
 from vitess_ai.modules.parameters import parameter_model
 from vitess_ai.run import InternalSimulationRequest, VitessGateway
 from vitess_ai.schema import CaptureFluxParameters
@@ -133,12 +139,13 @@ def describe_module_parameters(module: str) -> str:
 class _SweepArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
-    include_sample: bool = Field(
-        default=False,
+    include_optional: list[OptionalModule] = Field(
+        default_factory=list,
         description=(
-            "True when every run of this sweep has a sample in the beam: "
-            "sample_elasticisotr, right after the guide. An untouched sample gets "
-            "VITESS's default sample. Leave it false to sweep the beam itself."
+            "The optional modules every run of this sweep includes, by name. "
+            "sample_elasticisotr: a sample in the beam, right after the guide. "
+            "An untouched optional module gets its schema defaults -- the sample, "
+            "VITESS's default sample. Leave the list empty to sweep the beam itself."
         ),
     )
 
@@ -196,14 +203,15 @@ def _variants(
     *,
     project_root: Path,
     thread_id: str,
-    include_sample: bool = False,
+    include_optional: Sequence[str] = (),
 ) -> dict[str, list[ModuleConfigurationResult]]:
     """Recorded variants plus trusted schema defaults for untouched modules.
 
     Built in pipeline order, so the returned mapping's order *is* the pipeline
-    and `_combination_size` and `_combine` read it from here. Sample variants
-    recorded while ``include_sample`` is off are left out rather than refused:
-    recorded variants are never removed, and an earlier sweep may have had one.
+    and `_combination_size` and `_combine` read it from here. Variants of an
+    optional module that ``include_optional`` does not name are left out rather
+    than refused: recorded variants are never removed, and an earlier sweep may
+    have had one.
     """
 
     stored = state_mapping(runtime).get("module_variants")
@@ -212,7 +220,7 @@ def _variants(
     if not isinstance(stored, dict):
         raise ValueError("The recorded module variants are not a module mapping")
 
-    planned = execution_order(include_optional=include_sample)
+    planned = execution_order(include_optional=include_optional)
     missing = [module for module in planned if module not in stored]
     required = [
         module
@@ -367,15 +375,16 @@ def build_batch_tools(
             "Expand the validated module variants into the runs of this sweep "
             "and record the plan. Say whether the variants combine as a "
             "Cartesian product or as paired rows. Untouched guide, writeout, and "
-            "monitor modules receive exact schema defaults in trusted code. Set "
-            "include_sample to put the sample after the guide in every run."
+            "monitor modules receive exact schema defaults in trusted code. Name "
+            "in include_optional the optional modules every run includes, e.g. "
+            "sample_elasticisotr for a sample after the guide."
         ),
     )
     def write_simulation_matrix(
         runtime: ToolRuntime[Any, Any],
         combination: Literal["cartesian", "paired"],
         run_names: list[str] | None = None,
-        include_sample: bool = False,
+        include_optional: Sequence[str] = (),
     ) -> Command:
         try:
             user_id, thread_id, graph_run_id = runtime_identity(runtime)
@@ -383,7 +392,7 @@ def build_batch_tools(
                 runtime,
                 project_root=root,
                 thread_id=thread_id,
-                include_sample=include_sample,
+                include_optional=include_optional,
             )
             combination_size = _combination_size(variants, combination)
         except (ValidationError, ValueError) as exc:
@@ -571,9 +580,11 @@ def build_batch_tools(
             outcome_line, entry_events, reference, result = await _run_one(
                 gateway,
                 entry,
-                # Each entry's pipeline follows from whether it holds the sample;
-                # `write_simulation_matrix` wrote the entries, not the model.
-                planned=execution_order(include_optional=SAMPLE_MODULE in entry.modules),
+                # Each entry's pipeline follows from the optional modules it
+                # holds; `write_simulation_matrix` wrote the entries, not the model.
+                planned=execution_order(
+                    include_optional=optional_modules() & entry.modules.keys()
+                ),
                 project_root=root,
                 user_id=user_id,
                 thread_id=thread_id,

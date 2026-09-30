@@ -24,7 +24,7 @@ The module specialists are listed one by one, each with its own builder, in
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Collection, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,6 +33,7 @@ __all__ = [
     "UploadSchema",
     "ModuleSpec",
     "MODULES",
+    "OptionalModule",
     "SAMPLE_MODULE",
     "module_spec",
     "execution_order",
@@ -194,9 +195,14 @@ MODULES: tuple[ModuleSpec, ...] = (
     ),
 )
 
-#: The optional row, by name, for the code that must say "was there a sample in
-#: this run" -- the plan's `include_sample`, and the readings that stop calling
-#: themselves a beam measurement once a sample has scattered the beam.
+#: The optional rows by name, as the plan tools offer them to the model. Written
+#: out rather than built from the rows so that a reader sees the choices; a test
+#: checks that it names exactly the rows marked ``optional``.
+OptionalModule = Literal["sample_elasticisotr"]
+
+#: The sample's row, for the code that must say "was there a sample in this run"
+#: -- the readings that stop calling themselves a beam measurement once a sample
+#: has scattered the beam.
 SAMPLE_MODULE = "sample_elasticisotr"
 
 _BY_NAME = {spec.name: spec for spec in MODULES}
@@ -218,17 +224,36 @@ def module_spec(name: str) -> ModuleSpec:
         raise KeyError(f"Unknown VITESS module {name!r}. Known modules: {known}") from None
 
 
-def execution_order(*, include_optional: bool = False) -> tuple[str, ...]:
+def execution_order(
+    *, include_optional: bool | Collection[str] = False
+) -> tuple[str, ...]:
     """The modules that run a binary, in the order the pipeline runs them.
 
-    Without arguments this is the pipeline every simulation runs. With
-    ``include_optional`` the optional rows -- today only the sample -- are
-    added in their place, which is also the list of every runnable module.
+    Without arguments this is the pipeline every simulation runs.
+    ``include_optional`` adds optional rows, each in its own place: ``True``
+    adds all of them, which is also the list of every runnable module, and a
+    collection of names adds those. A name that is not an optional row raises,
+    because a plan that silently dropped it would run without a module the
+    user asked for.
     """
+    if include_optional is True:
+        included = optional_modules()
+    elif include_optional is False:
+        included = frozenset()
+    else:
+        included = frozenset(include_optional)
+        unknown = sorted(included - optional_modules())
+        if unknown:
+            known = ", ".join(sorted(optional_modules()))
+            raise KeyError(
+                f"Not an optional VITESS module: {', '.join(unknown)}. "
+                f"Optional modules: {known}"
+            )
     return tuple(
         spec.name
         for spec in sorted(MODULES, key=lambda spec: spec.order)
-        if spec.cli_executable is not None and (include_optional or not spec.optional)
+        if spec.cli_executable is not None
+        and (not spec.optional or spec.name in included)
     )
 
 

@@ -294,7 +294,7 @@ def _run(tmp_path: Path, state: dict[str, Any], calls: list[dict]) -> Command:
 
 def test_the_plan_has_a_sample_only_when_asked_for() -> None:
     without = plan_simulation.func(runtime=runtime())
-    with_sample = plan_simulation.func(runtime=runtime(), include_sample=True)
+    with_sample = plan_simulation.func(runtime=runtime(), include_optional=[SAMPLE_MODULE])
 
     assert without.update["planned_execution_order"] == list(execution_order())
     assert SAMPLE_MODULE not in without.update["planned_execution_order"]
@@ -393,7 +393,7 @@ def _matrix(tmp_path: Path, variants: dict[str, Any], **arguments: Any) -> Comma
 def test_a_sweep_with_an_untouched_sample_runs_vitess_s_default_sample(
     tmp_path: Path, artifact_store: ArtifactStore
 ) -> None:
-    command = _matrix(tmp_path, swept_modules(tmp_path), include_sample=True)
+    command = _matrix(tmp_path, swept_modules(tmp_path), include_optional=[SAMPLE_MODULE])
 
     for entry in command.update["simulation_plan"]:
         assert list(entry["modules"]) == WITH_SAMPLE
@@ -414,7 +414,7 @@ def test_sample_variants_are_left_out_of_a_sweep_without_the_sample(
     )
 
     without = _matrix(tmp_path, variants)
-    with_sample = _matrix(tmp_path, variants, include_sample=True)
+    with_sample = _matrix(tmp_path, variants, include_optional=[SAMPLE_MODULE])
 
     assert all(
         SAMPLE_MODULE not in entry["modules"] for entry in without.update["simulation_plan"]
@@ -471,7 +471,7 @@ def test_the_batch_runs_the_sample_the_matrix_recorded_right_after_the_guide(
         runtime=runtime(state={"module_variants": swept_modules(tmp_path)}),
         combination="paired",
         run_names=["with sample"],
-        include_sample=True,
+        include_optional=[SAMPLE_MODULE],
     )
 
     swept = asyncio.run(

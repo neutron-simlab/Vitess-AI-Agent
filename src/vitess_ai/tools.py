@@ -37,7 +37,12 @@ from vitess_ai.mcp.profile_flatness import (
     TOLERANCE,
     WINDOW_WIDTH_CM,
 )
-from vitess_ai.modules.catalog import SAMPLE_MODULE, execution_order, optional_modules
+from vitess_ai.modules.catalog import (
+    SAMPLE_MODULE,
+    OptionalModule,
+    execution_order,
+    optional_modules,
+)
 from vitess_ai.modules.parameters import parameter_model
 from vitess_ai.schema import GuideParameters, SampleElasticIsotrParameters
 from vitess_ai.schema.base import VtGdeShape
@@ -98,13 +103,14 @@ class _InspectArguments(_FacadeArguments):
 
 
 class _PlanArguments(_FacadeArguments):
-    include_sample: bool = Field(
-        default=False,
+    include_optional: list[OptionalModule] = Field(
+        default_factory=list,
         description=(
-            "True when the user wants a sample in the beam: sample_elasticisotr, "
-            "right after the guide, and every module after it then sees only what "
-            "the sample scattered. Leave it false to simulate the beam itself -- "
-            "guide comparisons, capture flux, beam flatness."
+            "The optional modules this simulation includes, by name. "
+            "sample_elasticisotr: a sample in the beam, right after the guide; "
+            "every module after it then sees only what the sample scattered. "
+            "Leave the list empty to simulate the beam itself -- guide "
+            "comparisons, capture flux, beam flatness."
         ),
     )
 
@@ -546,14 +552,15 @@ def _select_run(
 PLAN_DESCRIPTION = (
     "Return the VITESS modules this simulation needs, in the order they must be "
     "configured and run. Call this before delegating to any module specialist. "
-    "run_simulation will not run a pipeline that was never planned. Set "
-    "include_sample when the user wants a sample in the beam."
+    "run_simulation will not run a pipeline that was never planned. Name in "
+    "include_optional the optional modules the user wants, e.g. "
+    "sample_elasticisotr for a sample in the beam."
 )
 
 
 @tool("plan_simulation", args_schema=_PlanArguments, description=PLAN_DESCRIPTION)
 def plan_simulation(
-    runtime: ToolRuntime[Any, Any], include_sample: bool = False
+    runtime: ToolRuntime[Any, Any], include_optional: Sequence[str] = ()
 ) -> Command:
     """Record the pipeline order, from the catalog, as a checked precondition.
 
@@ -568,11 +575,11 @@ def plan_simulation(
     reason comparing them proves anything: a model that skipped this call gets a
     refusal rather than a pipeline in whatever order it happened to delegate.
 
-    ``include_sample`` is the one choice the model makes here, and it chooses
-    only *whether* the sample runs; where it runs -- right after the guide --
-    still comes from the catalog.
+    ``include_optional`` is the one choice the model makes here, and it chooses
+    only *which* optional modules run; where each runs -- the sample right
+    after the guide -- still comes from the catalog.
     """
-    planned = list(execution_order(include_optional=include_sample))
+    planned = list(execution_order(include_optional=include_optional))
     plan_event = SimulationOrderEvent(
         kind="plan", execution_order=tuple(planned)
     ).model_dump(mode="json")
